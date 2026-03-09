@@ -61,15 +61,14 @@ def upload():
 
     objects = []
 
-    for c in contours:
+for c in contours:
 
-        x,y,w,h = cv2.boundingRect(c)
+    x,y,w,h = cv2.boundingRect(c)
 
-        area = w*h
-        ratio = h/float(w)
+    if w < 40 or h < 40:
+        continue
 
-        if area < width*height*0.01:
-            continue
+    cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
 
         if ratio < 1.4:
             continue
