@@ -70,9 +70,7 @@ for c in contours:
 
     cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
 
-        if ratio < 1.4:
-            continue
-
+    
         cy = y + h/2
 
         if cy < height*0.25 or cy > height*0.75:
