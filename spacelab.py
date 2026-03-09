@@ -7,7 +7,7 @@ import numpy as np
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
+PROCESSED_FOLDER = "processed" 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
