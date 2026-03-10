@@ -14,7 +14,13 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
 @app.route("/")
 def home():
-    # Railway va lire ton index.html actuel
+    # On vérifie si le fichier existe avant de l'ouvrir
+    if not os.path.exists("index.html"):
+        # Si le fichier manque, on affiche la liste des fichiers présents
+        # Cela nous aidera à comprendre où Railway a mis tes fichiers
+        files = os.listdir('.')
+        return f"Erreur : index.html non trouvé. Fichiers présents : {files}", 500
+    
     with open("index.html", "r", encoding="utf-8") as f:
         return f.read()
 
