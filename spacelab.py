@@ -43,17 +43,19 @@ def upload():
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     
     # On sépare les cartes collées
-    kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.erode(thresh, kernel, iterations=1)
-    mask = cv2.dilate(mask, kernel, iterations=1)
+kernel = np.ones((5, 5), np.uint8) 
+    mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
- rects_for_js = []
+    rects_for_js = []
     for c in contours:
-        # On simplifie le contour pour obtenir un rectangle plus propre
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        area = cv2.contourArea(c)
+        if area < 4000: continue # On ignore les petits bruits
+        
+        # On récupère le rectangle englobant
+        x, y, w, h = cv2.boundingRect(c)
+        rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
         
         area = cv2.contourArea(c)
         if area < 5000: continue # Augmenté pour éviter les petits bruits
