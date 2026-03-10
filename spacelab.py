@@ -49,11 +49,19 @@ def upload():
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    rects_for_js = []
+ rects_for_js = []
     for c in contours:
+        # On simplifie le contour pour obtenir un rectangle plus propre
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        
         area = cv2.contourArea(c)
-        if area < 3000: continue
-        x, y, w, h = cv2.boundingRect(c)
+        if area < 5000: continue # Augmenté pour éviter les petits bruits
+        
+        x, y, w, h = cv2.boundingRect(approx)
+        
+        # Filtre de proportion : une carte est plus haute que large
+        # Une station est plus carrée ou large
         rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
 
     # On renvoie les données à ton JavaScript
