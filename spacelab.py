@@ -50,11 +50,11 @@ def upload():
 
     height, width = image.shape[:2]
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    _, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
+_, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
-    kernel = np.ones((9,9),np.uint8)
+kernel = np.ones((9,9),np.uint8)
 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 mask = cv2.dilate(mask, kernel, iterations=1)
 
