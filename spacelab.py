@@ -49,14 +49,17 @@ def upload():
     image = cv2.imread(save_path)
     draw = image.copy()
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+ gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    _, mask = cv2.threshold(
-        gray,
-        0,
-        255,
-        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
+# flou pour supprimer le bruit
+blur = cv2.GaussianBlur(gray, (5,5), 0)
+
+# détection des contours
+edges = cv2.Canny(blur, 40, 120)
+
+# dilatation pour fermer les rectangles
+kernel = np.ones((5,5), np.uint8)
+mask = cv2.dilate(edges, kernel, iterations=2)
 
     kernel = np.ones((7,7), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
