@@ -55,16 +55,21 @@ captureBtn.addEventListener("click", takePhoto);
 /* =====================================================
    CONFIG
 ===================================================== */
-window.MODE = "BOARD"; // Mode par défaut
+// On initialise la variable sur l'objet window pour qu'elle soit "Générale"
+window.MODE = "BOARD"; 
 const HASH_SIZE = 16;
 
 /* =====================================================
    SWITCH MODE
 ===================================================== */
 modeBtn.addEventListener("click", () => {
-  window.MODE = window.MODE === "BOARD" ? "CARDS_ONLY" : "BOARD";
+  // On change la valeur
+  window.MODE = (window.MODE === "BOARD") ? "CARDS_ONLY" : "BOARD";
+  
+  // On met à jour le texte du bouton pour VÉRIFIER que ça marche
   modeBtn.textContent = "Mode: " + window.MODE;
-  console.log("Mode changé →", window.MODE);
+  
+  console.log("Mode changé en direct →", window.MODE);
 });
 
 /* =====================================================
