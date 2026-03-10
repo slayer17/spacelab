@@ -162,24 +162,25 @@ function computeAverageRGB(imageData) {
 
 function computePerceptualHash(zone) {
   const tempCanvas = document.createElement("canvas");
-  // On normalise en 200x300 pour que nos coordonnées fixes (ex: 10, 45) 
-  // tombent toujours au même endroit sur la carte
+  // On force une taille standard de 200x300 pour TOUTES les zones
   tempCanvas.width = 200; 
   tempCanvas.height = 300;
   const tempCtx = tempCanvas.getContext("2d");
-  
-  // On découpe la zone dans le canvas principal et on l'étire dans le tempCanvas
+
+  // On dessine la zone détectée en l'étirant pour qu'elle remplisse les 200x300
   tempCtx.drawImage(canvas, zone.x, zone.y, zone.width, zone.height, 0, 0, 200, 300);
   
   const fullData = tempCtx.getImageData(0, 0, 200, 300);
 
-  // --- NOUVELLES COORDONNÉES ROI ---
-  // Symbole (Haut-Gauche)
-  const symbolData = tempCtx.getImageData(15, 15, 50, 50); 
+  // Maintenant, on découpe les symboles à des positions relatives fixes
+  // Symbole (Haut-Gauche) : On prend une marge de sécurité
+  const symbolData = tempCtx.getImageData(10, 10, 60, 60); 
+  
   // Points (Bas-Gauche)
-  const pointsData = tempCtx.getImageData(15, 235, 70, 50);
-  // Centre Station
-  const stationCenterData = tempCtx.getImageData(50, 60, 100, 180);
+  const pointsData = tempCtx.getImageData(10, 230, 80, 60);
+  
+  // Centre pour les stations
+  const stationCenterData = tempCtx.getImageData(40, 60, 120, 180);
 
   return {
     global: computeHash(fullData, HASH_SIZE),
