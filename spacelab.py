@@ -66,18 +66,32 @@ def upload():
 
     rectangles = []
 
-    for c in contours:
+for c in contours:
 
-        area = cv2.contourArea(c)
+    area = cv2.contourArea(c)
 
-        if area < 1500:
-            continue
+    if area < 1500:
+        continue
 
-        x, y, w, h = cv2.boundingRect(c)
+    x, y, w, h = cv2.boundingRect(c)
 
-  ratio = h / float(w)
+    ratio = h / float(w)
 
-obj_type = "CARTE"
+    obj_type = "CARTE"
+
+    # stations = plus larges et ratio plus petit
+    if ratio < 1.8 and area > 20000:
+        obj_type = "STATION"
+
+    rectangles.append({
+        "x": int(x),
+        "y": int(y),
+        "width": int(w),
+        "height": int(h),
+        "type": obj_type
+    })
+
+    cv2.rectangle(draw, (x,y), (x+w,y+h), (0,255,0), 2)
 
 # stations = plus larges et ratio plus petit
 if ratio < 1.8 and area > 20000:
