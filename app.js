@@ -71,18 +71,49 @@ async function getDetectionsFromServer(blob) {
 }
 
 function processPythonResults(rects) {
-    // On ne vide pas le canvas pour garder la photo en fond
-    rects.forEach(rect => {
-        // Dessiner le rectangle vert (CARTE)
+    // usedCards permet d'éviter de détecter deux fois la même carte
+    let usedCards = new Set();
+    let resume = "";
+
+    rects.forEach((rect, index) => {
+        // 1. On dessine le rectangle de base trouvé par Python
         ctx.strokeStyle = "lime";
         ctx.lineWidth = 5;
         ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+        // 2. EXTRACTION DE LA ZONE (Le "Cerveau")
+        // On récupère l'image précise à l'intérieur du rectangle
+        const cardData = ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
         
-        // On écrit "Detecté" au dessus de chaque forme
-        ctx.fillStyle = "lime";
-        ctx.font = "bold 20px Arial";
-        ctx.fillText("OBJET", rect.x, rect.y - 10);
+        // 3. RECONNAISSANCE (Appel à tes autres fichiers JS)
+        // Ici on utilise ta logique existante de detectColor et cardmatcher
+        const cardColor = detectColor(cardData); // Vient de detectColor.js
+        
+        // On crée une signature rapide pour la zone (simplifié)
+        // Note : Si tu avais une fonction spécifique pour générer la signature, appelle-la ici
+        const signature = { global: "0000...", symbole: "0000...", points: "0000..." }; 
+
+        // Appel de ton moteur de match
+        const match = findBestMatch(signature, cardColor, usedCards);
+
+        if (match && match.card) {
+            usedCards.add(match.card.id);
+            
+            // On affiche le nom de la carte sur le canvas
+            ctx.fillStyle = "yellow";
+            ctx.font = "bold 20px Arial";
+            ctx.fillText(match.card.id, rect.x + 10, rect.y + 25);
+            
+            resume += `<div>Carte ${index + 1}: <b>${match.card.id}</b></div>`;
+        } else {
+            ctx.fillStyle = "orange";
+            ctx.fillText("Inconnu", rect.x + 10, rect.y + 25);
+        }
     });
+
+    // On affiche le résultat dans ta zone de texte
+    const resultDiv = document.getElementById("result");
+    if (resultDiv) resultDiv.innerHTML = resume;
 }
 
 /* =====================================================
