@@ -75,12 +75,21 @@ def upload():
 
         x, y, w, h = cv2.boundingRect(c)
 
-        rectangles.append({
-            "x": int(x),
-            "y": int(y),
-            "width": int(w),
-            "height": int(h)
-        })
+  ratio = h / float(w)
+
+obj_type = "CARTE"
+
+# stations = plus larges et ratio plus petit
+if ratio < 1.8 and area > 20000:
+    obj_type = "STATION"
+
+rectangles.append({
+    "x": int(x),
+    "y": int(y),
+    "width": int(w),
+    "height": int(h),
+    "type": obj_type
+})
 
         cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
 
