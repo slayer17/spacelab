@@ -1,5 +1,5 @@
 (() => {
-console.log("🚀 SCRIPT APP.JS CHARGÉ !"); // AJOUTE CETTE LIGNE TOUT EN HAUT
+
 /* =====================================================
    1 - DOM
 ===================================================== */
@@ -55,21 +55,16 @@ captureBtn.addEventListener("click", takePhoto);
 /* =====================================================
    CONFIG
 ===================================================== */
-// On initialise la variable sur l'objet window pour qu'elle soit "Générale"
-window.MODE = "BOARD"; 
+window.MODE = "BOARD"; // Mode par défaut
 const HASH_SIZE = 16;
 
 /* =====================================================
    SWITCH MODE
 ===================================================== */
 modeBtn.addEventListener("click", () => {
-  // On change la valeur
-  window.MODE = (window.MODE === "BOARD") ? "CARDS_ONLY" : "BOARD";
-  
-  // On met à jour le texte du bouton pour VÉRIFIER que ça marche
+  window.MODE = window.MODE === "BOARD" ? "CARDS_ONLY" : "BOARD";
   modeBtn.textContent = "Mode: " + window.MODE;
-  
-  console.log("Mode changé en direct →", window.MODE);
+  console.log("Mode changé →", window.MODE);
 });
 
 /* =====================================================
@@ -113,17 +108,16 @@ async function getDetectionsFromServer(blob) {
 }
 
 function processPythonResults(rects) {
+    // On transforme les rects de Python en format compatible avec ton code
     const objects = rects.map(r => ({
         x: r.x,
         y: r.y,
         width: r.w,
         height: r.h,
-        // Une station est souvent plus large ou plus grande qu'une carte standard
-        type: (r.w > r.h * 0.8) ? "STATION" : "CARTE" 
+        type: (r.w > r.h) ? "STATION" : "CARTE" // Devine le type par la forme
     }));
 
-    // On efface le canvas avant de redessiner les nouveaux rectangles
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // On lance ton analyse habituelle mais avec les zones de Python !
     analyzeCanvas(objects);
 }
 
@@ -160,33 +154,28 @@ function computeAverageRGB(imageData) {
   return { r: Math.round(totalR / count), g: Math.round(totalG / count), b: Math.round(totalB / count) };
 }
 
+// Remplace computePerceptualHash dans app.js (ligne 147)
 function computePerceptualHash(zone) {
   const tempCanvas = document.createElement("canvas");
-  // On force une taille standard de 200x300 pour TOUTES les zones
   tempCanvas.width = 200; 
   tempCanvas.height = 300;
   const tempCtx = tempCanvas.getContext("2d");
-
-  // On dessine la zone détectée en l'étirant pour qu'elle remplisse les 200x300
+  
+  // On étire la zone pour qu'elle remplisse parfaitement le mini-canvas
   tempCtx.drawImage(canvas, zone.x, zone.y, zone.width, zone.height, 0, 0, 200, 300);
   
   const fullData = tempCtx.getImageData(0, 0, 200, 300);
 
-  // Maintenant, on découpe les symboles à des positions relatives fixes
-  // Symbole (Haut-Gauche) : On prend une marge de sécurité
+  // ROI Relatives (en pixels sur la base de 200x300)
+  // Haut-gauche (Symbole)
   const symbolData = tempCtx.getImageData(10, 10, 60, 60); 
-  
-  // Points (Bas-Gauche)
+  // Bas-gauche (Points)
   const pointsData = tempCtx.getImageData(10, 230, 80, 60);
-  
-  // Centre pour les stations
-  const stationCenterData = tempCtx.getImageData(40, 60, 120, 180);
 
   return {
     global: computeHash(fullData, HASH_SIZE),
     symbole: computeHash(symbolData, HASH_SIZE),
     points: computeHash(pointsData, HASH_SIZE),
-    stationCenter: computeHash(stationCenterData, HASH_SIZE),
     color: computeGlobalColor(fullData),
     rgbColor: computeAverageRGB(fullData)
   };
