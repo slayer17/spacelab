@@ -55,8 +55,13 @@ def upload():
 
     edges = cv2.Canny(blur, 40, 120)
 
-    kernel = np.ones((5,5), np.uint8)
-    mask = cv2.dilate(edges, kernel, iterations=2)
+    kernel = np.ones((3,3), np.uint8)
+    mask = cv2.morphologyEx(
+    edges,
+    cv2.MORPH_CLOSE,
+    kernel,
+    iterations=1
+)
 
     contours, _ = cv2.findContours(
         mask,
@@ -74,7 +79,8 @@ def upload():
             continue
 
         x, y, w, h = cv2.boundingRect(c)
-
+        if h < 120:
+            continue
         ratio = h / float(w)
 
         obj_type = "CARTE"
