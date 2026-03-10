@@ -86,13 +86,16 @@ function processPythonResults(rects) {
 }
 
 /* =====================================================
-   4 - ÉVÉNEMENTS
+   4 - ÉVÉNEMENTS (CONNEXION BOUTONS)
 ===================================================== */
 const startBtn = document.getElementById("startBtn");
+// On relie le bouton "Démarrer caméra"
 if(startBtn) startBtn.addEventListener("click", startCamera);
+
+// On relie le bouton "Capturer" à la fonction takePhoto
 if(captureBtn) captureBtn.addEventListener("click", takePhoto);
 
-// Gestion du chargement de fichier local (optionnel)
+// Gestion du chargement de fichier local
 if(loadBtn) loadBtn.addEventListener("click", () => fileInput.click());
 if(fileInput) fileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
@@ -111,4 +114,4 @@ if(fileInput) fileInput.addEventListener("change", (e) => {
   reader.readAsDataURL(file);
 });
 
-})();
+})(); 
