@@ -56,7 +56,7 @@ def upload():
 
     kernel = np.ones((9,9),np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
+mask = cv2.dilate(mask, kernel, iterations=1)
     contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Diagnostic : dessiner tous les blobs
