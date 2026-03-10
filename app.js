@@ -113,16 +113,17 @@ async function getDetectionsFromServer(blob) {
 }
 
 function processPythonResults(rects) {
-    // On transforme les rects de Python en format compatible avec ton code
     const objects = rects.map(r => ({
         x: r.x,
         y: r.y,
         width: r.w,
         height: r.h,
-        type: (r.w > r.h) ? "STATION" : "CARTE" // Devine le type par la forme
+        // Une station est souvent plus large ou plus grande qu'une carte standard
+        type: (r.w > r.h * 0.8) ? "STATION" : "CARTE" 
     }));
 
-    // On lance ton analyse habituelle mais avec les zones de Python !
+    // On efface le canvas avant de redessiner les nouveaux rectangles
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     analyzeCanvas(objects);
 }
 
@@ -161,14 +162,24 @@ function computeAverageRGB(imageData) {
 
 function computePerceptualHash(zone) {
   const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = 200; tempCanvas.height = 300;
+  // On normalise en 200x300 pour que nos coordonnées fixes (ex: 10, 45) 
+  // tombent toujours au même endroit sur la carte
+  tempCanvas.width = 200; 
+  tempCanvas.height = 300;
   const tempCtx = tempCanvas.getContext("2d");
+  
+  // On découpe la zone dans le canvas principal et on l'étire dans le tempCanvas
   tempCtx.drawImage(canvas, zone.x, zone.y, zone.width, zone.height, 0, 0, 200, 300);
+  
   const fullData = tempCtx.getImageData(0, 0, 200, 300);
 
-  const symbolData = tempCtx.getImageData(10, 45, 60, 60); // Ajusté selon tes ratios
-  const pointsData = tempCtx.getImageData(10, 225, 100, 60);
-  const stationCenterData = tempCtx.getImageData(10, 40, 45, 210);
+  // --- NOUVELLES COORDONNÉES ROI ---
+  // Symbole (Haut-Gauche)
+  const symbolData = tempCtx.getImageData(15, 15, 50, 50); 
+  // Points (Bas-Gauche)
+  const pointsData = tempCtx.getImageData(15, 235, 70, 50);
+  // Centre Station
+  const stationCenterData = tempCtx.getImageData(50, 60, 100, 180);
 
   return {
     global: computeHash(fullData, HASH_SIZE),
