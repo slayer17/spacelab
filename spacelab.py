@@ -33,7 +33,6 @@ def home():
 
 @app.route("/upload", methods=["POST"])
 def upload():
-
     file = request.files["image"]
 
     uid = uuid.uuid4().hex
@@ -45,14 +44,13 @@ def upload():
 
     file.save(save_path)
 
-    # Charger image
     image = cv2.imread(save_path)
-    draw = image.copy()
+    if image is None:
+        return "Erreur : image illisible", 400
 
-    # Conversion gris
+    draw = image.copy()
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Threshold automatique
     _, mask = cv2.threshold(
         gray,
         0,
@@ -60,44 +58,32 @@ def upload():
         cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
 
-    # Nettoyage morphologique
-    kernel = np.ones((7,7), np.uint8)
+    kernel = np.ones((7, 7), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-   
 
-    # Lissage
-    mask = cv2.GaussianBlur(mask, (5,5), 0)
-
-    # Détection contours
     contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    # Dessiner rectangles
     for c in contours:
-
         area = cv2.contourArea(c)
-
         if area < 1500:
             continue
 
- x, y, w, h = cv2.boundingRect(c)
+        x, y, w, h = cv2.boundingRect(c)
 
-# objet trop grand = probablement carte + station
-if h > 250:
+        # Si l'objet est trop haut, on le coupe en 2
+        # pour séparer carte + station fusionnées.
+        if h > 250:
+            mid = h // 2
 
-    mid = int(h/2)
+            cv2.rectangle(draw, (x, y), (x + w, y + mid), (0, 255, 0), 2)
+            cv2.rectangle(draw, (x, y + mid), (x + w, y + h), (0, 255, 0), 2)
+        else:
+            cv2.rectangle(draw, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    cv2.rectangle(draw, (x, y), (x+w, y+mid), (0,255,0), 2)
-    cv2.rectangle(draw, (x, y+mid), (x+w, y+h), (0,255,0), 2)
-
-else:
-
-    cv2.rectangle(draw, (x, y), (x+w, y+h), (0,255,0), 2)
-
-    # Sauvegarder image résultat
     cv2.imwrite(result_path, draw)
 
     img_url = url_for("uploaded_file", filename=name)
