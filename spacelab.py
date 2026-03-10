@@ -38,34 +38,32 @@ def upload():
     file.save(save_path)
 
     image = cv2.imread(save_path)
-    # --- DETECTION AMELIOREE ---
+
+    
+    # --- DETECTION BOOSTÉE ---
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    # On floute pour enlever les petits grains de l'image
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Seuil adaptatif pour gérer les ombres sur la table
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     
-    # On sépare les cartes collées
-kernel = np.ones((5, 5), np.uint8) 
-    mask = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+    # On bouche les trous à l'intérieur des cartes (causés par les dessins)
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     rects_for_js = []
     for c in contours:
         area = cv2.contourArea(c)
-        if area < 4000: continue # On ignore les petits bruits
+        if area < 4000: continue # On ignore les miettes sur la table
         
-        # On récupère le rectangle englobant
         x, y, w, h = cv2.boundingRect(c)
-        rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
         
-        area = cv2.contourArea(c)
-        if area < 5000: continue # Augmenté pour éviter les petits bruits
-        
-        x, y, w, h = cv2.boundingRect(approx)
-        
-        # Filtre de proportion : une carte est plus haute que large
-        # Une station est plus carrée ou large
-        rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
+        # On évite les rectangles trop fins qui ne sont pas des cartes
+        if w > 20 and h > 20:
+            rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
 
     # On renvoie les données à ton JavaScript
     return json.dumps({
