@@ -83,15 +83,19 @@ def upload():
         if area < 1500:
             continue
 
-        x, y, w, h = cv2.boundingRect(c)
+ x, y, w, h = cv2.boundingRect(c)
 
-        cv2.rectangle(
-            draw,
-            (x, y),
-            (x+w, y+h),
-            (0,255,0),
-            2
-        )
+# objet trop grand = probablement carte + station
+if h > 250:
+
+    mid = int(h/2)
+
+    cv2.rectangle(draw, (x, y), (x+w, y+mid), (0,255,0), 2)
+    cv2.rectangle(draw, (x, y+mid), (x+w, y+h), (0,255,0), 2)
+
+else:
+
+    cv2.rectangle(draw, (x, y), (x+w, y+h), (0,255,0), 2)
 
     # Sauvegarder image résultat
     cv2.imwrite(result_path, draw)
