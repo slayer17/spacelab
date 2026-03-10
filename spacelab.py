@@ -83,6 +83,13 @@ obj_type = "CARTE"
 if ratio < 1.8 and area > 20000:
     obj_type = "STATION"
 
+ratio = h / float(w)
+
+obj_type = "CARTE"
+
+if ratio < 1.8 and area > 20000:
+    obj_type = "STATION"
+
 rectangles.append({
     "x": int(x),
     "y": int(y),
