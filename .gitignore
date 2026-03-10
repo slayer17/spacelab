@@ -1,0 +1,4 @@
+uploads/
+processed/
+__pycache__/
+*.pyc
