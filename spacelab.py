@@ -45,30 +45,30 @@ def upload():
 
     file.save(save_path)
 
-    image = cv2.imread(save_path)
-    draw = image.copy()
+image = cv2.imread(save_path)
+draw = image.copy()
 
-    height, width = image.shape[:2]
+height, width = image.shape[:2]
 
-  gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 _, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
-kernel = np.ones((9,9),np.uint8)
+kernel = np.ones((9,9), np.uint8)
 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 mask = cv2.dilate(mask, kernel, iterations=1)
 
-contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Diagnostic : dessiner tous les blobs
-    for c in contours:
+# Diagnostic : dessiner tous les blobs
+for c in contours:
 
-        x,y,w,h = cv2.boundingRect(c)
+    x, y, w, h = cv2.boundingRect(c)
 
-        if w < 40 or h < 40:
-            continue
+    if w < 40 or h < 40:
+        continue
 
-        cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
+    cv2.rectangle(draw, (x, y), (x+w, y+h), (0,255,0), 2)
 
     cv2.imwrite(result_path,draw)
 
