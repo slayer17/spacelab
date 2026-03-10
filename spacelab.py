@@ -3,6 +3,7 @@ import os
 import uuid
 import cv2
 import numpy as np
+import json
 
 app = Flask(__name__)
 
@@ -66,6 +67,8 @@ def upload():
         cv2.CHAIN_APPROX_SIMPLE
     )
 
+    rectangles = []
+
     for c in contours:
 
         area = cv2.contourArea(c)
@@ -74,6 +77,13 @@ def upload():
             continue
 
         x, y, w, h = cv2.boundingRect(c)
+
+        rectangles.append({
+            "x": int(x),
+            "y": int(y),
+            "width": int(w),
+            "height": int(h)
+        })
 
         if h > 250:
 
@@ -88,6 +98,8 @@ def upload():
 
     cv2.imwrite(result_path, draw)
 
+    rectangles_json = json.dumps(rectangles)
+
     img_url = url_for("uploaded_file", filename=name)
     res_url = url_for("processed_file", filename=result)
 
@@ -100,6 +112,11 @@ def upload():
 
     <h2>Image traitée</h2>
     <img src="{res_url}" width="900">
+
+    <script>
+    window.PY_RECTS = {rectangles_json};
+    console.log("Rectangles Python:", window.PY_RECTS);
+    </script>
 
     <br><br>
     <a href="/">Retour</a>
