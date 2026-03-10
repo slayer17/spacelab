@@ -54,7 +54,7 @@ def upload():
 
     _, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
-    kernel = np.ones((5,5),np.uint8)
+    kernel = np.ones((9,9),np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
     contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
