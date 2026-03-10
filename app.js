@@ -1,6 +1,7 @@
 (() => {
+
 /* =====================================================
-   1 - CONFIGURATION ET DOM
+   1 - DOM
 ===================================================== */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -8,11 +9,13 @@ const captureBtn = document.getElementById("captureBtn");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 const loadBtn = document.getElementById("loadBtn");
 const fileInput = document.getElementById("file");
+const modeBtn = document.getElementById("modeBtn");
+const cardName = document.getElementById("cardName");
 
 let currentStream = null;
 
 /* =====================================================
-   2 - CAMERA ET CAPTURE
+   CAMERA
 ===================================================== */
 async function startCamera() {
   try {
@@ -26,7 +29,7 @@ async function startCamera() {
   }
 }
 
-// Cette fonction prend la photo et l'envoie à Python
+// MODIFICATION : On envoie à Python au lieu d'analyser en local direct
 function takePhoto() {
   if (!currentStream) return;
 
@@ -34,115 +37,220 @@ function takePhoto() {
   canvas.height = video.videoHeight;
   ctx.drawImage(video, 0, 0);
 
-  // On transforme l'image du canvas en un fichier (blob) pour l'envoyer
-  canvas.toBlob((blob) => {
-    getDetectionsFromServer(blob);
-  }, 'image/jpeg', 0.9);
+  // Si on est en mode CARDS_ONLY, on analyse direct (pas besoin de Python pour 1 seule carte)
+  if (window.MODE === "CARDS_ONLY") {
+      analyzeCanvas();
+  } else {
+      // Si on est en mode BOARD, on demande à Python de trouver les zones
+      canvas.toBlob((blob) => {
+        getDetectionsFromServer(blob);
+      }, 'image/jpeg', 0.9);
+  }
 }
 
-/* =====================================================
-   3 - CONNEXION AVEC LE SERVEUR PYTHON (RAILWAY)
-===================================================== */
+const startBtn = document.getElementById("startBtn");
+if(startBtn) startBtn.addEventListener("click", startCamera);
+captureBtn.addEventListener("click", takePhoto);
 
+/* =====================================================
+   CONFIG
+===================================================== */
+window.MODE = "BOARD"; // Mode par défaut
+const HASH_SIZE = 16;
+
+/* =====================================================
+   SWITCH MODE
+===================================================== */
+modeBtn.addEventListener("click", () => {
+  window.MODE = window.MODE === "BOARD" ? "CARDS_ONLY" : "BOARD";
+  modeBtn.textContent = "Mode: " + window.MODE;
+  console.log("Mode changé →", window.MODE);
+});
+
+/* =====================================================
+   LOAD IMAGE
+===================================================== */
+loadBtn.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+    // Même logique : Python si Board, direct si Cards_only
+    if (window.MODE === "BOARD") {
+        canvas.toBlob((blob) => getDetectionsFromServer(blob), 'image/jpeg');
+    } else {
+        analyzeCanvas();
+    }
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+/* =====================================================
+   CONNEXION RAILWAY (NOUVEAU)
+===================================================== */
 async function getDetectionsFromServer(blob) {
     const formData = new FormData();
     formData.append('image', blob, 'capture.jpg');
-
-    console.log("Envoi de l'image au serveur Python...");
-
+    console.log("Envoi à Railway pour détection des zones...");
     try {
-        const response = await fetch('/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) throw new Error("Erreur serveur Railway");
-
+        const response = await fetch('/upload', { method: 'POST', body: formData });
         const data = await response.json();
-        console.log("Rectangles reçus de Python:", data.rects);
-        
-        // On dessine les rectangles trouvés par Python
+        // data.rects contient les x, y, w, h trouvés par Python
         processPythonResults(data.rects);
-
     } catch (err) {
-        console.error("Erreur lors de l'envoi au serveur:", err);
-        alert("Le serveur Python ne répond pas. Vérifie ton déploiement Railway.");
+        console.error("Erreur Railway:", err);
+        alert("Le serveur Python ne répond pas.");
     }
 }
 
 function processPythonResults(rects) {
-    // usedCards permet d'éviter de détecter deux fois la même carte
-    let usedCards = new Set();
-    let resume = "";
+    // On transforme les rects de Python en format compatible avec ton code
+    const objects = rects.map(r => ({
+        x: r.x,
+        y: r.y,
+        width: r.w,
+        height: r.h,
+        type: (r.w > r.h) ? "STATION" : "CARTE" // Devine le type par la forme
+    }));
 
-    rects.forEach((rect, index) => {
-        // 1. On dessine le rectangle de base trouvé par Python
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth = 5;
-        ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-
-        // 2. EXTRACTION DE LA ZONE (Le "Cerveau")
-        // On récupère l'image précise à l'intérieur du rectangle
-        const cardData = ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
-        
-        // 3. RECONNAISSANCE (Appel à tes autres fichiers JS)
-        // Ici on utilise ta logique existante de detectColor et cardmatcher
-        const cardColor = detectColor(cardData); // Vient de detectColor.js
-        
-        // On crée une signature rapide pour la zone (simplifié)
-        // Note : Si tu avais une fonction spécifique pour générer la signature, appelle-la ici
-        const signature = { global: "0000...", symbole: "0000...", points: "0000..." }; 
-
-        // Appel de ton moteur de match
-        const match = findBestMatch(signature, cardColor, usedCards);
-
-        if (match && match.card) {
-            usedCards.add(match.card.id);
-            
-            // On affiche le nom de la carte sur le canvas
-            ctx.fillStyle = "yellow";
-            ctx.font = "bold 20px Arial";
-            ctx.fillText(match.card.id, rect.x + 10, rect.y + 25);
-            
-            resume += `<div>Carte ${index + 1}: <b>${match.card.id}</b></div>`;
-        } else {
-            ctx.fillStyle = "orange";
-            ctx.fillText("Inconnu", rect.x + 10, rect.y + 25);
-        }
-    });
-
-    // On affiche le résultat dans ta zone de texte
-    const resultDiv = document.getElementById("result");
-    if (resultDiv) resultDiv.innerHTML = resume;
+    // On lance ton analyse habituelle mais avec les zones de Python !
+    analyzeCanvas(objects);
 }
 
 /* =====================================================
-   4 - ÉVÉNEMENTS (CONNEXION BOUTONS)
+   TES FONCTIONS DE HASH ET COULEUR (CONSERVÉES)
 ===================================================== */
-const startBtn = document.getElementById("startBtn");
-// On relie le bouton "Démarrer caméra"
-if(startBtn) startBtn.addEventListener("click", startCamera);
+function computeGlobalColor(imageData) {
+  const data = imageData.data;
+  let totalH = 0, totalS = 0, totalL = 0, count = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i] / 255, g = data[i+1] / 255, b = data[i+2] / 255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b), delta = max - min;
+    let h = 0, s = 0, l = (max + min) / 2;
+    if (delta !== 0) {
+      s = delta / (1 - Math.abs(2*l - 1));
+      switch(max){
+        case r: h = ((g-b)/delta) % 6; break;
+        case g: h = (b-r)/delta + 2; break;
+        case b: h = (r-g)/delta + 4; break;
+      }
+      h = Math.round(h * 60); if (h < 0) h += 360;
+    }
+    totalH += h; totalS += s; totalL += l; count++;
+  }
+  return { h: totalH / count, s: totalS / count, l: totalL / count };
+}
 
-// On relie le bouton "Capturer" à la fonction takePhoto
-if(captureBtn) captureBtn.addEventListener("click", takePhoto);
+function computeAverageRGB(imageData) {
+  const data = imageData.data;
+  let totalR = 0, totalG = 0, totalB = 0, count = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    totalR += data[i]; totalG += data[i + 1]; totalB += data[i + 2]; count++;
+  }
+  return { r: Math.round(totalR / count), g: Math.round(totalG / count), b: Math.round(totalB / count) };
+}
 
-// Gestion du chargement de fichier local
-if(loadBtn) loadBtn.addEventListener("click", () => fileInput.click());
-if(fileInput) fileInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-      canvas.toBlob((blob) => getDetectionsFromServer(blob), 'image/jpeg');
-    };
-    img.src = event.target.result;
+function computePerceptualHash(zone) {
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = 200; tempCanvas.height = 300;
+  const tempCtx = tempCanvas.getContext("2d");
+  tempCtx.drawImage(canvas, zone.x, zone.y, zone.width, zone.height, 0, 0, 200, 300);
+  const fullData = tempCtx.getImageData(0, 0, 200, 300);
+
+  const symbolData = tempCtx.getImageData(10, 45, 60, 60); // Ajusté selon tes ratios
+  const pointsData = tempCtx.getImageData(10, 225, 100, 60);
+  const stationCenterData = tempCtx.getImageData(10, 40, 45, 210);
+
+  return {
+    global: computeHash(fullData, HASH_SIZE),
+    symbole: computeHash(symbolData, HASH_SIZE),
+    points: computeHash(pointsData, HASH_SIZE),
+    stationCenter: computeHash(stationCenterData, HASH_SIZE),
+    color: computeGlobalColor(fullData),
+    rgbColor: computeAverageRGB(fullData)
   };
-  reader.readAsDataURL(file);
-});
+}
 
-})(); 
+function computeHash(imageData, size) {
+  const tempCanvas = document.createElement("canvas");
+  const tempCtx = tempCanvas.getContext("2d");
+  tempCanvas.width = size; tempCanvas.height = size;
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = imageData.width; sourceCanvas.height = imageData.height;
+  sourceCanvas.getContext("2d").putImageData(imageData, 0, 0);
+  tempCtx.drawImage(sourceCanvas, 0, 0, size, size);
+  const data = tempCtx.getImageData(0, 0, size, size).data;
+  let gray = [];
+  for (let i = 0; i < data.length; i += 4) {
+    gray.push(data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11);
+  }
+  const avg = gray.reduce((a, b) => a + b, 0) / gray.length;
+  return gray.map(v => v > avg ? "1" : "0").join("");
+}
+
+/* =====================================================
+   ANALYSE (VERSION FUSIONNÉE)
+===================================================== */
+function analyzeCanvas(pythonObjects = null) {
+  if (window.MODE === "CARDS_ONLY") {
+    const signature = computePerceptualHash({ x: 0, y: 0, width: canvas.width, height: canvas.height });
+    const match = findBestMatch(signature, null);
+    cardName.textContent = (match && match.card) ? match.card.id + " (" + match.distance.toFixed(1) + ")" : "Aucune correspondance";
+    return;
+  }
+
+  // MODE BOARD
+  // On utilise soit les objets de Python, soit rien
+  const filtered = pythonObjects || [];
+  if (filtered.length === 0) {
+    cardName.textContent = "Aucune zone détectée par Python";
+    return;
+  }
+
+  // Tri comme avant
+  filtered.sort((a, b) => {
+    const rowTolerance = 140;
+    if (Math.abs(a.y - b.y) > rowTolerance) return a.y - b.y;
+    return a.x - b.x;
+  });
+
+  const usedCards = new Set();
+  let resume = "";
+
+  filtered.forEach((zone, index) => {
+    const signature = computePerceptualHash(zone);
+    const stationMatch = findBestStationMatch(signature);
+    const cardMatch = findBestMatch(signature, zone.couleur, usedCards);
+
+    const isGeometricStation = zone.type === "STATION";
+    const isGeometricCard = zone.type === "CARTE";
+
+    // Dessin et Logique identique à ta version
+    ctx.lineWidth = 3;
+    if (isGeometricStation) {
+      ctx.strokeStyle = "red";
+      ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+      resume += `<div>ZONE STATION ${index + 1}</div>`;
+    } else {
+      if (cardMatch && cardMatch.card && cardMatch.distance < 900) {
+        usedCards.add(cardMatch.card.id);
+        ctx.strokeStyle = "yellow";
+        ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+        ctx.fillStyle = "lime";
+        ctx.fillText(cardMatch.card.id, zone.x + 10, zone.y + 25);
+        resume += `<div>${cardMatch.card.id}</div>`;
+      } else {
+        ctx.strokeStyle = "orange";
+        ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+        resume += `<div>CARTE ? zone ${index + 1}</div>`;
+      }
+    }
+  });
+  cardName.innerHTML = resume;
+}
+
+})();
