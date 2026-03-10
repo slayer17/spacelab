@@ -49,19 +49,14 @@ def upload():
     image = cv2.imread(save_path)
     draw = image.copy()
 
- gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-# flou pour supprimer le bruit
-blur = cv2.GaussianBlur(gray, (5,5), 0)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
 
-# détection des contours
-edges = cv2.Canny(blur, 40, 120)
+    edges = cv2.Canny(blur, 40, 120)
 
-# dilatation pour fermer les rectangles
-
-
-    kernel = np.ones((7,7), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.dilate(edges, kernel, iterations=2)
 
     contours, _ = cv2.findContours(
         mask,
@@ -87,16 +82,7 @@ edges = cv2.Canny(blur, 40, 120)
             "height": int(h)
         })
 
-        if h > 250:
-
-            mid = h // 2
-
-            cv2.rectangle(draw,(x,y),(x+w,y+mid),(0,255,0),2)
-            cv2.rectangle(draw,(x,y+mid),(x+w,y+h),(0,255,0),2)
-
-        else:
-
-            cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
+        cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
 
     cv2.imwrite(result_path, draw)
 
