@@ -69,34 +69,67 @@ def upload():
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    rectangles = []
+objects = []
 
-    for c in contours:
+for c in contours:
 
-        area = cv2.contourArea(c)
+    area = cv2.contourArea(c)
 
-        if area < 1500:
-            continue
+    if area < 1500:
+        continue
 
-        x, y, w, h = cv2.boundingRect(c)
-        if h < 120:
-            continue
-        ratio = h / float(w)
+    x, y, w, h = cv2.boundingRect(c)
 
-        obj_type = "CARTE"
+    ratio = h / float(w)
 
-        # stations = plus larges et ratio plus petit
-        if ratio < 1.8 and area > 20000:
+    objects.append({
+        "x": x,
+        "y": y,
+        "width": w,
+        "height": h,
+        "area": area,
+        "ratio": ratio
+    })
+# ==========================
+# DETECTION DES STATIONS
+# ==========================
+
+stations = sorted(
+    [o for o in objects if o["ratio"] < 1.9],
+    key=lambda o: o["area"],
+    reverse=True
+)[:3]
+
+rectangles = []
+
+for obj in objects:
+
+    obj_type = "CARTE"
+
+    for s in stations:
+        if obj["x"] == s["x"] and obj["y"] == s["y"]:
             obj_type = "STATION"
 
-        rectangles.append({
-            "x": int(x),
-            "y": int(y),
-            "width": int(w),
-            "height": int(h),
-            "type": obj_type
-        })
+    rectangles.append({
+        "x": int(obj["x"]),
+        "y": int(obj["y"]),
+        "width": int(obj["width"]),
+        "height": int(obj["height"]),
+        "type": obj_type
+    })
 
+    color = (0,255,0)
+
+    if obj_type == "STATION":
+        color = (0,0,255)
+
+    cv2.rectangle(
+        draw,
+        (obj["x"], obj["y"]),
+        (obj["x"]+obj["width"], obj["y"]+obj["height"]),
+        color,
+        2
+    )
         cv2.rectangle(draw, (x,y), (x+w,y+h), (0,255,0), 2)
 
     cv2.imwrite(result_path, draw)
