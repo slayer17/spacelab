@@ -33,6 +33,7 @@ def home():
 
 @app.route("/upload", methods=["POST"])
 def upload():
+
     file = request.files["image"]
 
     uid = uuid.uuid4().hex
@@ -45,10 +46,8 @@ def upload():
     file.save(save_path)
 
     image = cv2.imread(save_path)
-    if image is None:
-        return "Erreur : image illisible", 400
-
     draw = image.copy()
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     _, mask = cv2.threshold(
@@ -58,7 +57,7 @@ def upload():
         cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
 
-    kernel = np.ones((7, 7), np.uint8)
+    kernel = np.ones((7,7), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     contours, _ = cv2.findContours(
@@ -68,21 +67,24 @@ def upload():
     )
 
     for c in contours:
+
         area = cv2.contourArea(c)
+
         if area < 1500:
             continue
 
         x, y, w, h = cv2.boundingRect(c)
 
-        # Si l'objet est trop haut, on le coupe en 2
-        # pour séparer carte + station fusionnées.
         if h > 250:
+
             mid = h // 2
 
-            cv2.rectangle(draw, (x, y), (x + w, y + mid), (0, 255, 0), 2)
-            cv2.rectangle(draw, (x, y + mid), (x + w, y + h), (0, 255, 0), 2)
+            cv2.rectangle(draw,(x,y),(x+w,y+mid),(0,255,0),2)
+            cv2.rectangle(draw,(x,y+mid),(x+w,y+h),(0,255,0),2)
+
         else:
-            cv2.rectangle(draw, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            cv2.rectangle(draw,(x,y),(x+w,y+h),(0,255,0),2)
 
     cv2.imwrite(result_path, draw)
 
