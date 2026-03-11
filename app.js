@@ -119,7 +119,7 @@ function processPythonResults(rects) {
             y: r.y,
             width: r.w,
             height: r.h,
-            type: (ratio < 1.4) ? "STATION" : "CARTE"
+            type: r.type
         };
 
     });
