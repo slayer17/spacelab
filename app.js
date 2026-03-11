@@ -49,7 +49,7 @@ function takePhoto() {
   }
 }
 
-const startBtn = document.getElementById("startBtn");
+ startBtn = document.getElementById("startBtn");
 if(startBtn) startBtn.addEventListener("click", startCamera);
 captureBtn.addEventListener("click", takePhoto);
 
@@ -57,7 +57,7 @@ captureBtn.addEventListener("click", takePhoto);
    CONFIG
 ===================================================== */
 window.MODE = "BOARD"; // Mode par défaut
-const HASH_SIZE = 16;
+ HASH_SIZE = 16;
 
 /* =====================================================
    SWITCH MODE
@@ -73,9 +73,9 @@ modeBtn.addEventListener("click", () => {
 ===================================================== */
 loadBtn.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (event) => {
-  const file = event.target.files[0];
+   file = event.target.files[0];
   if (!file) return;
-  const img = new Image();
+   img = new Image();
   img.onload = () => {
     canvas.width = img.width;
     canvas.height = img.height;
@@ -109,16 +109,23 @@ async function getDetectionsFromServer(blob) {
 }
 
 function processPythonResults(rects) {
-    // On transforme les rects de Python en format compatible avec ton code
-    const objects = rects.map(r => ({
-        x: r.x,
-        y: r.y,
-        width: r.w,
-        height: r.h,
-        type: (r.w > r.h) ? "STATION" : "CARTE" // Devine le type par la forme
-    }));
 
-    // On lance ton analyse habituelle mais avec les zones de Python !
+    const objects = rects.map(r => {
+
+        const ratio = r.h / r.w;
+
+        return {
+            x: r.x,
+            y: r.y,
+            width: r.w,
+            height: r.h,
+            type: (ratio < 1.4) ? "STATION" : "CARTE"
+        };
+
+    });
+
+    console.log("Zones Python :", objects);
+
     analyzeCanvas(objects);
 }
 
