@@ -1,128 +1,95 @@
-from flask import Flask, request, url_for, send_from_directory
+from flask import Flask, request, send_from_directory
 import os
 import uuid
 import cv2
 import numpy as np
 import json
 
-
-
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 
 @app.route("/")
 def home():
-    # On vérifie si le fichier existe avant de l'ouvrir
-    if not os.path.exists("index.html"):
-        # Si le fichier manque, on affiche la liste des fichiers présents
-        # Cela nous aidera à comprendre où Railway a mis tes fichiers
-        files = os.listdir('.')
-        return f"Erreur : index.html non trouvé. Fichiers présents : {files}", 500
-    
-    with open("index.html", "r", encoding="utf-8") as f:
+    with open("index.html","r",encoding="utf-8") as f:
         return f.read()
 
 @app.route("/upload", methods=["POST"])
 def upload():
+
     file = request.files.get("image")
-    if not file: return "Pas d'image", 400
+    if not file:
+        return json.dumps({"rects":[]})
 
     uid = uuid.uuid4().hex
-    name = f"{uid}_{file.filename}"
-    save_path = os.path.join(UPLOAD_FOLDER, name)
-    file.save(save_path)
+    path = os.path.join(UPLOAD_FOLDER, uid+".jpg")
+    file.save(path)
 
-    image = cv2.imread(save_path)
-    if image is None: return "Erreur lecture image", 500
+    img = cv2.imread(path)
 
-    # 1. Prétraitement classique
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 2. SEPARATION DES CARTES (La partie magique)
-    # On nettoie un peu le bruit
-    kernel = np.ones((3,3), np.uint8)
-    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+    blur = cv2.GaussianBlur(gray,(7,7),0)
 
-    # On calcule la distance au bord noir le plus proche
-    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
-    
-    # On ne garde que les "pics" de distance (le centre des cartes)
-    # Cela sépare automatiquement les cartes qui se touchent
-    ret, sure_fg = cv2.threshold(dist_transform, 0.35 * dist_transform.max(), 255, 0)
-    sure_fg = np.uint8(sure_fg)
+    edges = cv2.Canny(blur,40,120)
 
-    # 3. On trouve les contours sur ces centres séparés
-    contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = np.ones((5,5),np.uint8)
+    mask = cv2.dilate(edges,kernel,iterations=2)
 
-    objects = []
+    contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+
+    objects=[]
 
     for c in contours:
 
-        area = cv2.contourArea(c)
+        area=cv2.contourArea(c)
 
-        if area < 2000:
+        if area < 3000:
             continue
 
-        x, y, w, h = cv2.boundingRect(c)
+        x,y,w,h=cv2.boundingRect(c)
 
         objects.append({
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "area": area
+            "x":int(x),
+            "y":int(y),
+            "w":int(w),
+            "h":int(h),
+            "area":area
         })
 
-    # ==========================
-    # TRI PAR TAILLE
-    # ==========================
+    # tri par taille
+    objects=sorted(objects,key=lambda o:o["area"],reverse=True)
 
-    objects = sorted(objects, key=lambda o: o["area"], reverse=True)
+    # les 3 plus gros = stations
+    stations=objects[:3]
 
-    # ==========================
-    # LES 3 PLUS GROS = STATIONS
-    # ==========================
+    rects=[]
 
-    stations = objects[:3]
+    for o in objects:
 
-    rects_for_js = []
-
-    for obj in objects:
-
-        obj_type = "CARTE"
+        t="CARTE"
 
         for s in stations:
-            if obj["x"] == s["x"] and obj["y"] == s["y"]:
-                obj_type = "STATION"
+            if o["x"]==s["x"] and o["y"]==s["y"]:
+                t="STATION"
 
-        rects_for_js.append({
-            "x": int(obj["x"]),
-            "y": int(obj["y"]),
-            "w": int(obj["w"]),
-            "h": int(obj["h"]),
-            "type": obj_type
+        rects.append({
+            "x":o["x"],
+            "y":o["y"],
+            "w":o["w"],
+            "h":o["h"],
+            "type":t
         })
 
-    return json.dumps({
-        "status": "success",
-        "rects": rects_for_js
-    })
+    return json.dumps({"rects":rects})
 
-# Pour que Railway trouve tes fichiers JS (app.js, cards.js...)
+
 @app.route('/<path:path>')
-def send_static(path):
+def static_files(path):
     return send_from_directory('.', path)
 
-@app.route('/processed/<filename>')
-def send_processed(filename):
-    return send_from_directory(PROCESSED_FOLDER, filename)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port=int(os.environ.get("PORT",5000))
+    app.run(host="0.0.0.0",port=port)
