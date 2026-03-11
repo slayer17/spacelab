@@ -10,10 +10,12 @@ app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+
 @app.route("/")
 def home():
     with open("index.html","r",encoding="utf-8") as f:
         return f.read()
+
 
 @app.route("/upload", methods=["POST"])
 def upload():
@@ -45,41 +47,78 @@ def upload():
 
         area=cv2.contourArea(c)
 
-        if area < 3000:
+        if area < 5000:
             continue
 
         x,y,w,h=cv2.boundingRect(c)
 
         objects.append({
-            "x":int(x),
-            "y":int(y),
-            "w":int(w),
-            "h":int(h),
+            "x":x,
+            "y":y,
+            "w":w,
+            "h":h,
             "area":area
         })
 
-    # tri par taille
+    # tri par surface
     objects=sorted(objects,key=lambda o:o["area"],reverse=True)
 
-    # les 3 plus gros = stations
+    # stations = 3 plus grandes
     stations=objects[:3]
+
+    stations=sorted(stations,key=lambda s:s["x"])
 
     rects=[]
 
-    for o in objects:
-
-        t="CARTE"
-
-        for s in stations:
-            if o["x"]==s["x"] and o["y"]==s["y"]:
-                t="STATION"
+    for s in stations:
 
         rects.append({
-            "x":o["x"],
-            "y":o["y"],
-            "w":o["w"],
-            "h":o["h"],
-            "type":t
+            "x":s["x"],
+            "y":s["y"],
+            "w":s["w"],
+            "h":s["h"],
+            "type":"STATION"
+        })
+
+    # calcul grille
+    left=stations[0]
+    middle=stations[1]
+    right=stations[2]
+
+    dx=middle["x"]-left["x"]
+    dy=left["h"]
+
+    card_w=int(left["w"]*0.7)
+    card_h=int(left["h"]*0.9)
+
+    positions=[
+
+        (left["x"],left["y"]-dy),
+        (middle["x"],middle["y"]-dy),
+        (right["x"],right["y"]-dy),
+
+        (left["x"]-dx,left["y"]),
+        (left["x"]+dx,left["y"]),
+
+        (middle["x"]-dx,middle["y"]),
+        (middle["x"]+dx,middle["y"]),
+
+        (right["x"]-dx,right["y"]),
+        (right["x"]+dx,right["y"]),
+
+        (left["x"],left["y"]+dy),
+        (middle["x"],middle["y"]+dy),
+        (right["x"],right["y"]+dy)
+    ]
+
+    for x,y in positions:
+
+        rects.append({
+            "x":int(x),
+            "y":int(y),
+            "w":card_w,
+            "h":card_h,
+            "type":"CARTE"
         })
 
     return json.dumps({"rects":rects})
