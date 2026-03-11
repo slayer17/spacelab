@@ -33,44 +33,59 @@ def upload():
 
     uid = uuid.uuid4().hex
     name = f"{uid}_{file.filename}"
-    result = f"{uid}_result.png"
     save_path = os.path.join(UPLOAD_FOLDER, name)
-    result_path = os.path.join(PROCESSED_FOLDER, result)
     file.save(save_path)
 
     image = cv2.imread(save_path)
+    if image is None: return "Erreur lecture image", 500
 
-    
-    # --- DETECTION BOOSTÉE ---
+    # 1. Prétraitement classique
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # On floute pour enlever les petits grains de l'image
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Seuil adaptatif pour gérer les ombres sur la table
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    
-    # On bouche les trous à l'intérieur des cartes (causés par les dessins)
-    kernel = np.ones((5,5), np.uint8)
-    mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 2. SEPARATION DES CARTES (La partie magique)
+    # On nettoie un peu le bruit
+    kernel = np.ones((3,3), np.uint8)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    # On calcule la distance au bord noir le plus proche
+    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
+    
+    # On ne garde que les "pics" de distance (le centre des cartes)
+    # Cela sépare automatiquement les cartes qui se touchent
+    ret, sure_fg = cv2.threshold(dist_transform, 0.3 * dist_transform.max(), 255, 0)
+    sure_fg = np.uint8(sure_fg)
+
+    # 3. On trouve les contours sur ces centres séparés
+    contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     rects_for_js = []
     for c in contours:
-        area = cv2.contourArea(c)
-        if area < 4000: continue # On ignore les miettes sur la table
-        
+        # Comme on travaille sur le "centre" érodé, on récupère le rectangle
         x, y, w, h = cv2.boundingRect(c)
         
-        # On évite les rectangles trop fins qui ne sont pas des cartes
-        if w > 20 and h > 20:
-            rects_for_js.append({"x": x, "y": y, "w": w, "h": h})
+        # On agrandit le rectangle pour compenser l'érosion et bien englober la carte
+        # On rajoute environ 20% de marge
+        margin_w = int(w * 0.25)
+        margin_h = int(h * 0.25)
+        
+        new_x = max(0, x - margin_w)
+        new_y = max(0, y - margin_h)
+        new_w = w + (margin_w * 2)
+        new_h = h + (margin_h * 2)
 
-    # On renvoie les données à ton JavaScript
+        if new_w > 30 and new_h > 30: # Filtre anti-bruit
+            rects_for_js.append({
+                "x": int(new_x),
+                "y": int(new_y),
+                "w": int(new_w),
+                "h": int(new_h)
+            })
+
     return json.dumps({
         "status": "success",
-        "rects": rects_for_js,
-        "image_url": f"/processed/{result}"
+        "rects": rects_for_js
     })
 
 # Pour que Railway trouve tes fichiers JS (app.js, cards.js...)
