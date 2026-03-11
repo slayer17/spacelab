@@ -7,7 +7,7 @@ import json
 
 
 
-app = Flask(__name__)ret, sure_fg
+app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
