@@ -58,56 +58,60 @@ def upload():
     sure_fg = np.uint8(sure_fg)
 
     # 3. On trouve les contours sur ces centres séparés
-    contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+  contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-objects = []
+    objects = []
 
-for c in contours:
+    for c in contours:
 
-    area = cv2.contourArea(c)
+        area = cv2.contourArea(c)
 
-    if area < 2000:
-        continue
+        if area < 2000:
+            continue
 
-    x, y, w, h = cv2.boundingRect(c)
+        x, y, w, h = cv2.boundingRect(c)
 
-    objects.append({
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "area": area
-    })
+        objects.append({
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "area": area
+        })
 
+    # ==========================
+    # TRI PAR TAILLE
+    # ==========================
 
-# ==========================
-# 1. On trie par taille
-# ==========================
+    objects = sorted(objects, key=lambda o: o["area"], reverse=True)
 
-objects = sorted(objects, key=lambda o: o["area"], reverse=True)
+    # ==========================
+    # LES 3 PLUS GROS = STATIONS
+    # ==========================
 
-# ==========================
-# 2. Les 3 plus grosses = stations
-# ==========================
+    stations = objects[:3]
 
-stations = objects[:3]
+    rects_for_js = []
 
-rects_for_js = []
+    for obj in objects:
 
-for obj in objects:
+        obj_type = "CARTE"
 
-    obj_type = "CARTE"
+        for s in stations:
+            if obj["x"] == s["x"] and obj["y"] == s["y"]:
+                obj_type = "STATION"
 
-    for s in stations:
-        if obj["x"] == s["x"] and obj["y"] == s["y"]:
-            obj_type = "STATION"
+        rects_for_js.append({
+            "x": int(obj["x"]),
+            "y": int(obj["y"]),
+            "w": int(obj["w"]),
+            "h": int(obj["h"]),
+            "type": obj_type
+        })
 
-    rects_for_js.append({
-        "x": int(obj["x"]),
-        "y": int(obj["y"]),
-        "w": int(obj["w"]),
-        "h": int(obj["h"]),
-        "type": obj_type
+    return json.dumps({
+        "status": "success",
+        "rects": rects_for_js
     })
 
 # Pour que Railway trouve tes fichiers JS (app.js, cards.js...)
