@@ -58,7 +58,7 @@ def upload():
     sure_fg = np.uint8(sure_fg)
 
     # 3. On trouve les contours sur ces centres séparés
-  contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     objects = []
 
