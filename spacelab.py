@@ -60,32 +60,54 @@ def upload():
     # 3. On trouve les contours sur ces centres séparés
     contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    rects_for_js = []
-    for c in contours:
-        # Comme on travaille sur le "centre" érodé, on récupère le rectangle
-        x, y, w, h = cv2.boundingRect(c)
-        
-        # On agrandit le rectangle pour compenser l'érosion et bien englober la carte
-        # On rajoute environ 20% de marge
-        margin_w = int(w * 0.35)
-        margin_h = int(h * 0.35)
-        
-        new_x = max(0, x - margin_w)
-        new_y = max(0, y - margin_h)
-        new_w = w + (margin_w * 2)
-        new_h = h + (margin_h * 2)
+objects = []
 
-        if new_w > 30 and new_h > 30: # Filtre anti-bruit
-            rects_for_js.append({
-                "x": int(new_x),
-                "y": int(new_y),
-                "w": int(new_w),
-                "h": int(new_h)
-            })
+for c in contours:
 
-    return json.dumps({
-        "status": "success",
-        "rects": rects_for_js
+    area = cv2.contourArea(c)
+
+    if area < 2000:
+        continue
+
+    x, y, w, h = cv2.boundingRect(c)
+
+    objects.append({
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "area": area
+    })
+
+
+# ==========================
+# 1. On trie par taille
+# ==========================
+
+objects = sorted(objects, key=lambda o: o["area"], reverse=True)
+
+# ==========================
+# 2. Les 3 plus grosses = stations
+# ==========================
+
+stations = objects[:3]
+
+rects_for_js = []
+
+for obj in objects:
+
+    obj_type = "CARTE"
+
+    for s in stations:
+        if obj["x"] == s["x"] and obj["y"] == s["y"]:
+            obj_type = "STATION"
+
+    rects_for_js.append({
+        "x": int(obj["x"]),
+        "y": int(obj["y"]),
+        "w": int(obj["w"]),
+        "h": int(obj["h"]),
+        "type": obj_type
     })
 
 # Pour que Railway trouve tes fichiers JS (app.js, cards.js...)
