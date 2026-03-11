@@ -54,7 +54,7 @@ def upload():
     
     # On ne garde que les "pics" de distance (le centre des cartes)
     # Cela sépare automatiquement les cartes qui se touchent
-    ret, sure_fg = cv2.threshold(dist_transform, 0.5 * dist_transform.max(), 255, 0)
+    ret, sure_fg = cv2.threshold(dist_transform, 0.35 * dist_transform.max(), 255, 0)
     sure_fg = np.uint8(sure_fg)
 
     # 3. On trouve les contours sur ces centres séparés
