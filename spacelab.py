@@ -7,7 +7,7 @@ import json
 
 
 
-app = Flask(__name__)
+app = Flask(__name__)ret, sure_fg
 
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
@@ -54,7 +54,7 @@ def upload():
     
     # On ne garde que les "pics" de distance (le centre des cartes)
     # Cela sépare automatiquement les cartes qui se touchent
-    ret, sure_fg = cv2.threshold(dist_transform, 0.3 * dist_transform.max(), 255, 0)
+    ret, sure_fg = cv2.threshold(dist_transform, 0.5 * dist_transform.max(), 255, 0)
     sure_fg = np.uint8(sure_fg)
 
     # 3. On trouve les contours sur ces centres séparés
@@ -67,8 +67,8 @@ def upload():
         
         # On agrandit le rectangle pour compenser l'érosion et bien englober la carte
         # On rajoute environ 20% de marge
-        margin_w = int(w * 0.25)
-        margin_h = int(h * 0.25)
+        margin_w = int(w * 0.35)
+        margin_h = int(h * 0.35)
         
         new_x = max(0, x - margin_w)
         new_y = max(0, y - margin_h)
