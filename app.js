@@ -14,6 +14,7 @@ const cardName = document.getElementById("cardName");
 
 let currentStream = null;
 
+   
 /* =====================================================
    CAMERA
 ===================================================== */
