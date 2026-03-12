@@ -198,11 +198,18 @@ def build_grid(stations):
 
     left, mid, right = stations
 
-    dx = int((mid["x"] - left["x"]) * 0.9)
-    dy = int(left["h"] * 0.95)
+    # distance entre stations
+    dx_real = mid["x"] - left["x"]
 
-    card_w = int(left["w"] * 0.55)
-    card_h = int(left["h"] * 0.8)
+    # on réduit un peu sinon la grille déborde
+    dx = int(dx_real * 0.75)
+
+    # hauteur station
+    dy = int(left["h"] * 0.9)
+
+    # taille carte plus petite que station
+    card_w = int(left["w"] * 0.45)
+    card_h = int(left["h"] * 0.7)
 
     positions = [
 
@@ -223,6 +230,10 @@ def build_grid(stations):
         (mid["x"], mid["y"] + dy),
         (right["x"], right["y"] + dy),
     ]
+
+    print("GRID dx:", dx)
+    print("GRID dy:", dy)
+    print("CARD size:", card_w, card_h)
 
     return positions, card_w, card_h
 
