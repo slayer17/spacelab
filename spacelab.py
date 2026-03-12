@@ -266,7 +266,8 @@ def upload():
             "type": "CARTE"
         })
 
-        return jsonify({"rects": rects})
+    
+    return jsonify({"rects": rects})
 
 
 from flask import send_from_directory
