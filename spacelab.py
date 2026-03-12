@@ -16,7 +16,10 @@ def detect_objects(img):
 
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edges = cv2.Canny(blur, 50, 150)
+    edges = cv2.Canny(blur, 40, 120)
+
+    kernel = np.ones((3, 3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=1)
 
     contours, _ = cv2.findContours(
         edges,
@@ -30,43 +33,36 @@ def detect_objects(img):
 
         area = cv2.contourArea(c)
 
-        if area < 2000:
+        if area < 1500:
             continue
 
         x, y, w, h = cv2.boundingRect(c)
 
         ratio = h / float(w)
 
-        # taille carte approx
-        if 80 < w < 200 and 110 < h < 260:
+        obj_type = "UNKNOWN"
 
-            objects.append({
-                "x": x,
-                "y": y,
-                "w": w,
-                "h": h,
-                "area": area,
-                "ratio": ratio,
-                "type": "CARD"
-            })
+        # ratio carte ~ 9/7 = 1.28
+        if 1.1 < ratio < 1.6:
+            obj_type = "CARD"
 
-        # taille station approx
-        elif w > 120 and h > 250:
+        # station = très grande
+        if area > 30000 and ratio > 1.3:
+            obj_type = "STATION"
 
-            objects.append({
-                "x": x,
-                "y": y,
-                "w": w,
-                "h": h,
-                "area": area,
-                "ratio": ratio,
-                "type": "STATION"
-            })
+        objects.append({
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "area": area,
+            "ratio": ratio,
+            "type": obj_type
+        })
 
-    print("OBJECTS:", objects)
+    print("OBJECTS:", len(objects))
 
     return objects
-
 
 # =====================================================
 # FIND STATIONS (max 3)
@@ -81,10 +77,20 @@ def find_stations(objects):
 
     stations = sorted(
         stations,
+        key=lambda o: o["area"],
+        reverse=True
+    )
+
+    stations = stations[:3]
+
+    stations = sorted(
+        stations,
         key=lambda o: o["x"]
     )
 
-    return stations[:3]
+    print("STATIONS:", stations)
+
+    return stations
 
 # =====================================================
 # BUILD LAYOUT FROM STATIONS
