@@ -14,15 +14,12 @@ UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def load_cards():
-
-```
 cards = []
 
 files = []
-files += glob.glob(CARDS + "/*.jpg")
-files += glob.glob(CARDS + "/*.jpeg")
-files += glob.glob(CARDS + "/*.png")
-
+files += glob.glob(CARDS_FOLDER + "/*.jpg")
+files += glob.glob(CARDS_FOLDER + "/*.jpeg")
+files += glob.glob(CARDS_FOLDER + "/*.png")
 for f in files:
 
     img = cv2.imread(f)
