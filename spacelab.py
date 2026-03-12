@@ -6,7 +6,7 @@ import numpy as np
 import json
 import glob
 
-app = Flask(**name**)
+app = Flask(__name__)
 
 CARDS_FOLDER = "cards"
 UPLOAD_FOLDER = "uploads"
