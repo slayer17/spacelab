@@ -12,17 +12,30 @@ UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def load_card_images():
+
     cards = []
-    files = glob.glob(CARDS_FOLDER + "/*.jpeg")
+
+    files = []
+    files += glob.glob(CARDS_FOLDER + "/*.jpg")
+    files += glob.glob(CARDS_FOLDER + "/*.jpeg")
+    files += glob.glob(CARDS_FOLDER + "/*.png")
+
     for f in files:
+
         img = cv2.imread(f)
+
         if img is None:
             continue
+
         name = os.path.basename(f)
+
         cards.append({
             "name": name,
             "img": img
         })
+
+    print("CARDS LOADED:", len(cards))
+
     return cards
 
 # Chargement de la base de données au démarrage
