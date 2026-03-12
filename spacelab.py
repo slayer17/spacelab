@@ -139,29 +139,24 @@ def build_grid(stations):
         left["y"] + left["h"] / 2
     ], dtype=np.float32)
 
-    p_mid = np.array([
-        mid["x"] + mid["w"] / 2,
-        mid["y"] + mid["h"] / 2
-    ], dtype=np.float32)
-
     p_right = np.array([
         right["x"] + right["w"] / 2,
         right["y"] + right["h"] / 2
     ], dtype=np.float32)
 
     vx = p_right - p_left
-
     dist = np.linalg.norm(vx)
 
     if dist < 1:
         return [], 0, 0
 
     ux = vx / dist
-
     uy = np.array([-ux[1], ux[0]], dtype=np.float32)
 
-    step_x = dist / 2
+    # distance entre stations
+    step_x = dist / 2.0
 
+    # hauteur moyenne station
     avg_h = (
         left["h"] +
         mid["h"] +
@@ -174,22 +169,22 @@ def build_grid(stations):
         right["w"]
     ) / 3
 
-    step_y = avg_h * 0.95
+    # ===== réglages plus réalistes =====
 
-    card_w = int(avg_w * 0.6)
+    step_y = avg_h * 1.15
 
-    card_h = int(avg_h * 0.8)
+    card_w = int(avg_w * 0.75)
+    card_h = int(avg_h * 1.05)
 
     offsets = [
 
+        # haut
         (0, -1), (1, -1), (2, -1),
 
-        (-1, 0), (1, 0),
+        # milieu
+        (-1, 0), (0, 0), (1, 0), (2, 0), (3, 0),
 
-        (0, 0), (2, 0),
-
-        (1, 0), (3, 0),
-
+        # bas
         (0, 1), (1, 1), (2, 1)
 
     ]
