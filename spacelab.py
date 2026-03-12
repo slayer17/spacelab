@@ -134,6 +134,7 @@ def build_grid(stations):
 
     left, mid, right = stations
 
+    # centres des stations
     p_left = np.array([
         left["x"] + left["w"] / 2,
         left["y"] + left["h"] / 2
@@ -149,6 +150,7 @@ def build_grid(stations):
         right["y"] + right["h"] / 2
     ], dtype=np.float32)
 
+    # vecteur horizontal
     vx = p_right - p_left
     dist = np.linalg.norm(vx)
 
@@ -156,35 +158,34 @@ def build_grid(stations):
         return [], 0, 0
 
     ux = vx / dist
-    uy = np.array([-ux[1], ux[0]], dtype=np.float32)
+
+    # vecteur vertical PERPENDICULAIRE
+    uy = np.array([ux[1], -ux[0]], dtype=np.float32)
 
     # distance entre stations = 2 cartes + 1 station
-    step_x = dist / 3.0
+    step_x = dist / 3.2
 
     avg_h = (left["h"] + mid["h"] + right["h"]) / 3
     avg_w = (left["w"] + mid["w"] + right["w"]) / 3
 
-    # hauteur entre lignes
-    step_y = avg_h * 1.05
+    # hauteur entre lignes (plus petit !)
+    step_y = avg_h * 0.85
 
     # taille carte
-    card_w = int(avg_w * 0.75)
-    card_h = int(avg_h * 0.95)
+    card_w = int(avg_w * 0.7)
+    card_h = int(avg_h * 0.9)
 
     offsets = [
 
-        # haut
         (-1, -1),
         (0, -1),
         (1, -1),
 
-        # milieu
         (-2, 0),
         (-1, 0),
         (1, 0),
         (2, 0),
 
-        # bas
         (-1, 1),
         (0, 1),
         (1, 1),
