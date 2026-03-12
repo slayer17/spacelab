@@ -6,7 +6,30 @@ import numpy as np
 import json
 import glob
 CARDS_FOLDER = "cards"
+def load_card_images():
 
+    cards = []
+
+    files = glob.glob(CARDS_FOLDER + "/*.jpg")
+
+    for f in files:
+
+        img = cv2.imread(f)
+
+        if img is None:
+            continue
+
+        name = os.path.basename(f)
+
+        cards.append({
+            "name": name,
+            "img": img
+        })
+
+    return cards
+
+
+CARD_DB = load_card_images()
 app = Flask(__name__)
 
 UPLOAD_FOLDER = "uploads"
@@ -124,7 +147,25 @@ def upload():
         })
 
     return json.dumps({"rects":rects})
+def compare_card(crop):
 
+    best_score = 999999
+    best_name = None
+
+    for card in CARD_DB:
+
+        ref = cv2.resize(card["img"], (200, 300))
+        test = cv2.resize(crop, (200, 300))
+
+        diff = cv2.absdiff(ref, test)
+
+        score = np.sum(diff)
+
+        if score < best_score:
+            best_score = score
+            best_name = card["name"]
+
+    return best_name, best_score
 
 @app.route('/<path:path>')
 def static_files(path):
