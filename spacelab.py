@@ -338,6 +338,8 @@ def upload():
 
         name, score = recognize_card(crop)
 
+        print("card:", name, "score:", score)
+
         rects.append({
             "x": x,
             "y": y,
