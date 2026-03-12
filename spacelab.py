@@ -188,11 +188,24 @@ def detect_stations(img):
             "area": area
         })
 
-    objects = sorted(objects, key=lambda o: o["area"], reverse=True)
+   objects = sorted(objects, key=lambda o: o["h"], reverse=True)
 
-    stations = objects[:3]
+# prendre les objets de taille proche
+stations = []
 
-    stations = sorted(stations, key=lambda s: s["x"])
+if len(objects) > 0:
+
+    ref_h = objects[0]["h"]
+
+    for o in objects:
+
+        if abs(o["h"] - ref_h) < 40:
+            stations.append(o)
+
+        if len(stations) == 3:
+            break
+
+stations = sorted(stations, key=lambda s: s["x"])
 
     print("stations found:", len(stations))
 
