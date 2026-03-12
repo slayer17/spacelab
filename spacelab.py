@@ -134,57 +134,6 @@ def recognize_card(crop):
 
 def detect_stations(img):
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
-
-    edges = cv2.Canny(blur, 40, 120)
-
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.dilate(edges, kernel, iterations=2)
-
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    objects = []
-
-for c in contours:
-
-    area = cv2.contourArea(c)
-
-    if area < 8000:
-        continue
-
-    x, y, w, h = cv2.boundingRect(c)
-
-    ratio = h / float(w)
-
-    # stations = plus haut que large
-    if ratio < 1.2:
-        continue
-
-    # stations assez grandes
-    if h < 120:
-        continue
-
-    objects.append({
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "area": area
-    })
-
-    objects = sorted(objects, key=lambda o: o["area"], reverse=True)
-
-    stations = objects[:3]
-
-    stations = sorted(stations, key=lambda s: s["x"])
-
-    return stations
-
 
 # ======================
 # GRID
