@@ -12,15 +12,21 @@ app = Flask(__name__)
 
 def detect_objects(img):
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    # fond blanc / clair
+    lower = np.array([0, 0, 150])
+    upper = np.array([180, 60, 255])
 
-    edges = cv2.Canny(blur, 40, 120)
+    mask_bg = cv2.inRange(hsv, lower, upper)
+
+    # inverse → garder cartes
+    mask = cv2.bitwise_not(mask_bg)
 
     kernel = np.ones((5, 5), np.uint8)
 
-    mask = cv2.dilate(edges, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
     contours, _ = cv2.findContours(
         mask,
@@ -34,7 +40,7 @@ def detect_objects(img):
 
         area = cv2.contourArea(c)
 
-        if area < 6000:
+        if area < 4000:
             continue
 
         x, y, w, h = cv2.boundingRect(c)
@@ -49,6 +55,8 @@ def detect_objects(img):
             "area": area,
             "ratio": ratio
         })
+
+    print("OBJECTS:", len(objects))
 
     return objects
 
