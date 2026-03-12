@@ -1,27 +1,59 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
-  <meta charset="UTF-8">
-  <title>SpaceLab – Card Reader</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <title>SpaceLab – Card Reader</title>
+    <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
 <h2>Lecteur SpaceLab</h2>
 
+
+<!-- BOUTONS -->
+
 <button id="startBtn">Démarrer caméra</button>
 <button id="captureBtn">Capturer</button>
+<button id="loadBtn">Charger image</button>
+
+<input
+    type="file"
+    id="file"
+    accept="image/*"
+    style="display:none"
+>
+
 
 <br><br>
 
-<video id="video" autoplay playsinline></video>
+
+<!-- CAMERA -->
+
+<video
+    id="video"
+    autoplay
+    playsinline
+    style="max-width:600px"
+></video>
+
 
 <br><br>
 
-<canvas id="canvas" width="600" height="900"
-        style="border:1px solid black"></canvas>
+
+<!-- CANVAS -->
+
+<canvas
+    id="canvas"
+    width="600"
+    height="900"
+    style="border:1px solid black"
+></canvas>
+
 
 <h3>Résultat</h3>
+
 <pre id="result"></pre>
 
 
