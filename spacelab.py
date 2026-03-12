@@ -150,22 +150,32 @@ def detect_stations(img):
 
     objects = []
 
-    for c in contours:
+for c in contours:
 
-        area = cv2.contourArea(c)
+    area = cv2.contourArea(c)
 
-        if area < 5000:
-            continue
+    if area < 8000:
+        continue
 
-        x, y, w, h = cv2.boundingRect(c)
+    x, y, w, h = cv2.boundingRect(c)
 
-        objects.append({
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "area": area
-        })
+    ratio = h / float(w)
+
+    # stations = plus haut que large
+    if ratio < 1.2:
+        continue
+
+    # stations assez grandes
+    if h < 120:
+        continue
+
+    objects.append({
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "area": area
+    })
 
     objects = sorted(objects, key=lambda o: o["area"], reverse=True)
 
@@ -184,11 +194,11 @@ def build_grid(stations):
 
     left, mid, right = stations
 
-    dx = mid["x"] - left["x"]
-    dy = left["h"]
+    dx = int((mid["x"] - left["x"]) * 0.9)
+    dy = int(left["h"] * 0.95)
 
-    card_w = int(left["w"] * 0.7)
-    card_h = int(left["h"] * 0.9)
+    card_w = int(left["w"] * 0.55)
+    card_h = int(left["h"] * 0.8)
 
     positions = [
 
