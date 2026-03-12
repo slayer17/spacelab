@@ -139,6 +139,11 @@ def build_grid(stations):
         left["y"] + left["h"] / 2
     ], dtype=np.float32)
 
+    p_mid = np.array([
+        mid["x"] + mid["w"] / 2,
+        mid["y"] + mid["h"] / 2
+    ], dtype=np.float32)
+
     p_right = np.array([
         right["x"] + right["w"] / 2,
         right["y"] + right["h"] / 2
@@ -167,29 +172,29 @@ def build_grid(stations):
         right["w"]
     ) / 3
 
-    # tailles plus réalistes
     step_y = avg_h * 1.25
 
     card_w = int(avg_w * 0.9)
     card_h = int(avg_h * 1.1)
 
-    # offsets EXACTS du jeu
+    # offsets autour de la station du milieu
     offsets = [
 
         # haut
+        (-1, -1),
         (0, -1),
         (1, -1),
-        (2, -1),
 
-        # milieu gauche / droite
+        # milieu
+        (-2, 0),
         (-1, 0),
         (1, 0),
-        (3, 0),
+        (2, 0),
 
-        # sous stations
+        # bas
+        (-1, 1),
         (0, 1),
         (1, 1),
-        (2, 1)
 
     ]
 
@@ -198,7 +203,7 @@ def build_grid(stations):
     for col, row in offsets:
 
         center = (
-            p_left +
+            p_mid +
             ux * (col * step_x) +
             uy * (row * step_y)
         )
