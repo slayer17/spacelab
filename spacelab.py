@@ -156,7 +156,6 @@ def detect_stations(img):
     for c in contours:
 
         area = cv2.contourArea(c)
-        print("area:", area)
 
         if area < 8000:
             continue
@@ -165,15 +164,12 @@ def detect_stations(img):
 
         ratio = h / float(w)
 
-        # station = plus haute que large
         if ratio < 1.2:
             continue
 
-        # trop petite
         if h < 120:
             continue
 
-        # trop grande = faux contour
         if h > 400:
             continue
 
@@ -188,24 +184,23 @@ def detect_stations(img):
             "area": area
         })
 
-   objects = sorted(objects, key=lambda o: o["h"], reverse=True)
+    objects = sorted(objects, key=lambda o: o["h"], reverse=True)
 
-# prendre les objets de taille proche
-stations = []
+    stations = []
 
-if len(objects) > 0:
+    if len(objects) > 0:
 
-    ref_h = objects[0]["h"]
+        ref_h = objects[0]["h"]
 
-    for o in objects:
+        for o in objects:
 
-        if abs(o["h"] - ref_h) < 40:
-            stations.append(o)
+            if abs(o["h"] - ref_h) < 40:
+                stations.append(o)
 
-        if len(stations) == 3:
-            break
+            if len(stations) == 3:
+                break
 
-stations = sorted(stations, key=lambda s: s["x"])
+    stations = sorted(stations, key=lambda s: s["x"])
 
     print("stations found:", len(stations))
 
