@@ -261,7 +261,20 @@ def upload():
             "type": "CARTE"
         })
 
-    return jsonify({"rects": rects})
+        return jsonify({"rects": rects})
+
+
+from flask import send_from_directory
+
+
+@app.route("/")
+def index():
+    return send_from_directory(".", "index.html")
+
+
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory(".", path)
 
 
 # =====================================================
