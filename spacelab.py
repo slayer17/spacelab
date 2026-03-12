@@ -163,19 +163,22 @@ def detect_stations(img):
 
         x, y, w, h = cv2.boundingRect(c)
 
-     ratio = h / float(w)
+        ratio = h / float(w)
 
-if ratio < 1.2:
-    continue
+        # station = plus haute que large
+        if ratio < 1.2:
+            continue
 
-if h < 120:
-    continue
+        # trop petite
+        if h < 120:
+            continue
 
-if h > 400:
-    continue
+        # trop grande = faux contour
+        if h > 400:
+            continue
 
-if w > 300:
-    continue
+        if w > 300:
+            continue
 
         objects.append({
             "x": x,
