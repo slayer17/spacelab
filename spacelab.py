@@ -6,7 +6,7 @@ import numpy as np
 import json
 import glob
 
-app = Flask(__name__)
+app = Flask(**name**)
 
 CARDS_FOLDER = "cards"
 UPLOAD_FOLDER = "uploads"
@@ -19,9 +19,9 @@ def load_cards():
 cards = []
 
 files = []
-files += glob.glob(CARDS_FOLDER + "/*.jpg")
-files += glob.glob(CARDS_FOLDER + "/*.jpeg")
-files += glob.glob(CARDS_FOLDER + "/*.png")
+files += glob.glob(CARDS + "/*.jpg")
+files += glob.glob(CARDS + "/*.jpeg")
+files += glob.glob(CARDS + "/*.png")
 
 for f in files:
 
