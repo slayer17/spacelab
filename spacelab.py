@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 
 # =====================================================
-# DETECT OBJECTS (cards + stations)
+# DETECT OBJECTS
 # =====================================================
 
 def detect_objects(img):
@@ -52,12 +52,13 @@ def detect_objects(img):
 
     return objects
 
-#=====================================================
-# detection stations
-#=====================================================
+
+# =====================================================
+# FIND STATIONS (max 3)
+# =====================================================
+
 def find_stations(objects):
 
-    # stations = gros + vertical
     candidates = [
         o for o in objects
         if o["area"] > 40000 and o["ratio"] > 1.3
@@ -80,87 +81,9 @@ def find_stations(objects):
 
     return stations
 
-# =====================================================
-# UPLOAD
-# =====================================================
-
-@app.route("/upload", methods=["POST"])
-def upload():
-
-    file = request.files["image"]
-
-    data = np.frombuffer(file.read(), np.uint8)
-
-    img = cv2.imdecode(data, 1)
-
-    objects = detect_objects(img)
-
-stations = find_stations(objects)
-
-if len(stations) != 3:
-    return jsonify({"rects": []})
-
-layout = build_layout(stations)
-
-rects = []
-
-for x, y, w, h in layout:
-
-    rects.append({
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "type": "GRID"
-    })
-
-    cards = 0
-    stations = 0
-
-    rects = []
-
-    for o in objects:
-
-        if o["type"] == "CARD":
-            cards += 1
-
-        if o["type"] == "STATION":
-            stations += 1
-
-        rects.append({
-            "x": o["x"],
-            "y": o["y"],
-            "w": o["w"],
-            "h": o["h"],
-            "type": o["type"]
-        })
-
-    print("CARDS:", cards)
-    print("STATIONS:", stations)
-
-    return jsonify({
-        "rects": rects,
-        "cards": cards,
-        "stations": stations
-    })
-
 
 # =====================================================
-# STATIC
-# =====================================================
-
-@app.route("/")
-def index():
-    return send_from_directory(".", "index.html")
-
-
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory(".", path)
-
-
-# =====================================================
-# station
+# BUILD LAYOUT FROM STATIONS
 # =====================================================
 
 def build_layout(stations):
@@ -170,9 +93,7 @@ def build_layout(stations):
     cx = mid["x"] + mid["w"] / 2
     cy = mid["y"] + mid["h"] / 2
 
-    dist = (
-        right["x"] - left["x"]
-    ) / 2
+    dist = (right["x"] - left["x"]) / 2
 
     step_x = dist * 0.9
     step_y = mid["h"] * 1.1
@@ -194,7 +115,6 @@ def build_layout(stations):
         (-1, 1),
         (0, 1),
         (1, 1),
-
     ]
 
     rects = []
@@ -207,6 +127,62 @@ def build_layout(stations):
         rects.append((x, y, card_w, card_h))
 
     return rects
+
+
+# =====================================================
+# UPLOAD
+# =====================================================
+
+@app.route("/upload", methods=["POST"])
+def upload():
+
+    file = request.files["image"]
+
+    data = np.frombuffer(file.read(), np.uint8)
+
+    img = cv2.imdecode(data, 1)
+
+    objects = detect_objects(img)
+
+    stations = find_stations(objects)
+
+    if len(stations) != 3:
+        return jsonify({"rects": []})
+
+    layout = build_layout(stations)
+
+    rects = []
+
+    for x, y, w, h in layout:
+
+        rects.append({
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "type": "GRID"
+        })
+
+    return jsonify({
+        "rects": rects,
+        "stations": len(stations)
+    })
+
+
+# =====================================================
+# STATIC
+# =====================================================
+
+@app.route("/")
+def index():
+    return send_from_directory(".", "index.html")
+
+
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory(".", path)
+
+
 # =====================================================
 # MAIN
 # =====================================================
