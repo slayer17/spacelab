@@ -29,19 +29,26 @@ def load_card_images():
 CARD_DB = load_card_images()
 
 def compare_card(crop):
+
     if crop is None or crop.size == 0:
         return "Unknown", 999999
-    
+
     best_score = float('inf')
     best_name = "None"
 
-    # Redimensionnement du crop une seule fois pour la comparaison
     test = cv2.resize(crop, (200, 300))
 
+    # zone symbole (stable)
+    test = test[20:120, 20:120]
+
     for card in CARD_DB:
+
         ref = cv2.resize(card["img"], (200, 300))
-        # Calcul de la différence absolue
+
+        ref = ref[20:120, 20:120]
+
         diff = cv2.absdiff(ref, test)
+
         score = np.sum(diff)
 
         if score < best_score:
