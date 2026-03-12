@@ -138,13 +138,25 @@ def upload():
 
     for x,y in positions:
 
-        rects.append({
-            "x":int(x),
-            "y":int(y),
-            "w":card_w,
-            "h":card_h,
-            "type":"CARTE"
-        })
+      crop = img[
+    max(0, y):max(0, y) + card_h,
+    max(0, x):max(0, x) + card_w
+]
+
+if crop.shape[0] < 10 or crop.shape[1] < 10:
+    continue
+
+name, score = compare_card(crop)
+
+rects.append({
+    "x": x,
+    "y": y,
+    "w": card_w,
+    "h": card_h,
+    "type": "CARTE",
+    "name": name,
+    "score": int(score)
+})
 
     return json.dumps({"rects":rects})
 def compare_card(crop):
