@@ -209,6 +209,7 @@ def build_grid(stations):
         positions.append((x, y))
 
     return positions, card_w, card_h
+    
 
 
 # =====================================================
