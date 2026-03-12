@@ -49,16 +49,22 @@ def compare_card(crop):
     best_score = float('inf')
     best_name = "None"
 
-    test = cv2.resize(crop, (200, 300))
+    try:
+        test = cv2.resize(crop, (200, 300))
+    except:
+        return "None", 999999
 
-    # zone stable (symbole)
-    test = test[10:90, 10:90]
+    # ✅ zone signature SpaceLab
+    test = test[20:120, 20:120]
 
     for card in CARD_DB:
 
-        ref = cv2.resize(card["img"], (200, 300))
+        try:
+            ref = cv2.resize(card["img"], (200, 300))
+        except:
+            continue
 
-        ref = ref[10:90, 10:90]
+        ref = ref[20:120, 20:120]
 
         diff = cv2.absdiff(ref, test)
 
