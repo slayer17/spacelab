@@ -6,7 +6,7 @@ import numpy as np
 import json
 import glob
 
-app = Flask(__name__)
+app = Flask(**name**)
 
 CARDS_FOLDER = "cards"
 UPLOAD_FOLDER = "uploads"
@@ -290,4 +290,4 @@ app.run(
     host="0.0.0.0",
     port=port
 )
-```
+
