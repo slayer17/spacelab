@@ -131,8 +131,9 @@ def recognize_card(crop):
 # ======================
 # DETECT STATIONS
 # ======================
-print("detect_stations start")
 def detect_stations(img):
+
+    print("detect_stations start")
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -143,17 +144,17 @@ def detect_stations(img):
     mask = cv2.dilate(edges, kernel, iterations=2)
 
     contours, _ = cv2.findContours(
-        print("contours:", len(contours))
         mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
 
+    print("contours:", len(contours))
+
     objects = []
 
     for c in contours:
 
-        
         area = cv2.contourArea(c)
         print("area:", area)
 
@@ -183,6 +184,11 @@ def detect_stations(img):
     stations = objects[:3]
 
     stations = sorted(stations, key=lambda s: s["x"])
+
+    print("stations found:", len(stations))
+
+    for s in stations:
+        print("station:", s)
 
     return stations
 
@@ -294,6 +300,8 @@ def upload():
     rects = []
 
     stations = detect_stations(img)
+
+    print("UPLOAD stations:", stations)
 
     if len(stations) < 3:
         return json.dumps({"rects": []})
