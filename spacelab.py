@@ -6,169 +6,288 @@ import numpy as np
 import json
 import glob
 
-app = Flask(__name__)
+app = Flask(**name**)
+
 CARDS_FOLDER = "cards"
 UPLOAD_FOLDER = "uploads"
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def load_card_images():
+def load_cards():
 
-    cards = []
+```
+cards = []
 
-    files = []
-    files += glob.glob(CARDS_FOLDER + "/*.jpg")
-    files += glob.glob(CARDS_FOLDER + "/*.jpeg")
-    files += glob.glob(CARDS_FOLDER + "/*.png")
+files = []
+files += glob.glob(CARDS_FOLDER + "/*.jpg")
+files += glob.glob(CARDS_FOLDER + "/*.jpeg")
+files += glob.glob(CARDS_FOLDER + "/*.png")
 
-    for f in files:
+for f in files:
 
-        img = cv2.imread(f)
+    img = cv2.imread(f)
 
-        if img is None:
-            continue
+    if img is None:
+        continue
 
-        name = os.path.basename(f)
+    name = os.path.basename(f)
 
-        cards.append({
-            "name": name,
-            "img": img
-        })
+    cards.append({
+        "name": name,
+        "img": img
+    })
 
-    print("CARDS LOADED:", len(cards))
+print("CARDS:", len(cards))
 
-    return cards
+return cards
+```
 
-# Chargement de la base de données au démarrage
-CARD_DB = load_card_images()
+CARD_DB = load_cards()
 
-def compare_card(crop):
+def zone_hash(gray):
 
-    if crop is None or crop.size == 0:
-        return "None", 999999
+```
+small = cv2.resize(gray, (16, 16))
+avg = np.mean(small)
 
-    best_score = float('inf')
-    best_name = "None"
+return (small > avg).astype(np.uint8)
+```
+
+def hash_score(a, b):
+
+```
+return np.sum(a != b)
+```
+
+def recognize_card(crop):
+
+```
+if crop is None or crop.size == 0:
+    return "None", 999999
+
+best_score = 999999999
+best_name = "None"
+
+try:
+    test = cv2.resize(crop, (200, 300))
+except:
+    return "None", 999999
+
+test_top = test[40:120, 20:110]
+test_bottom = test[220:295, 20:170]
+
+test_top_g = cv2.cvtColor(test_top, cv2.COLOR_BGR2GRAY)
+test_bottom_g = cv2.cvtColor(test_bottom, cv2.COLOR_BGR2GRAY)
+
+test_top_hash = zone_hash(test_top_g)
+test_bottom_hash = zone_hash(test_bottom_g)
+
+for card in CARD_DB:
 
     try:
-        test = cv2.resize(crop, (200, 300))
+        ref = cv2.resize(card["img"], (200, 300))
     except:
-        return "None", 999999
+        continue
 
-    # ✅ zone signature SpaceLab
-    test = test[20:120, 20:120]
+    ref_top = ref[40:120, 20:110]
+    ref_bottom = ref[220:295, 20:170]
 
-    for card in CARD_DB:
+    ref_top_g = cv2.cvtColor(ref_top, cv2.COLOR_BGR2GRAY)
+    ref_bottom_g = cv2.cvtColor(ref_bottom, cv2.COLOR_BGR2GRAY)
 
-        try:
-            ref = cv2.resize(card["img"], (200, 300))
-        except:
-            continue
+    ref_top_hash = zone_hash(ref_top_g)
+    ref_bottom_hash = zone_hash(ref_bottom_g)
 
-        ref = ref[20:120, 20:120]
+    diff1 = cv2.absdiff(ref_top_g, test_top_g)
+    diff2 = cv2.absdiff(ref_bottom_g, test_bottom_g)
 
-        diff = cv2.absdiff(ref, test)
+    pixel = np.mean(diff1) + np.mean(diff2)
 
-        score = np.sum(diff)
+    hashv = hash_score(ref_top_hash, test_top_hash) + hash_score(ref_bottom_hash, test_bottom_hash)
 
-        if score < best_score:
-            best_score = score
-            best_name = card["name"]
+    score = pixel * 5 + hashv * 20
 
-    return best_name, best_score
+    if score < best_score:
+
+        best_score = score
+        best_name = card["name"]
+
+return best_name, best_score
+```
+
+def detect_stations(img):
+
+```
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+blur = cv2.GaussianBlur(gray, (7, 7), 0)
+
+edges = cv2.Canny(blur, 40, 120)
+
+kernel = np.ones((5, 5), np.uint8)
+mask = cv2.dilate(edges, kernel, iterations=2)
+
+contours, _ = cv2.findContours(
+    mask,
+    cv2.RETR_EXTERNAL,
+    cv2.CHAIN_APPROX_SIMPLE
+)
+
+objects = []
+
+for c in contours:
+
+    area = cv2.contourArea(c)
+
+    if area < 5000:
+        continue
+
+    x, y, w, h = cv2.boundingRect(c)
+
+    objects.append({
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "area": area
+    })
+
+objects = sorted(objects, key=lambda o: o["area"], reverse=True)
+
+stations = objects[:3]
+
+stations = sorted(stations, key=lambda s: s["x"])
+
+return stations
+```
+
+def build_grid(stations):
+
+```
+left, mid, right = stations
+
+dx = mid["x"] - left["x"]
+dy = left["h"]
+
+card_w = int(left["w"] * 0.7)
+card_h = int(left["h"] * 0.9)
+
+positions = [
+
+    (left["x"], left["y"] - dy),
+    (mid["x"], mid["y"] - dy),
+    (right["x"], right["y"] - dy),
+
+    (left["x"] - dx, left["y"]),
+    (left["x"] + dx, left["y"]),
+
+    (mid["x"] - dx, mid["y"]),
+    (mid["x"] + dx, mid["y"]),
+
+    (right["x"] - dx, right["y"]),
+    (right["x"] + dx, right["y"]),
+
+    (left["x"], left["y"] + dy),
+    (mid["x"], mid["y"] + dy),
+    (right["x"], right["y"] + dy),
+]
+
+return positions, card_w, card_h
+```
 
 @app.route("/")
 def home():
-    try:
-        with open("index.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Fichier index.html non trouvé.", 404
+
+```
+with open("index.html", "r", encoding="utf-8") as f:
+    return f.read()
+```
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    file = request.files.get("image")
-    if not file:
-        return json.dumps({"rects": []})
 
-    uid = uuid.uuid4().hex
-    path = os.path.join(UPLOAD_FOLDER, uid + ".jpg")
-    file.save(path)
+```
+file = request.files.get("image")
 
-    img = cv2.imread(path)
-    if img is None:
-        return json.dumps({"rects": []})
+if not file:
+    return json.dumps({"rects": []})
 
-    height, width = img.shape[:2]
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    edges = cv2.Canny(blur, 40, 120)
+uid = uuid.uuid4().hex
 
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.dilate(edges, kernel, iterations=2)
+path = os.path.join(
+    UPLOAD_FOLDER,
+    uid + ".jpg"
+)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+file.save(path)
 
-    objects = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < 5000:
-            continue
-        x, y, w, h = cv2.boundingRect(c)
-        objects.append({"x": x, "y": y, "w": w, "h": h, "area": area})
+img = cv2.imread(path)
 
-    # Tri par surface et récupération des 3 plus grandes (stations)
-    objects = sorted(objects, key=lambda o: o["area"], reverse=True)
-    stations = sorted(objects[:3], key=lambda s: s["x"])
+if img is None:
+    return json.dumps({"rects": []})
 
-    if len(stations) < 3:
-        return json.dumps({"error": "Pas assez de stations détectées", "rects": []})
+rects = []
 
-    rects = []
-    for s in stations:
-        rects.append({
-            "x": s["x"], "y": s["y"], "w": s["w"], "h": s["h"],
-            "type": "STATION"
-        })
+stations = detect_stations(img)
 
-    # Calcul de la grille
-    left, middle, right = stations[0], stations[1], stations[2]
-    dx = middle["x"] - left["x"]
-    dy = left["h"]
-    card_w = int(left["w"] * 0.7)
-    card_h = int(left["h"] * 0.9)
+if len(stations) < 3:
+    return json.dumps({"rects": []})
 
-    positions = [
-        (left["x"], left["y"] - dy), (middle["x"], middle["y"] - dy), (right["x"], right["y"] - dy),
-        (left["x"] - dx, left["y"]), (left["x"] + dx, left["y"]),
-        (middle["x"] - dx, middle["y"]), (middle["x"] + dx, middle["y"]),
-        (right["x"] - dx, right["y"]), (right["x"] + dx, right["y"]),
-        (left["x"], left["y"] + dy), (middle["x"], middle["y"] + dy), (right["x"], right["y"] + dy)
-    ]
+for s in stations:
 
-    for px, py in positions:
-        x, y = int(px), int(py)
-        
-        # Vérification des limites de l'image pour le crop
-        x1, y1 = max(0, x), max(0, y)
-        x2, y2 = min(width, x + card_w), min(height, y + card_h)
+    rects.append({
+        "x": s["x"],
+        "y": s["y"],
+        "w": s["w"],
+        "h": s["h"],
+        "type": "STATION"
+    })
 
-        if (x2 - x1) < 10 or (y2 - y1) < 10:
-            continue
+positions, cw, ch = build_grid(stations)
 
-        crop = img[y1:y2, x1:x2]
-        name, score = compare_card(crop)
+h, w = img.shape[:2]
 
-        rects.append({
-            "x": x, "y": y, "w": card_w, "h": card_h,
-            "type": "CARTE", "name": name, "score": int(score)
-        })
+for px, py in positions:
 
-    return json.dumps({"rects": rects})
+    x = int(px)
+    y = int(py)
 
-@app.route('/<path:path>')
+    x1 = max(0, x)
+    y1 = max(0, y)
+
+    x2 = min(w, x + cw)
+    y2 = min(h, y + ch)
+
+    if x2 <= x1 or y2 <= y1:
+        continue
+
+    crop = img[y1:y2, x1:x2]
+
+    name, score = recognize_card(crop)
+
+    rects.append({
+        "x": x,
+        "y": y,
+        "w": cw,
+        "h": ch,
+        "type": "CARTE",
+        "name": name,
+        "score": float(score)
+    })
+
+return json.dumps({"rects": rects})
+```
+
+@app.route('/[path:path](path:path)')
 def static_files(path):
-    return send_from_directory('.', path)
+return send_from_directory('.', path)
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if **name** == "**main**":
+
+```
+port = int(os.environ.get("PORT", 5000))
+
+app.run(
+    host="0.0.0.0",
+    port=port
+)
+```
