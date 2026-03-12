@@ -59,11 +59,34 @@ def detect_objects(img):
 
 def find_stations(objects):
 
-    candidates = [
-        o for o in objects
-        if o["area"] > 40000 and o["ratio"] > 1.3
-    ]
+    candidates = []
 
+    for o in objects:
+
+        w = o["w"]
+        h = o["h"]
+        area = o["area"]
+        ratio = o["ratio"]
+
+        # filtre taille minimum
+        if area < 30000:
+            continue
+
+        # station = très verticale
+        if ratio < 1.4:
+            continue
+
+        # station = large
+        if w < 120:
+            continue
+
+        # station = grande hauteur
+        if h < 200:
+            continue
+
+        candidates.append(o)
+
+    # on garde les plus gros
     candidates = sorted(
         candidates,
         key=lambda o: o["area"],
@@ -80,7 +103,6 @@ def find_stations(objects):
     print("STATIONS =", stations)
 
     return stations
-
 
 # =====================================================
 # BUILD LAYOUT FROM STATIONS
