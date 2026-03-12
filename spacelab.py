@@ -1,146 +1,80 @@
-from flask import Flask, request, send_from_directory
 import os
-import uuid
 import cv2
 import numpy as np
-import json
-import glob
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-CARDS_FOLDER = "cards"
-UPLOAD_FOLDER = "uploads"
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+CARDS = []
 
 
-# ======================
+# =====================================================
 # LOAD CARDS
-# ======================
+# =====================================================
 
 def load_cards():
 
-    cards = []
+    global CARDS
 
-    files = []
-    files += glob.glob(CARDS_FOLDER + "/*.jpg")
-    files += glob.glob(CARDS_FOLDER + "/*.jpeg")
-    files += glob.glob(CARDS_FOLDER + "/*.png")
+    folder = "cards"
 
-    for f in files:
+    for name in os.listdir(folder):
 
-        img = cv2.imread(f)
+        path = os.path.join(folder, name)
+
+        img = cv2.imread(path)
 
         if img is None:
             continue
 
-        name = os.path.basename(f)
+        img = cv2.resize(img, (200, 300))
 
-        cards.append({
+        CARDS.append({
             "name": name,
             "img": img
         })
 
-    print("CARDS:", len(cards))
-
-    return cards
+    print("CARDS:", len(CARDS))
 
 
-CARD_DB = load_cards()
+# =====================================================
+# RECOGNIZE CARD
+# =====================================================
 
+def recognize_card(img):
 
-# ======================
-# HASH
-# ======================
+    img = cv2.resize(img, (200, 300))
 
-def zone_hash(gray):
-
-    small = cv2.resize(gray, (16, 16))
-    avg = np.mean(small)
-
-    return (small > avg).astype(np.uint8)
-
-
-def hash_score(a, b):
-
-    return np.sum(a != b)
-
-
-# ======================
-# RECOGNIZE
-# ======================
-
-def recognize_card(crop):
-
-    if crop is None or crop.size == 0:
-        return "None", 999999
-
+    best = None
     best_score = 999999999
-    best_name = "None"
 
-    try:
-        test = cv2.resize(crop, (200, 300))
-    except:
-        return "None", 999999
+    for c in CARDS:
 
-    test_top = test[40:120, 20:110]
-    test_bottom = test[220:295, 20:170]
+        diff = cv2.absdiff(img, c["img"])
 
-    test_top_g = cv2.cvtColor(test_top, cv2.COLOR_BGR2GRAY)
-    test_bottom_g = cv2.cvtColor(test_bottom, cv2.COLOR_BGR2GRAY)
-
-    test_top_hash = zone_hash(test_top_g)
-    test_bottom_hash = zone_hash(test_bottom_g)
-
-    for card in CARD_DB:
-
-        try:
-            ref = cv2.resize(card["img"], (200, 300))
-        except:
-            continue
-
-        ref_top = ref[40:120, 20:110]
-        ref_bottom = ref[220:295, 20:170]
-
-        ref_top_g = cv2.cvtColor(ref_top, cv2.COLOR_BGR2GRAY)
-        ref_bottom_g = cv2.cvtColor(ref_bottom, cv2.COLOR_BGR2GRAY)
-
-        ref_top_hash = zone_hash(ref_top_g)
-        ref_bottom_hash = zone_hash(ref_bottom_g)
-
-        diff1 = cv2.absdiff(ref_top_g, test_top_g)
-        diff2 = cv2.absdiff(ref_bottom_g, test_bottom_g)
-
-        pixel = np.mean(diff1) + np.mean(diff2)
-
-        hashv = (
-            hash_score(ref_top_hash, test_top_hash)
-            + hash_score(ref_bottom_hash, test_bottom_hash)
-        )
-
-        score = pixel * 5 + hashv * 20
+        score = diff.mean()
 
         if score < best_score:
-
             best_score = score
-            best_name = card["name"]
+            best = c["name"]
 
-    return best_name, best_score
+    return best
 
 
-# ======================
+# =====================================================
 # DETECT STATIONS
-# ======================
+# =====================================================
+
 def detect_stations(img):
 
-    print("detect_stations start")
-
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
 
     edges = cv2.Canny(blur, 40, 120)
 
     kernel = np.ones((5, 5), np.uint8)
+
     mask = cv2.dilate(edges, kernel, iterations=2)
 
     contours, _ = cv2.findContours(
@@ -148,8 +82,6 @@ def detect_stations(img):
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
-
-    print("contours:", len(contours))
 
     objects = []
 
@@ -170,12 +102,6 @@ def detect_stations(img):
         if h < 120:
             continue
 
-        if h > 400:
-            continue
-
-        if w > 300:
-            continue
-
         objects.append({
             "x": x,
             "y": y,
@@ -184,213 +110,169 @@ def detect_stations(img):
             "area": area
         })
 
-    objects = sorted(objects, key=lambda o: o["h"], reverse=True)
+    objects = sorted(
+        objects,
+        key=lambda o: o["h"],
+        reverse=True
+    )
 
-    stations = []
+    stations = objects[:3]
 
-    if len(objects) > 0:
-
-        ref_h = objects[0]["h"]
-
-        for o in objects:
-
-            if abs(o["h"] - ref_h) < 40:
-                stations.append(o)
-
-            if len(stations) == 3:
-                break
-
-    stations = sorted(stations, key=lambda s: s["x"])
-
-    print("stations found:", len(stations))
-
-    for s in stations:
-        print("station:", s)
+    stations = sorted(
+        stations,
+        key=lambda s: s["x"]
+    )
 
     return stations
 
 
+# =====================================================
+# BUILD GRID (ROBUST VERSION)
+# =====================================================
 
 def build_grid(stations):
 
     left, mid, right = stations
 
-    # distance entre stations
-    dx_real = mid["x"] - left["x"]
+    p_left = np.array([
+        left["x"] + left["w"] / 2,
+        left["y"] + left["h"] / 2
+    ], dtype=np.float32)
 
-    # on réduit un peu sinon la grille déborde
-    dx = int(dx_real * 0.75)
+    p_mid = np.array([
+        mid["x"] + mid["w"] / 2,
+        mid["y"] + mid["h"] / 2
+    ], dtype=np.float32)
 
-    # hauteur station
-    dy = int(left["h"] * 0.9)
+    p_right = np.array([
+        right["x"] + right["w"] / 2,
+        right["y"] + right["h"] / 2
+    ], dtype=np.float32)
 
-    # taille carte plus petite que station
-    card_w = int(left["w"] * 0.45)
-    card_h = int(left["h"] * 0.7)
+    vx = p_right - p_left
 
-    positions = [
+    dist = np.linalg.norm(vx)
 
-        (left["x"], left["y"] - dy),
-        (mid["x"], mid["y"] - dy),
-        (right["x"], right["y"] - dy),
+    if dist < 1:
+        return [], 0, 0
 
-        (left["x"] - dx, left["y"]),
-        (left["x"] + dx, left["y"]),
+    ux = vx / dist
 
-        (mid["x"] - dx, mid["y"]),
-        (mid["x"] + dx, mid["y"]),
+    uy = np.array([-ux[1], ux[0]], dtype=np.float32)
 
-        (right["x"] - dx, right["y"]),
-        (right["x"] + dx, right["y"]),
+    step_x = dist / 2
 
-        (left["x"], left["y"] + dy),
-        (mid["x"], mid["y"] + dy),
-        (right["x"], right["y"] + dy),
+    avg_h = (
+        left["h"] +
+        mid["h"] +
+        right["h"]
+    ) / 3
+
+    avg_w = (
+        left["w"] +
+        mid["w"] +
+        right["w"]
+    ) / 3
+
+    step_y = avg_h * 0.95
+
+    card_w = int(avg_w * 0.6)
+
+    card_h = int(avg_h * 0.8)
+
+    offsets = [
+
+        (0, -1), (1, -1), (2, -1),
+
+        (-1, 0), (1, 0),
+
+        (0, 0), (2, 0),
+
+        (1, 0), (3, 0),
+
+        (0, 1), (1, 1), (2, 1)
+
     ]
 
-    print("GRID dx:", dx)
-    print("GRID dy:", dy)
-    print("CARD size:", card_w, card_h)
+    positions = []
+
+    for col, row in offsets:
+
+        center = (
+            p_left +
+            ux * (col * step_x) +
+            uy * (row * step_y)
+        )
+
+        x = int(center[0] - card_w / 2)
+        y = int(center[1] - card_h / 2)
+
+        positions.append((x, y))
 
     return positions, card_w, card_h
 
 
-# ======================
-# GRID
-# ======================
-
-def build_grid(stations):
-
-    left, mid, right = stations
-
-    dx = int((mid["x"] - left["x"]) * 0.9)
-    dy = int(left["h"] * 0.95)
-
-    card_w = int(left["w"] * 0.55)
-    card_h = int(left["h"] * 0.8)
-
-    positions = [
-
-        (left["x"], left["y"] - dy),
-        (mid["x"], mid["y"] - dy),
-        (right["x"], right["y"] - dy),
-
-        (left["x"] - dx, left["y"]),
-        (left["x"] + dx, left["y"]),
-
-        (mid["x"] - dx, mid["y"]),
-        (mid["x"] + dx, mid["y"]),
-
-        (right["x"] - dx, right["y"]),
-        (right["x"] + dx, right["y"]),
-
-        (left["x"], left["y"] + dy),
-        (mid["x"], mid["y"] + dy),
-        (right["x"], right["y"] + dy),
-    ]
-
-    return positions, card_w, card_h
-
-
-# ======================
-# ROUTES
-# ======================
-
-@app.route("/")
-def home():
-
-    with open("index.html", "r", encoding="utf-8") as f:
-        return f.read()
-
+# =====================================================
+# UPLOAD
+# =====================================================
 
 @app.route("/upload", methods=["POST"])
 def upload():
 
-    file = request.files.get("image")
+    file = request.files["image"]
 
-    if not file:
-        return json.dumps({"rects": []})
-
-    uid = uuid.uuid4().hex
-
-    path = os.path.join(
-        UPLOAD_FOLDER,
-        uid + ".jpg"
+    data = np.frombuffer(
+        file.read(),
+        np.uint8
     )
 
-    file.save(path)
-
-    img = cv2.imread(path)
-
-    if img is None:
-        return json.dumps({"rects": []})
-
-    rects = []
+    img = cv2.imdecode(data, 1)
 
     stations = detect_stations(img)
 
-    print("UPLOAD stations:", stations)
+    if len(stations) != 3:
+        return jsonify({"rects": []})
 
-    if len(stations) < 3:
-        return json.dumps({"rects": []})
+    grid, cw, ch = build_grid(stations)
 
-    for s in stations:
+    rects = []
 
-        rects.append({
-            "x": s["x"],
-            "y": s["y"],
-            "w": s["w"],
-            "h": s["h"],
-            "type": "STATION"
-        })
+    for x, y in grid:
 
-    positions, cw, ch = build_grid(stations)
+        x = max(0, x)
+        y = max(0, y)
 
-    h, w = img.shape[:2]
+        crop = img[
+            y:y+ch,
+            x:x+cw
+        ]
 
-    for px, py in positions:
-
-        x = int(px)
-        y = int(py)
-
-        x1 = max(0, x)
-        y1 = max(0, y)
-
-        x2 = min(w, x + cw)
-        y2 = min(h, y + ch)
-
-        if x2 <= x1 or y2 <= y1:
+        if crop.size == 0:
             continue
 
-        crop = img[y1:y2, x1:x2]
-
-        name, score = recognize_card(crop)
-
-        print("card:", name, "score:", score)
+        name = recognize_card(crop)
 
         rects.append({
             "x": x,
             "y": y,
             "w": cw,
             "h": ch,
-            "type": "CARTE",
             "name": name,
-            "score": float(score)
+            "type": "CARTE"
         })
 
-    return json.dumps({"rects": rects})
+    return jsonify({"rects": rects})
 
 
-@app.route('/<path:path>')
-def static_files(path):
-    return send_from_directory('.', path)
-
+# =====================================================
+# MAIN
+# =====================================================
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 5000))
+    load_cards()
 
     app.run(
         host="0.0.0.0",
-        port=port
+        port=8080
     )
