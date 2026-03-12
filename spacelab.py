@@ -143,6 +143,7 @@ def detect_stations(img):
     mask = cv2.dilate(edges, kernel, iterations=2)
 
     contours, _ = cv2.findContours(
+        print("contours:", len(contours))
         mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
@@ -152,7 +153,9 @@ def detect_stations(img):
 
     for c in contours:
 
+        
         area = cv2.contourArea(c)
+        print("area:", area)
 
         if area < 8000:
             continue
