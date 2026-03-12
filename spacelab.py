@@ -18,9 +18,6 @@ def detect_objects(img):
 
     edges = cv2.Canny(blur, 50, 150)
 
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=1)
-
     contours, _ = cv2.findContours(
         edges,
         cv2.RETR_EXTERNAL,
@@ -33,36 +30,40 @@ def detect_objects(img):
 
         area = cv2.contourArea(c)
 
-        if area < 3000:
+        if area < 2000:
             continue
 
-        # approx rectangle
-        peri = cv2.arcLength(c, True)
-
-        approx = cv2.approxPolyDP(
-            c,
-            0.02 * peri,
-            True
-        )
-
-        # on garde seulement les rectangles
-        if len(approx) != 4:
-            continue
-
-        x, y, w, h = cv2.boundingRect(approx)
+        x, y, w, h = cv2.boundingRect(c)
 
         ratio = h / float(w)
 
-        objects.append({
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "area": area,
-            "ratio": ratio
-        })
+        # taille carte approx
+        if 80 < w < 200 and 110 < h < 260:
 
-    print("OBJECTS:", len(objects))
+            objects.append({
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "area": area,
+                "ratio": ratio,
+                "type": "CARD"
+            })
+
+        # taille station approx
+        elif w > 120 and h > 250:
+
+            objects.append({
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "area": area,
+                "ratio": ratio,
+                "type": "STATION"
+            })
+
+    print("OBJECTS:", objects)
 
     return objects
 
@@ -73,50 +74,17 @@ def detect_objects(img):
 
 def find_stations(objects):
 
-    candidates = []
-
-    for o in objects:
-
-        w = o["w"]
-        h = o["h"]
-        area = o["area"]
-        ratio = o["ratio"]
-
-        # filtre taille minimum
-        if area < 30000:
-            continue
-
-        # station = très verticale
-        if ratio < 1.4:
-            continue
-
-        # station = large
-        if w < 120:
-            continue
-
-        # station = grande hauteur
-        if h < 200:
-            continue
-
-        candidates.append(o)
-
-    # on garde les plus gros
-    candidates = sorted(
-        candidates,
-        key=lambda o: o["area"],
-        reverse=True
-    )
-
-    stations = candidates[:3]
+    stations = [
+        o for o in objects
+        if o["type"] == "STATION"
+    ]
 
     stations = sorted(
         stations,
-        key=lambda s: s["x"]
+        key=lambda o: o["x"]
     )
 
-    print("STATIONS =", stations)
-
-    return stations
+    return stations[:3]
 
 # =====================================================
 # BUILD LAYOUT FROM STATIONS
