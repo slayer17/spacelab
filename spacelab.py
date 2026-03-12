@@ -34,34 +34,51 @@ def detect_objects(img):
 
         area = cv2.contourArea(c)
 
-        if area < 5000:
+        if area < 6000:
             continue
 
         x, y, w, h = cv2.boundingRect(c)
 
         ratio = h / float(w)
 
-        obj_type = "UNKNOWN"
-
-        # stations = très grandes + verticales
-        if area > 40000 and ratio > 1.3:
-            obj_type = "STATION"
-
-        # cartes = moyennes + verticales
-        elif area > 10000 and ratio > 1.2:
-            obj_type = "CARD"
-
         objects.append({
             "x": x,
             "y": y,
             "w": w,
             "h": h,
-            "type": obj_type,
-            "area": area
+            "area": area,
+            "ratio": ratio
         })
 
     return objects
 
+#=====================================================
+# detection stations
+#=====================================================
+def find_stations(objects):
+
+    # stations = gros + vertical
+    candidates = [
+        o for o in objects
+        if o["area"] > 40000 and o["ratio"] > 1.3
+    ]
+
+    candidates = sorted(
+        candidates,
+        key=lambda o: o["area"],
+        reverse=True
+    )
+
+    stations = candidates[:3]
+
+    stations = sorted(
+        stations,
+        key=lambda s: s["x"]
+    )
+
+    print("STATIONS =", stations)
+
+    return stations
 
 # =====================================================
 # UPLOAD
@@ -77,6 +94,25 @@ def upload():
     img = cv2.imdecode(data, 1)
 
     objects = detect_objects(img)
+
+stations = find_stations(objects)
+
+if len(stations) != 3:
+    return jsonify({"rects": []})
+
+layout = build_layout(stations)
+
+rects = []
+
+for x, y, w, h in layout:
+
+    rects.append({
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "type": "GRID"
+    })
 
     cards = 0
     stations = 0
@@ -123,6 +159,54 @@ def static_files(path):
     return send_from_directory(".", path)
 
 
+# =====================================================
+# station
+# =====================================================
+
+def build_layout(stations):
+
+    left, mid, right = stations
+
+    cx = mid["x"] + mid["w"] / 2
+    cy = mid["y"] + mid["h"] / 2
+
+    dist = (
+        right["x"] - left["x"]
+    ) / 2
+
+    step_x = dist * 0.9
+    step_y = mid["h"] * 1.1
+
+    card_w = int(mid["w"] * 0.8)
+    card_h = int(mid["h"] * 0.9)
+
+    offsets = [
+
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+
+        (-2, 0),
+        (-1, 0),
+        (1, 0),
+        (2, 0),
+
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+
+    ]
+
+    rects = []
+
+    for ox, oy in offsets:
+
+        x = int(cx + ox * step_x - card_w / 2)
+        y = int(cy + oy * step_y - card_h / 2)
+
+        rects.append((x, y, card_w, card_h))
+
+    return rects
 # =====================================================
 # MAIN
 # =====================================================
