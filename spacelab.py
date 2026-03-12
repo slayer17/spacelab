@@ -4,6 +4,8 @@ import uuid
 import cv2
 import numpy as np
 import json
+import glob
+CARDS_FOLDER = "cards"
 
 app = Flask(__name__)
 
