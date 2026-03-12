@@ -13,7 +13,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def load_card_images():
     cards = []
-    files = glob.glob(CARDS_FOLDER + "/*.jpg")
+    files = glob.glob(CARDS_FOLDER + "/*.jpeg")
     for f in files:
         img = cv2.imread(f)
         if img is None:
