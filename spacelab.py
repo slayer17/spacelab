@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 CARDS = []
 
-print("VERSION GRID 3")
+
 # =====================================================
 # LOAD CARDS
 # =====================================================
@@ -129,7 +129,7 @@ def detect_stations(img):
 # =====================================================
 # BUILD GRID (ROBUST VERSION)
 # =====================================================
-
+print("VERSION GRID 3")
 def build_grid(stations):
 
     left, mid, right = stations
