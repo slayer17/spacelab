@@ -150,9 +150,36 @@ def upload():
 
     img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
+  mode = request.form.get("mode", "BOARD")
+
+if mode == "CARDS_ONLY":
+
+    h, w = img.shape[:2]
+
+    rect = {
+        "x": 0,
+        "y": 0,
+        "w": w,
+        "h": h,
+        "quad": [
+            [0, 0],
+            [w, 0],
+            [w, h],
+            [0, h]
+        ]
+    }
+
+else:
+
     rect = detect_main_card(img)
 
     if rect is None:
+        return jsonify({
+            "ok": True,
+            "rects": [],
+            "warp": False,
+            "signature": None
+        })
         return jsonify({"rects": []})
 
     quad = np.array(rect["quad"], dtype="float32")
