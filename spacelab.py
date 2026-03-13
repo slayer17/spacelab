@@ -118,7 +118,7 @@ def detect_main_card(img):
         area = cv2.contourArea(c)
 
         # Ignore petits contours
-        if area < image_area * 0.08:
+        if area < image_area * 0.15:
             continue
 
         quad = contour_to_quad(c)
@@ -137,9 +137,12 @@ def detect_main_card(img):
         rect_area = ww * wh
 
         # ratio carte portrait : assez large pour accepter photo/scans
-        if ratio < 1.20 or ratio > 1.75:
+        if ratio < 1.3 or ratio > 1.65:
             continue
+        if fill_ratio < 0.75:
+        continue
 
+        
         # score : on préfère le plus grand rectangle plausible
         box = cv2.boundingRect(quad.astype(np.int32))
         x, y, bw, bh = box
