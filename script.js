@@ -208,6 +208,9 @@ function drawRects(rects) {
 // =========================
 // MATCH SIGNATURE
 // =========================
+function distance(a, b) {
+    return Math.abs(a - b);
+}
 
 function matchSignature(sig) {
 
