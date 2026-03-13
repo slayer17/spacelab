@@ -1,10 +1,48 @@
+let mode = "BOARD";
+
 const fileInput = document.getElementById("file");
+const loadBtn = document.getElementById("loadBtn");
+
+const boardBtn = document.getElementById("boardBtn");
+const cardsBtn = document.getElementById("cardsBtn");
+
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+
 const result = document.getElementById("result");
 
 
-fileInput.addEventListener("change", e => {
+// =====================
+// MODE
+// =====================
+
+boardBtn.onclick = () => {
+
+    mode = "BOARD";
+    result.textContent = "Mode BOARD";
+
+};
+
+cardsBtn.onclick = () => {
+
+    mode = "CARDS_ONLY";
+    result.textContent = "Mode CARDS_ONLY";
+
+};
+
+
+// =====================
+// LOAD IMAGE
+// =====================
+
+loadBtn.onclick = () => {
+
+    fileInput.click();
+
+};
+
+
+fileInput.onchange = e => {
 
     const file = e.target.files[0];
 
@@ -25,16 +63,21 @@ fileInput.addEventListener("change", e => {
 
     img.src = URL.createObjectURL(file);
 
-});
+};
 
 
-async function sendToPython() {
+// =====================
+// SEND
+// =====================
+
+function sendToPython() {
 
     canvas.toBlob(async blob => {
 
         const form = new FormData();
 
         form.append("image", blob, "capture.jpg");
+        form.append("mode", mode);
 
         const res = await fetch("/upload", {
             method: "POST",
@@ -63,13 +106,21 @@ async function sendToPython() {
 }
 
 
+// =====================
+// DRAW
+// =====================
+
 function drawRects(rects) {
 
     ctx.lineWidth = 3;
 
     rects.forEach(r => {
 
-        ctx.strokeStyle = "yellow";
+        if (r.type === "STATION") {
+            ctx.strokeStyle = "red";
+        } else {
+            ctx.strokeStyle = "yellow";
+        }
 
         ctx.strokeRect(
             r.x,
@@ -82,6 +133,10 @@ function drawRects(rects) {
 
 }
 
+
+// =====================
+// MATCH
+// =====================
 
 function distance(a, b) {
     return Math.abs(a - b);
