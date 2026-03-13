@@ -1,3 +1,4 @@
+console.log("CARDS =",CARDS);
 let mode = "BOARD";
 
 const video = document.getElementById("video");
