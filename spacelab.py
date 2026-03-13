@@ -186,7 +186,7 @@ def detect_main_card(img):
 # =====================================================
 # ROUTES
 # =====================================================
-
+@app.route("/build_signatures")
 @app.route("/")
 def index():
     return send_from_directory(".", "index.html")
