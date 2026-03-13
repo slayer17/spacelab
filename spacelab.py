@@ -383,7 +383,7 @@ def build_signatures():
     return "OK"
 
 
-        # -------------------------
+                # -------------------------
         # signatures zones
         # -------------------------
 
@@ -414,12 +414,7 @@ def build_signatures():
         )
 
 
-        # -------------------------
-        # update signature
-        # -------------------------
-
         c["signature"] = {
-
             "global": sig_global,
             "topLeft": sig_topLeft,
             "topRight": sig_topRight,
@@ -427,13 +422,8 @@ def build_signatures():
             "bottom": sig_bottom,
             "color": sig_color,
             "art": sig_art
-
         }
 
-
-    # -------------------------
-    # save cards.js
-    # -------------------------
 
     with open("cards.js", "w", encoding="utf-8") as f:
 
