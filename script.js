@@ -156,11 +156,11 @@ function sendToPython() {
 
         }
 
+        console.log("JSON", json);
+
     }, "image/jpeg");
-console.log("SIG", json.signature);
+
 }
-
-
 
 // =========================
 // DRAW
