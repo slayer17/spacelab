@@ -72,7 +72,7 @@ def detect_cards(img):
 
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edges = cv2.Canny(blur, 50, 150)
+    edges = cv2.Canny(blur, 30, 100)
 
     contours, _ = cv2.findContours(
         edges,
@@ -80,50 +80,36 @@ def detect_cards(img):
         cv2.CHAIN_APPROX_SIMPLE
     )
 
+    print("CONTOURS:", len(contours))
+
     rects = []
 
     for c in contours:
 
         area = cv2.contourArea(c)
 
-        if area < 3000:
+        print("AREA:", area)
+
+        if area < 1000:
             continue
 
-        peri = cv2.arcLength(c, True)
+        x, y, w, h = cv2.boundingRect(c)
 
-        approx = cv2.approxPolyDP(
-            c,
-            0.02 * peri,
-            True
-        )
-
-        if len(approx) != 4:
-            continue
-
-        pts = approx.reshape(4, 2).astype("float32")
-
-        warp = warp_quad(img, pts)
-
-        if warp is None:
-            continue
-
-        h, w = warp.shape[:2]
-
-        if w == 0 or h == 0:
+        if w < 40 or h < 40:
             continue
 
         ratio = h / float(w)
 
-        if ratio < 1.1 or ratio > 1.7:
-            continue
+        print("RATIO:", ratio)
 
-        x, y, bw, bh = cv2.boundingRect(approx)
+        if ratio < 1.0 or ratio > 2.0:
+            continue
 
         rects.append({
             "x": int(x),
             "y": int(y),
-            "w": int(bw),
-            "h": int(bh),
+            "w": int(w),
+            "h": int(h),
             "type": "CARD"
         })
 
