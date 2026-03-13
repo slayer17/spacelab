@@ -128,7 +128,9 @@ def detect_main_card(img):
 # =====================================================
 # ROUTES
 # =====================================================
-
+@app.route("/test")
+def test():
+    return "OK TEST"
 @app.route("/")
 def index():
     return send_from_directory(".", "index.html")
@@ -229,9 +231,7 @@ def build_signatures():
         json.dump(cards, f, indent=2)
 
     return "OK"
-@app.route("/test")
-def test():
-    return "OK TEST"
+
 
 # =====================================================
 # RUN
