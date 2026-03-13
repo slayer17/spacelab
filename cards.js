@@ -1,5 +1,5 @@
 
-window.cards = 
+window.CARDS = 
 [
   {
     "id": "ROUGE_1",
@@ -1862,3 +1862,4 @@ window.cards =
     }
   }
 ];
+
