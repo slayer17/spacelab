@@ -305,20 +305,22 @@ def warp():
 def build_signatures():
 
     # -------------------------
-    # charger cards.js existant
+    # lire cards.js existant
     # -------------------------
 
     with open("cards.js", "r", encoding="utf-8") as f:
-
         txt = f.read()
 
-    txt = txt.replace("window.CARDS =", "")
+    txt = txt.replace("window.CARDS =", "").strip()
+
+    if txt.endswith(";"):
+        txt = txt[:-1]
 
     cards = json.loads(txt)
 
 
     # -------------------------
-    # fonction crop %
+    # crop %
     # -------------------------
 
     def crop_percent(img, x1, y1, x2, y2):
@@ -332,7 +334,7 @@ def build_signatures():
 
 
     # -------------------------
-    # loop cartes
+    # loop
     # -------------------------
 
     for c in cards:
@@ -362,6 +364,35 @@ def build_signatures():
 
         if warp is None:
             continue
+
+
+        sig_global = compute_signature(warp)
+
+        sig_bottom = compute_signature(
+            crop_percent(warp, 0, 0.7, 1, 1)
+        )
+
+        sig_color = compute_signature(
+            crop_percent(warp, 0, 0, 0.1, 1)
+        )
+
+
+        c["signature"] = {
+
+            "global": sig_global,
+            "bottom": sig_bottom,
+            "color": sig_color
+
+        }
+
+
+    with open("cards.js", "w", encoding="utf-8") as f:
+
+        f.write("window.CARDS = ")
+        json.dump(cards, f, indent=2)
+
+
+    return "OK"
 
 
         # -------------------------
