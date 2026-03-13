@@ -153,7 +153,30 @@ def upload():
     # -------------------------
     # CARDS ONLY
     # -------------------------
+def load_cards():
 
+    global CARDS
+
+    folder = "cards"
+
+    for name in os.listdir(folder):
+
+        path = os.path.join(folder, name)
+
+        img = cv2.imread(path)
+
+        if img is None:
+            continue
+
+        img = cv2.resize(img, (200, 300))
+
+        CARDS.append({
+            "name": name,
+            "img": img
+        })
+
+    print("CARDS:", len(CARDS))
+    
     if mode == "CARDS_ONLY":
 
         rects = []
