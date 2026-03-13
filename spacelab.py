@@ -266,7 +266,7 @@ if warp is not None:
     return jsonify({
         "ok": True,
         "rects": [rect],
-        "warp": warp is not None
+        "warp": warp is not None,
         "signature": sig
     })
 @app.route("/warp")
