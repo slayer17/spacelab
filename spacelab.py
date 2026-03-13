@@ -91,10 +91,42 @@ def warp_quad(img, pts):
 
 def detect_main_card(img):
 
+    original = img.copy()
+
+    max_dim = 1400
+
+    h, w = img.shape[:2]
+    scale = 1.0
+
+    # resize pour stabilité
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+
+    h, w = img.shape[:2]
+    image_area = h * w
+
+    # =====================
+    # preprocess
+    # =====================
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edges = cv2.Canny(blur, 80, 200)
+    edges = cv2.Canny(blur, 60, 150)
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (5, 5)
+    )
+
+    edges = cv2.dilate(edges, kernel, 1)
+    edges = cv2.erode(edges, kernel, 1)
+
+    # =====================
+    # contours
+    # =====================
 
     contours, _ = cv2.findContours(
         edges,
@@ -105,23 +137,79 @@ def detect_main_card(img):
     if not contours:
         return None
 
-    c = max(contours, key=cv2.contourArea)
+    candidates = []
 
-    x, y, w, h = cv2.boundingRect(c)
+    for c in contours:
 
-    quad = np.array([
-        [x, y],
-        [x + w, y],
-        [x + w, y + h],
-        [x, y + h]
-    ])
+        area = cv2.contourArea(c)
+
+        # trop petit
+        if area < image_area * 0.25:
+            continue
+
+        # trop grand (fond)
+        if area > image_area * 0.98:
+            continue
+
+        peri = cv2.arcLength(c, True)
+
+        approx = cv2.approxPolyDP(
+            c,
+            0.02 * peri,
+            True
+        )
+
+        if len(approx) == 4:
+            quad = approx.reshape(4, 2).astype("float32")
+        else:
+            rect = cv2.minAreaRect(c)
+            quad = cv2.boxPoints(rect).astype("float32")
+
+        # test warp
+        warp = warp_quad(img, quad)
+
+        if warp is None:
+            continue
+
+        wh, ww = warp.shape[:2]
+
+        if ww == 0 or wh == 0:
+            continue
+
+        ratio = wh / float(ww)
+
+        # ratio carte portrait
+        if ratio < 1.3 or ratio > 1.65:
+            continue
+
+        candidates.append((area, quad))
+
+    if not candidates:
+        return None
+
+    # plus grand rectangle valide
+    candidates.sort(
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+    quad = candidates[0][1]
+
+    if scale != 1.0:
+        quad = quad / scale
+
+    quad = order_points(quad)
+
+    x, y, bw, bh = cv2.boundingRect(
+        quad.astype(np.int32)
+    )
 
     return {
-        "x": x,
-        "y": y,
-        "w": w,
-        "h": h,
-        "quad": quad.tolist()
+        "x": int(x),
+        "y": int(y),
+        "w": int(bw),
+        "h": int(bh),
+        "quad": quad.astype(int).tolist()
     }
 
 
