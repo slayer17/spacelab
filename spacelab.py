@@ -1,4 +1,3 @@
-import os
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
@@ -7,19 +6,70 @@ app = Flask(__name__)
 
 
 # =====================================================
-# DETECT OBJECTS
+# ORDER POINTS
 # =====================================================
 
-def detect_objects(img):
+def order_points(pts):
+
+    rect = np.zeros((4, 2), dtype="float32")
+
+    s = pts.sum(axis=1)
+
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+
+    diff = np.diff(pts, axis=1)
+
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+
+    return rect
+
+
+# =====================================================
+# WARP PERSPECTIVE
+# =====================================================
+
+def warp_card(img, pts):
+
+    rect = order_points(pts)
+
+    (tl, tr, br, bl) = rect
+
+    wA = np.linalg.norm(br - bl)
+    wB = np.linalg.norm(tr - tl)
+
+    hA = np.linalg.norm(tr - br)
+    hB = np.linalg.norm(tl - bl)
+
+    maxW = int(max(wA, wB))
+    maxH = int(max(hA, hB))
+
+    dst = np.array([
+        [0, 0],
+        [maxW - 1, 0],
+        [maxW - 1, maxH - 1],
+        [0, maxH - 1]
+    ], dtype="float32")
+
+    M = cv2.getPerspectiveTransform(rect, dst)
+
+    warp = cv2.warpPerspective(img, M, (maxW, maxH))
+
+    return warp
+
+
+# =====================================================
+# DETECT RECTANGLES
+# =====================================================
+
+def detect_cards(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    edges = cv2.Canny(blur, 40, 120)
-
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.dilate(edges, kernel, iterations=1)
+    edges = cv2.Canny(blur, 50, 150)
 
     contours, _ = cv2.findContours(
         edges,
@@ -27,110 +77,50 @@ def detect_objects(img):
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    objects = []
+    rects = []
 
     for c in contours:
 
         area = cv2.contourArea(c)
 
-        if area < 1500:
+        if area < 5000:
             continue
 
-        x, y, w, h = cv2.boundingRect(c)
+        peri = cv2.arcLength(c, True)
+
+        approx = cv2.approxPolyDP(
+            c,
+            0.02 * peri,
+            True
+        )
+
+        if len(approx) != 4:
+            continue
+
+        pts = approx.reshape(4, 2)
+
+        warp = warp_card(img, pts)
+
+        h, w = warp.shape[:2]
+
+        if w == 0 or h == 0:
+            continue
 
         ratio = h / float(w)
 
-        obj_type = "UNKNOWN"
+        # ratio carte ~ 9/7
+        if ratio < 1.1 or ratio > 1.6:
+            continue
 
-        if 1.1 < ratio < 1.6:
-            obj_type = "CARD"
+        x, y, w, h = cv2.boundingRect(approx)
 
-        if area > 30000 and ratio > 1.3:
-            obj_type = "STATION"
-
-        objects.append({
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "area": area,
-            "ratio": ratio,
-            "type": obj_type
+        rects.append({
+            "x": int(x),
+            "y": int(y),
+            "w": int(w),
+            "h": int(h),
+            "type": "CARD"
         })
-
-    return objects
-
-
-# =====================================================
-# FIND STATIONS
-# =====================================================
-
-def find_stations(objects):
-
-    stations = [
-        o for o in objects
-        if o["type"] == "STATION"
-    ]
-
-    stations = sorted(
-        stations,
-        key=lambda o: o["area"],
-        reverse=True
-    )
-
-    stations = stations[:3]
-
-    stations = sorted(
-        stations,
-        key=lambda o: o["x"]
-    )
-
-    return stations
-
-
-# =====================================================
-# BUILD LAYOUT
-# =====================================================
-
-def build_layout(stations):
-
-    left, mid, right = stations
-
-    cx = mid["x"] + mid["w"] / 2
-    cy = mid["y"] + mid["h"] / 2
-
-    dist = (right["x"] - left["x"]) / 2
-
-    step_x = dist * 0.9
-    step_y = mid["h"] * 1.1
-
-    card_w = int(mid["w"] * 0.8)
-    card_h = int(mid["h"] * 0.9)
-
-    offsets = [
-
-        (-1, -1),
-        (0, -1),
-        (1, -1),
-
-        (-2, 0),
-        (-1, 0),
-        (1, 0),
-        (2, 0),
-
-        (-1, 1),
-        (0, 1),
-        (1, 1),
-    ]
-
-    rects = []
-
-    for ox, oy in offsets:
-
-        x = int(cx + ox * step_x - card_w / 2)
-        y = int(cy + oy * step_y - card_h / 2)
-
-        rects.append((x, y, card_w, card_h))
 
     return rects
 
@@ -143,84 +133,16 @@ def build_layout(stations):
 def upload():
 
     file = request.files["image"]
-    mode = request.form.get("mode", "BOARD")
 
     data = np.frombuffer(file.read(), np.uint8)
+
     img = cv2.imdecode(data, 1)
 
-    objects = detect_objects(img)
+    rects = detect_cards(img)
 
-    # -------------------------
-    # CARDS ONLY
-    # -------------------------
-def load_cards():
-
-    global CARDS
-
-    folder = "cards"
-
-    for name in os.listdir(folder):
-
-        path = os.path.join(folder, name)
-
-        img = cv2.imread(path)
-
-        if img is None:
-            continue
-
-        img = cv2.resize(img, (200, 300))
-
-        CARDS.append({
-            "name": name,
-            "img": img
-        })
-
-    print("CARDS:", len(CARDS))
-    
-    if mode == "CARDS_ONLY":
-
-        rects = []
-
-        for o in objects:
-
-            if o["type"] != "CARD":
-                continue
-
-            rects.append({
-                "x": o["x"],
-                "y": o["y"],
-                "w": o["w"],
-                "h": o["h"],
-                "type": "CARD"
-            })
-
-        return jsonify({"rects": rects})
-
-
-    # -------------------------
-    # BOARD MODE
-    # -------------------------
-
-    stations = find_stations(objects)
-
-    if len(stations) != 3:
-        return jsonify({"rects": []})
-
-    layout = build_layout(stations)
-
-    rects = []
-
-    for x, y, w, h in layout:
-
-        rects.append({
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "type": "GRID"
-        })
-
-    return jsonify({"rects": rects})
+    return jsonify({
+        "rects": rects
+    })
 
 
 # =====================================================
