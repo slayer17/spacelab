@@ -42,11 +42,9 @@ def detect_objects(img):
 
         obj_type = "UNKNOWN"
 
-        # ratio carte ~ 9/7 = 1.28
         if 1.1 < ratio < 1.6:
             obj_type = "CARD"
 
-        # station = très grande
         if area > 30000 and ratio > 1.3:
             obj_type = "STATION"
 
@@ -60,12 +58,11 @@ def detect_objects(img):
             "type": obj_type
         })
 
-    print("OBJECTS:", len(objects))
-
     return objects
 
+
 # =====================================================
-# FIND STATIONS (max 3)
+# FIND STATIONS
 # =====================================================
 
 def find_stations(objects):
@@ -88,12 +85,11 @@ def find_stations(objects):
         key=lambda o: o["x"]
     )
 
-    print("STATIONS:", stations)
-
     return stations
 
+
 # =====================================================
-# BUILD LAYOUT FROM STATIONS
+# BUILD LAYOUT
 # =====================================================
 
 def build_layout(stations):
@@ -147,12 +143,40 @@ def build_layout(stations):
 def upload():
 
     file = request.files["image"]
+    mode = request.form.get("mode", "BOARD")
 
     data = np.frombuffer(file.read(), np.uint8)
-
     img = cv2.imdecode(data, 1)
 
     objects = detect_objects(img)
+
+    # -------------------------
+    # CARDS ONLY
+    # -------------------------
+
+    if mode == "CARDS_ONLY":
+
+        rects = []
+
+        for o in objects:
+
+            if o["type"] != "CARD":
+                continue
+
+            rects.append({
+                "x": o["x"],
+                "y": o["y"],
+                "w": o["w"],
+                "h": o["h"],
+                "type": "CARD"
+            })
+
+        return jsonify({"rects": rects})
+
+
+    # -------------------------
+    # BOARD MODE
+    # -------------------------
 
     stations = find_stations(objects)
 
@@ -173,10 +197,7 @@ def upload():
             "type": "GRID"
         })
 
-    return jsonify({
-        "rects": rects,
-        "stations": len(stations)
-    })
+    return jsonify({"rects": rects})
 
 
 # =====================================================
