@@ -210,16 +210,14 @@ function drawRects(rects) {
 // MATCH SIGNATURE
 // =========================
 
-function distance(a, b) {
-    return Math.abs(a - b);
-}
-
 function matchSignature(sig) {
 
     if (!sig) return null;
 
     let best = null;
     let bestScore = 999999;
+
+    console.log("INPUT SIG", sig);
 
     for (let c of CARDS) {
 
@@ -230,9 +228,13 @@ function matchSignature(sig) {
 
         if (!s) continue;
 
+        console.log("CARD", c.id, s);
+
         const score =
             distance(sig.mean, s.mean || 0) +
             distance(sig.std, s.std || 0);
+
+        console.log("score", c.id, score);
 
         if (score < bestScore) {
 
@@ -242,6 +244,8 @@ function matchSignature(sig) {
         }
 
     }
+
+    console.log("BEST", best);
 
     return best;
 }
