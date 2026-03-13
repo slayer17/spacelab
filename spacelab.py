@@ -8,7 +8,24 @@ app = Flask(__name__)
 # =====================================================
 # UTILS
 # =====================================================
+def compute_signature(img):
 
+    small = cv2.resize(img, (32, 32))
+
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+    mean = float(np.mean(gray))
+    std = float(np.std(gray))
+
+    b = float(np.mean(small[:, :, 0]))
+    g = float(np.mean(small[:, :, 1]))
+    r = float(np.mean(small[:, :, 2]))
+
+    return {
+        "mean": mean,
+        "std": std,
+        "color": [b, g, r]
+    }
 def order_points(pts):
 
     rect = np.zeros((4, 2), dtype="float32")
@@ -226,7 +243,17 @@ def upload():
     quad = np.array(rect["quad"], dtype="float32")
 
     warp = warp_quad(img, quad)
+sig = None
 
+if warp is not None:
+
+    cv2.imwrite(
+        "warp.jpg",
+        warp,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 95]
+    )
+
+    sig = compute_signature(warp)
     if warp is not None:
 
         # sauvegarde JPEG
@@ -240,6 +267,7 @@ def upload():
         "ok": True,
         "rects": [rect],
         "warp": warp is not None
+        "signature": sig
     })
 @app.route("/warp")
 def warp_image():
