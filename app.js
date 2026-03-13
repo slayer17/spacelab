@@ -15,7 +15,7 @@ const result = document.getElementById("result");
 
 let currentStream = null;
 let mode = "BOARD";
-
+result.textContent = "Mode BOARD";
 
 
 /* =========================
@@ -66,6 +66,8 @@ if (boardBtn) {
     boardBtn.addEventListener("click", () => {
 
         mode = "BOARD";
+        console.log("MODE =", mode);
+
         result.textContent = "Mode BOARD";
 
     });
@@ -75,6 +77,8 @@ if (cardsBtn) {
     cardsBtn.addEventListener("click", () => {
 
         mode = "CARDS_ONLY";
+        console.log("MODE =", mode);
+
         result.textContent = "Mode CARDS_ONLY";
 
     });
