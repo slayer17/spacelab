@@ -1,5 +1,9 @@
 import cv2
 import numpy as np
+import os
+import glob
+import json
+
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
@@ -10,6 +14,7 @@ app = Flask(__name__)
 # =====================================================
 
 def compute_signature(img):
+
     small = cv2.resize(img, (32, 32))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
@@ -28,13 +33,16 @@ def compute_signature(img):
 
 
 def order_points(pts):
+
     rect = np.zeros((4, 2), dtype="float32")
 
     s = pts.sum(axis=1)
+
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
 
     diff = np.diff(pts, axis=1)
+
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
 
@@ -42,6 +50,7 @@ def order_points(pts):
 
 
 def warp_quad(img, pts):
+
     rect = order_points(pts)
 
     (tl, tr, br, bl) = rect
@@ -66,127 +75,60 @@ def warp_quad(img, pts):
     ], dtype="float32")
 
     M = cv2.getPerspectiveTransform(rect, dst)
-    warp = cv2.warpPerspective(img, M, (maxW, maxH))
+
+    warp = cv2.warpPerspective(
+        img,
+        M,
+        (maxW, maxH)
+    )
 
     return warp
 
 
 # =====================================================
-# STEP 1.1 MAIN CARD DETECTION
+# DETECT MAIN CARD
 # =====================================================
 
 def detect_main_card(img):
-    max_dim = 1400
-
-    h, w = img.shape[:2]
-    scale = 1.0
-
-    if max(h, w) > max_dim:
-        scale = max_dim / float(max(h, w))
-        img = cv2.resize(img, (int(w * scale), int(h * scale)))
-
-    h, w = img.shape[:2]
-    image_area = h * w
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
     edges = cv2.Canny(blur, 80, 200)
 
-    thresh = cv2.adaptiveThreshold(
-        blur,
-        255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        5
-    )
-
-    mask = cv2.bitwise_or(edges, thresh)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
     contours, _ = cv2.findContours(
-        mask,
+        edges,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    candidates = []
-
-    for c in contours:
-        area = cv2.contourArea(c)
-
-        if area < image_area * 0.15:
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4:
-            quad = approx.reshape(4, 2).astype("float32")
-        else:
-            rect = cv2.minAreaRect(c)
-            quad = cv2.boxPoints(rect).astype("float32")
-
-        warp = warp_quad(img, quad)
-        if warp is None:
-            continue
-
-        wh, ww = warp.shape[:2]
-        if ww == 0 or wh == 0:
-            continue
-
-        ratio = wh / float(ww)
-        if ratio < 1.3 or ratio > 1.65:
-            continue
-
-        x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
-        rect_area = bw * bh
-        fill_ratio = area / float(rect_area)
-
-        if fill_ratio < 0.75:
-            continue
-
-        candidates.append({
-            "area": area,
-            "rect_area": rect_area,
-            "ratio": ratio,
-            "fill": fill_ratio,
-            "quad": quad,
-            "bbox": [x, y, bw, bh]
-        })
-
-    if not candidates:
+    if not contours:
         return None
 
-    candidates.sort(key=lambda c: c["rect_area"], reverse=True)
-    best = candidates[0]
+    c = max(contours, key=cv2.contourArea)
 
-    quad = best["quad"]
+    x, y, w, h = cv2.boundingRect(c)
 
-    if scale != 1.0:
-        quad = quad / scale
-
-    quad = order_points(quad)
-
-    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
+    quad = np.array([
+        [x, y],
+        [x + w, y],
+        [x + w, y + h],
+        [x, y + h]
+    ])
 
     return {
-        "x": int(x),
-        "y": int(y),
-        "w": int(bw),
-        "h": int(bh),
-        "type": "MAIN_CARD",
-        "quad": quad.astype(int).tolist()
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "quad": quad.tolist()
     }
 
 
 # =====================================================
 # ROUTES
 # =====================================================
-@app.route("/build_signatures")
+
 @app.route("/")
 def index():
     return send_from_directory(".", "index.html")
@@ -199,57 +141,44 @@ def static_files(path):
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    if "image" not in request.files:
-        return jsonify({"ok": False, "error": "No image uploaded"})
 
     file = request.files["image"]
 
     data = np.frombuffer(file.read(), np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
-    if img is None:
-        return jsonify({"ok": False, "error": "Invalid image"})
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
     rect = detect_main_card(img)
 
     if rect is None:
-        return jsonify({
-            "ok": True,
-            "rects": [],
-            "warp": False,
-            "signature": None
-        })
+        return jsonify({"rects": []})
 
     quad = np.array(rect["quad"], dtype="float32")
+
     warp = warp_quad(img, quad)
 
     sig = None
 
     if warp is not None:
-        cv2.imwrite(
-            "warp.jpg",
-            warp,
-            [int(cv2.IMWRITE_JPEG_QUALITY), 95]
-        )
+
+        cv2.imwrite("warp.jpg", warp)
+
         sig = compute_signature(warp)
 
     return jsonify({
-        "ok": True,
         "rects": [rect],
-        "warp": warp is not None,
         "signature": sig
     })
 
 
 @app.route("/warp")
-def warp_image():
+def warp():
     return send_from_directory(".", "warp.jpg")
-#======================================================
-# signature
-#======================================================
-import glob
-import json
 
+
+# =====================================================
+# BUILD SIGNATURES
+# =====================================================
 
 @app.route("/build_signatures")
 def build_signatures():
@@ -299,7 +228,8 @@ def build_signatures():
         f.write("window.CARDS = ")
         json.dump(cards, f, indent=2)
 
-    return "OK signatures built"
+    return "OK"
+
 
 # =====================================================
 # RUN
