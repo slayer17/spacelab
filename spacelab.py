@@ -8,10 +8,9 @@ app = Flask(__name__)
 # =====================================================
 # UTILS
 # =====================================================
+
 def compute_signature(img):
-
     small = cv2.resize(img, (32, 32))
-
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
     mean = float(np.mean(gray))
@@ -26,17 +25,16 @@ def compute_signature(img):
         "std": std,
         "color": [b, g, r]
     }
-def order_points(pts):
 
+
+def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
 
     s = pts.sum(axis=1)
-
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
 
     diff = np.diff(pts, axis=1)
-
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
 
@@ -44,7 +42,6 @@ def order_points(pts):
 
 
 def warp_quad(img, pts):
-
     rect = order_points(pts)
 
     (tl, tr, br, bl) = rect
@@ -69,12 +66,7 @@ def warp_quad(img, pts):
     ], dtype="float32")
 
     M = cv2.getPerspectiveTransform(rect, dst)
-
-    warp = cv2.warpPerspective(
-        img,
-        M,
-        (maxW, maxH)
-    )
+    warp = cv2.warpPerspective(img, M, (maxW, maxH))
 
     return warp
 
@@ -84,9 +76,6 @@ def warp_quad(img, pts):
 # =====================================================
 
 def detect_main_card(img):
-
-    original = img.copy()
-
     max_dim = 1400
 
     h, w = img.shape[:2]
@@ -100,7 +89,6 @@ def detect_main_card(img):
     image_area = h * w
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
     edges = cv2.Canny(blur, 80, 200)
@@ -128,7 +116,6 @@ def detect_main_card(img):
     candidates = []
 
     for c in contours:
-
         area = cv2.contourArea(c)
 
         if area < image_area * 0.15:
@@ -144,24 +131,19 @@ def detect_main_card(img):
             quad = cv2.boxPoints(rect).astype("float32")
 
         warp = warp_quad(img, quad)
-
         if warp is None:
             continue
 
         wh, ww = warp.shape[:2]
-
         if ww == 0 or wh == 0:
             continue
 
         ratio = wh / float(ww)
-
         if ratio < 1.3 or ratio > 1.65:
             continue
 
         x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
-
         rect_area = bw * bh
-
         fill_ratio = area / float(rect_area)
 
         if fill_ratio < 0.75:
@@ -179,11 +161,7 @@ def detect_main_card(img):
     if not candidates:
         return None
 
-    candidates.sort(
-        key=lambda c: c["rect_area"],
-        reverse=True
-    )
-
+    candidates.sort(key=lambda c: c["rect_area"], reverse=True)
     best = candidates[0]
 
     quad = best["quad"]
@@ -193,9 +171,7 @@ def detect_main_card(img):
 
     quad = order_points(quad)
 
-    x, y, bw, bh = cv2.boundingRect(
-        quad.astype(np.int32)
-    )
+    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
 
     return {
         "x": int(x),
@@ -223,45 +199,39 @@ def static_files(path):
 
 @app.route("/upload", methods=["POST"])
 def upload():
-
     if "image" not in request.files:
-        return jsonify({"ok": False})
+        return jsonify({"ok": False, "error": "No image uploaded"})
 
     file = request.files["image"]
 
     data = np.frombuffer(file.read(), np.uint8)
     img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
+    if img is None:
+        return jsonify({"ok": False, "error": "Invalid image"})
+
     rect = detect_main_card(img)
 
     if rect is None:
         return jsonify({
             "ok": True,
-            "rects": []
+            "rects": [],
+            "warp": False,
+            "signature": None
         })
 
     quad = np.array(rect["quad"], dtype="float32")
-
     warp = warp_quad(img, quad)
-sig = None
 
-if warp is not None:
+    sig = None
 
-    cv2.imwrite(
-        "warp.jpg",
-        warp,
-        [int(cv2.IMWRITE_JPEG_QUALITY), 95]
-    )
-
-    sig = compute_signature(warp)
     if warp is not None:
-
-        # sauvegarde JPEG
         cv2.imwrite(
             "warp.jpg",
             warp,
             [int(cv2.IMWRITE_JPEG_QUALITY), 95]
         )
+        sig = compute_signature(warp)
 
     return jsonify({
         "ok": True,
@@ -269,9 +239,12 @@ if warp is not None:
         "warp": warp is not None,
         "signature": sig
     })
+
+
 @app.route("/warp")
 def warp_image():
     return send_from_directory(".", "warp.jpg")
+
 
 # =====================================================
 # RUN
