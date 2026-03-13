@@ -216,13 +216,17 @@ function distance(a, b) {
 function matchSignature(sig) {
 
     if (!sig) return null;
-
     if (!sig.color) return null;
+
+    if (!window.CARDS) {
+        console.log("CARDS undefined");
+        return null;
+    }
 
     let best = null;
     let bestScore = 999999;
 
-    for (let c of CARDS) {
+    for (let c of window.CARDS) {
 
         if (!c.signature) continue;
         if (!c.signature.scan) continue;
