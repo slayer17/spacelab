@@ -157,8 +157,7 @@ function sendToPython() {
         }
 
     }, "image/jpeg");
-console.log("SIG", sig);
-console.log("CARD", c.id, s);
+console.log("SIG", json.signature);
 }
 
 
