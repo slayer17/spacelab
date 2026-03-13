@@ -143,24 +143,35 @@ function sendToPython() {
 
         drawRects(json.rects);
 
-        if (json.signature) {
+   if (json.signature) {
 
-            const card = matchSignature(json.signature);
+    const card = matchSignature(json.signature);
 
-            if (card) {
+    if (card) {
 
-                result.textContent =
-                    "Carte : " + card.id;
+        result.textContent =
+            "Carte : " + card.id;
 
-            }
+    } else {
 
-        }
+        result.textContent =
+            "Pas trouvé";
 
-        console.log("JSON", json);
+    }
 
-    }, "image/jpeg");
+} else {
+
+    result.textContent =
+        "Pas de signature";
 
 }
+
+    }, "image/jpeg");
+console.log("SIG", sig);
+console.log("CARD", c.id, s);
+}
+
+
 
 // =========================
 // DRAW
@@ -216,17 +227,11 @@ function distance(a, b) {
 function matchSignature(sig) {
 
     if (!sig) return null;
-    if (!sig.color) return null;
-
-    if (!window.CARDS) {
-        console.log("CARDS undefined");
-        return null;
-    }
 
     let best = null;
     let bestScore = 999999;
 
-    for (let c of window.CARDS) {
+    for (let c of CARDS) {
 
         if (!c.signature) continue;
         if (!c.signature.scan) continue;
@@ -234,14 +239,10 @@ function matchSignature(sig) {
         const s = c.signature.scan.globalSignature;
 
         if (!s) continue;
-        if (!s.color) continue;
 
         const score =
-            distance(sig.mean, s.mean) +
-            distance(sig.std, s.std) +
-            distance(sig.color[0], s.color[0]) +
-            distance(sig.color[1], s.color[1]) +
-            distance(sig.color[2], s.color[2]);
+            distance(sig.mean, s.mean || 0) +
+            distance(sig.std, s.std || 0);
 
         if (score < bestScore) {
 
