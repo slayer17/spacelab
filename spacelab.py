@@ -229,7 +229,9 @@ def build_signatures():
         json.dump(cards, f, indent=2)
 
     return "OK"
-
+@app.route("/test")
+def test():
+    return "OK TEST"
 
 # =====================================================
 # RUN
