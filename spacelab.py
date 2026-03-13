@@ -146,7 +146,7 @@ def upload():
         data = np.frombuffer(file.read(), np.uint8)
 
         img = cv2.imdecode(data, 1)
-
+        print("IMAGE SHAPE:", img.shape)
         if img is None:
             return jsonify({"rects": []})
 
