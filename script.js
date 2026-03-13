@@ -172,7 +172,7 @@ function sendToPython() {
 
 console.log("SIG", sig);
 console.log("CARD", c.id, s);
-}
+
 
 
 
