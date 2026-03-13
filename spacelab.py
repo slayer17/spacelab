@@ -1,13 +1,16 @@
 import cv2
 import numpy as np
 import os
-import glob
 import json
 
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CARDS_DIR = os.path.join(BASE_DIR, "cards")
+WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
+CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 
 
 # =====================================================
@@ -15,7 +18,6 @@ app = Flask(__name__)
 # =====================================================
 
 def compute_signature(img):
-
     small = cv2.resize(img, (32, 32))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
@@ -34,16 +36,13 @@ def compute_signature(img):
 
 
 def order_points(pts):
-
     rect = np.zeros((4, 2), dtype="float32")
 
     s = pts.sum(axis=1)
-
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
 
     diff = np.diff(pts, axis=1)
-
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
 
@@ -51,7 +50,6 @@ def order_points(pts):
 
 
 def warp_quad(img, pts):
-
     rect = order_points(pts)
 
     (tl, tr, br, bl) = rect
@@ -86,20 +84,63 @@ def warp_quad(img, pts):
     return warp
 
 
+def crop_percent(img, x1, y1, x2, y2):
+    h, w = img.shape[:2]
+
+    xa = max(0, min(w, int(w * x1)))
+    xb = max(0, min(w, int(w * x2)))
+    ya = max(0, min(h, int(h * y1)))
+    yb = max(0, min(h, int(h * y2)))
+
+    if xb <= xa or yb <= ya:
+        return None
+
+    return img[ya:yb, xa:xb]
+
+
+def compute_signature_safe(img):
+    if img is None or img.size == 0:
+        return None
+    return compute_signature(img)
+
+
+def load_cards_js():
+    with open(CARDS_JS_PATH, "r", encoding="utf-8") as f:
+        txt = f.read()
+
+    txt = txt.replace("window.CARDS =", "", 1).strip()
+
+    if txt.endswith(";"):
+        txt = txt[:-1]
+
+    return json.loads(txt)
+
+
+def save_cards_js(cards):
+    with open(CARDS_JS_PATH, "w", encoding="utf-8") as f:
+        f.write("window.CARDS = ")
+        json.dump(cards, f, indent=2, ensure_ascii=False)
+
+
+def find_card_image(card_id):
+    base = card_id.lower()
+    for ext in [".jpeg", ".jpg", ".png"]:
+        path = os.path.join(CARDS_DIR, base + ext)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 # =====================================================
 # DETECT MAIN CARD
 # =====================================================
 
 def detect_main_card(img):
-
-    original = img.copy()
-
     max_dim = 1400
 
     h, w = img.shape[:2]
     scale = 1.0
 
-    # resize pour stabilité
     if max(h, w) > max_dim:
         scale = max_dim / float(max(h, w))
         img = cv2.resize(img, (int(w * scale), int(h * scale)))
@@ -107,27 +148,14 @@ def detect_main_card(img):
     h, w = img.shape[:2]
     image_area = h * w
 
-    # =====================
-    # preprocess
-    # =====================
-
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
     edges = cv2.Canny(blur, 60, 150)
 
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (5, 5)
-    )
-
-    edges = cv2.dilate(edges, kernel, 1)
-    edges = cv2.erode(edges, kernel, 1)
-
-    # =====================
-    # contours
-    # =====================
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    edges = cv2.erode(edges, kernel, iterations=1)
 
     contours, _ = cv2.findContours(
         edges,
@@ -141,24 +169,16 @@ def detect_main_card(img):
     candidates = []
 
     for c in contours:
-
         area = cv2.contourArea(c)
 
-        # trop petit
-        if area < image_area * 0.25:
+        if area < image_area * 0.15:
             continue
 
-        # trop grand (fond)
         if area > image_area * 0.98:
             continue
 
         peri = cv2.arcLength(c, True)
-
-        approx = cv2.approxPolyDP(
-            c,
-            0.02 * peri,
-            True
-        )
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
         if len(approx) == 4:
             quad = approx.reshape(4, 2).astype("float32")
@@ -166,21 +186,17 @@ def detect_main_card(img):
             rect = cv2.minAreaRect(c)
             quad = cv2.boxPoints(rect).astype("float32")
 
-        # test warp
         warp = warp_quad(img, quad)
-
         if warp is None:
             continue
 
         wh, ww = warp.shape[:2]
-
         if ww == 0 or wh == 0:
             continue
 
         ratio = wh / float(ww)
 
-        # ratio carte portrait
-        if ratio < 1.3 or ratio > 1.65:
+        if ratio < 1.2 or ratio > 1.8:
             continue
 
         candidates.append((area, quad))
@@ -188,12 +204,7 @@ def detect_main_card(img):
     if not candidates:
         return None
 
-    # plus grand rectangle valide
-    candidates.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
+    candidates.sort(key=lambda x: x[0], reverse=True)
     quad = candidates[0][1]
 
     if scale != 1.0:
@@ -201,9 +212,7 @@ def detect_main_card(img):
 
     quad = order_points(quad)
 
-    x, y, bw, bh = cv2.boundingRect(
-        quad.astype(np.int32)
-    )
+    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
 
     return {
         "x": int(x),
@@ -225,12 +234,12 @@ def test():
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    return send_from_directory(BASE_DIR, "index.html")
 
 
 @app.route("/<path:path>")
 def static_files(path):
-    return send_from_directory(".", path)
+    return send_from_directory(BASE_DIR, path)
 
 
 # =====================================================
@@ -239,63 +248,69 @@ def static_files(path):
 
 @app.route("/upload", methods=["POST"])
 def upload():
+    try:
+        if "image" not in request.files:
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "error": "no image"
+            })
 
-    file = request.files["image"]
+        file = request.files["image"]
 
-    data = np.frombuffer(file.read(), np.uint8)
+        data = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is None:
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "error": "invalid image"
+            })
 
-    # MODE
-    mode = request.form.get("mode", "BOARD")
+        mode = request.form.get("mode", "BOARD")
 
-    if mode == "CARDS_ONLY":
-
-        h, w = img.shape[:2]
-
-        rect = {
-            "x": 0,
-            "y": 0,
-            "w": w,
-            "h": h,
-            "quad": [
-                [0, 0],
-                [w, 0],
-                [w, h],
-                [0, h]
-            ]
-        }
-
-    else:
-
+        # Pour l’instant on utilise la même détection pour les 2 modes.
+        # En photo carte seule, il faut détecter la carte.
+        # En scan propre, la carte prendra naturellement presque toute l’image.
         rect = detect_main_card(img)
 
         if rect is None:
             return jsonify({
                 "rects": [],
-                "signature": None
+                "signature": None,
+                "mode": mode
             })
 
-    quad = np.array(rect["quad"], dtype="float32")
+        quad = np.array(rect["quad"], dtype="float32")
+        warp = warp_quad(img, quad)
 
-    warp = warp_quad(img, quad)
+        sig = None
 
-    sig = None
+        if warp is not None:
+            cv2.imwrite(WARP_PATH, warp)
+            sig = compute_signature(warp)
 
-    if warp is not None:
+        return jsonify({
+            "rects": [rect],
+            "signature": sig,
+            "mode": mode
+        })
 
-        cv2.imwrite("warp.jpg", warp)
+    except Exception as e:
+        print("UPLOAD ERROR:", e)
+        return jsonify({
+            "rects": [],
+            "signature": None,
+            "error": str(e)
+        }), 500
 
-        sig = compute_signature(warp)
-
-    return jsonify({
-        "rects": [rect],
-        "signature": sig
-    })
 
 @app.route("/warp")
 def warp():
-    return send_from_directory(".", "warp.jpg")
+    if not os.path.exists(WARP_PATH):
+        return "warp not found", 404
+    return send_from_directory(BASE_DIR, "warp.jpg")
 
 
 # =====================================================
@@ -304,135 +319,55 @@ def warp():
 
 @app.route("/build_signatures")
 def build_signatures():
+    try:
+        cards = load_cards_js()
 
-    with open("cards.js", "r", encoding="utf-8") as f:
-        txt = f.read()
+        for c in cards:
+            card_id = c.get("id")
+            if not card_id:
+                continue
 
-    txt = txt.replace("window.CARDS =", "").strip()
+            img_path = find_card_image(card_id)
+            if not img_path:
+                continue
 
-    if txt.endswith(";"):
-        txt = txt[:-1]
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
 
-    cards = json.loads(txt)
+            h, w = img.shape[:2]
 
+            quad = np.array([
+                [0, 0],
+                [w - 1, 0],
+                [w - 1, h - 1],
+                [0, h - 1]
+            ], dtype="float32")
 
-    def crop_percent(img, x1, y1, x2, y2):
+            warp = warp_quad(img, quad)
+            if warp is None:
+                continue
 
-        h, w = img.shape[:2]
+            sig_global = compute_signature_safe(warp)
+            sig_bottom = compute_signature_safe(
+                crop_percent(warp, 0.0, 0.70, 1.0, 1.0)
+            )
+            sig_color = compute_signature_safe(
+                crop_percent(warp, 0.0, 0.0, 0.10, 1.0)
+            )
 
-        return img[
-            int(h*y1):int(h*y2),
-            int(w*x1):int(w*x2)
-        ]
+            c["signature"] = {
+                "global": sig_global,
+                "bottom": sig_bottom,
+                "color": sig_color
+            }
 
+        save_cards_js(cards)
+        return "OK"
 
-    for c in cards:
-
-        name = c["id"].lower() + ".jpeg"
-
-        path = os.path.join("cards", name)
-
-        if not os.path.exists(path):
-            continue
-
-        img = cv2.imread(path)
-
-        if img is None:
-            continue
-
-        h, w = img.shape[:2]
-
-        quad = np.array([
-            [0,0],
-            [w-1,0],
-            [w-1,h-1],
-            [0,h-1]
-        ], dtype="float32")
-
-        warp = warp_quad(img, quad)
-
-        if warp is None:
-            continue
-
-
-        sig_global = compute_signature(warp)
-
-        sig_bottom = compute_signature(
-            crop_percent(warp, 0, 0.7, 1, 1)
-        )
-
-        sig_color = compute_signature(
-            crop_percent(warp, 0, 0, 0.1, 1)
-        )
-
-
-        c["signature"] = {
-
-            "global": sig_global,
-            "bottom": sig_bottom,
-            "color": sig_color
-
-        }
-
-
-    with open("cards.js", "w", encoding="utf-8") as f:
-
-        f.write("window.CARDS = ")
-        json.dump(cards, f, indent=2)
-
-
-    return "OK"
-
-
-                # -------------------------
-        # signatures zones
-        # -------------------------
-
-        sig_global = compute_signature(warp)
-
-        sig_topLeft = compute_signature(
-            crop_percent(warp, 0.0, 0.0, 0.25, 0.25)
-        )
-
-        sig_topRight = compute_signature(
-            crop_percent(warp, 0.25, 0.0, 0.5, 0.25)
-        )
-
-        sig_leftIcon = compute_signature(
-            crop_percent(warp, 0.0, 0.25, 0.25, 0.5)
-        )
-
-        sig_bottom = compute_signature(
-            crop_percent(warp, 0.0, 0.7, 1.0, 1.0)
-        )
-
-        sig_color = compute_signature(
-            crop_percent(warp, 0.0, 0.0, 0.1, 1.0)
-        )
-
-        sig_art = compute_signature(
-            crop_percent(warp, 0.25, 0.25, 0.75, 0.75)
-        )
-
-
-        c["signature"] = {
-            "global": sig_global,
-            "topLeft": sig_topLeft,
-            "topRight": sig_topRight,
-            "leftIcon": sig_leftIcon,
-            "bottom": sig_bottom,
-            "color": sig_color,
-            "art": sig_art
-        }
-
-
-    with open("cards.js", "w", encoding="utf-8") as f:
-
-        f.write("window.CARDS = ")
-        json.dump(cards, f, indent=2)
-
-
-    return "OK MULTI SIGNATURES"
+    except Exception as e:
+        print("BUILD SIGNATURES ERROR:", e)
+        return f"ERROR: {e}", 500
 
 
 # =====================================================
