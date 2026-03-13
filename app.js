@@ -9,10 +9,12 @@ const captureBtn = document.getElementById("captureBtn");
 
 const loadBtn = document.getElementById("loadBtn");
 const fileInput = document.getElementById("file");
-
+const boardBtn = document.getElementById("boardBtn");
+const cardsBtn = document.getElementById("cardsBtn");
 const result = document.getElementById("result");
 
 let currentStream = null;
+let mode = "BOARD";
 
 
 
@@ -60,7 +62,19 @@ function takePhoto() {
 }
 
 
+boardBtn.addEventListener("click", () => {
 
+    mode = "BOARD";
+    result.textContent = "Mode BOARD";
+
+});
+
+cardsBtn.addEventListener("click", () => {
+
+    mode = "CARDS_ONLY";
+    result.textContent = "Mode CARDS_ONLY";
+
+});
 /* =========================
    LOAD IMAGE
 ========================= */
@@ -96,6 +110,7 @@ function sendToPython() {
         const form = new FormData();
 
         form.append("image", blob, "capture.jpg");
+        form.append("mode", mode);
 
         result.textContent = "Envoi…";
 
@@ -111,8 +126,6 @@ function sendToPython() {
     }, "image/jpeg");
 
 }
-
-
 
 /* =========================
    DRAW
