@@ -304,10 +304,6 @@ def warp():
 @app.route("/build_signatures")
 def build_signatures():
 
-    # -------------------------
-    # lire cards.js existant
-    # -------------------------
-
     with open("cards.js", "r", encoding="utf-8") as f:
         txt = f.read()
 
@@ -319,10 +315,6 @@ def build_signatures():
     cards = json.loads(txt)
 
 
-    # -------------------------
-    # crop %
-    # -------------------------
-
     def crop_percent(img, x1, y1, x2, y2):
 
         h, w = img.shape[:2]
@@ -332,10 +324,6 @@ def build_signatures():
             int(w*x1):int(w*x2)
         ]
 
-
-    # -------------------------
-    # loop
-    # -------------------------
 
     for c in cards:
 
