@@ -62,19 +62,23 @@ function takePhoto() {
 }
 
 
-boardBtn.addEventListener("click", () => {
+if (boardBtn) {
+    boardBtn.addEventListener("click", () => {
 
-    mode = "BOARD";
-    result.textContent = "Mode BOARD";
+        mode = "BOARD";
+        result.textContent = "Mode BOARD";
 
-});
+    });
+}
 
-cardsBtn.addEventListener("click", () => {
+if (cardsBtn) {
+    cardsBtn.addEventListener("click", () => {
 
-    mode = "CARDS_ONLY";
-    result.textContent = "Mode CARDS_ONLY";
+        mode = "CARDS_ONLY";
+        result.textContent = "Mode CARDS_ONLY";
 
-});
+    });
+}
 /* =========================
    LOAD IMAGE
 ========================= */
