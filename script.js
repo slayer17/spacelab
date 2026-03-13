@@ -1,20 +1,27 @@
 let mode = "BOARD";
 
-const fileInput = document.getElementById("file");
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const startBtn = document.getElementById("startBtn");
+const captureBtn = document.getElementById("captureBtn");
+
 const loadBtn = document.getElementById("loadBtn");
+const fileInput = document.getElementById("file");
 
 const boardBtn = document.getElementById("boardBtn");
 const cardsBtn = document.getElementById("cardsBtn");
 
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-
 const result = document.getElementById("result");
 
+let currentStream = null;
 
-// =====================
+
+
+// =========================
 // MODE
-// =====================
+// =========================
 
 boardBtn.onclick = () => {
 
@@ -31,16 +38,61 @@ cardsBtn.onclick = () => {
 };
 
 
-// =====================
+
+// =========================
+// CAMERA
+// =========================
+
+startBtn.onclick = async () => {
+
+    try {
+
+        currentStream =
+            await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: "environment" }
+            });
+
+        video.srcObject = currentStream;
+
+    } catch (err) {
+
+        console.error(err);
+        result.textContent = "Erreur caméra";
+
+    }
+
+};
+
+
+
+// =========================
+// CAPTURE
+// =========================
+
+captureBtn.onclick = () => {
+
+    if (!currentStream) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    ctx.drawImage(video, 0, 0);
+
+    sendToPython();
+
+};
+
+
+
+// =========================
 // LOAD IMAGE
-// =====================
+// =========================
 
 loadBtn.onclick = () => {
 
     fileInput.click();
 
 };
-
 
 fileInput.onchange = e => {
 
@@ -66,9 +118,10 @@ fileInput.onchange = e => {
 };
 
 
-// =====================
-// SEND
-// =====================
+
+// =========================
+// SEND TO PYTHON
+// =========================
 
 function sendToPython() {
 
@@ -78,6 +131,8 @@ function sendToPython() {
 
         form.append("image", blob, "capture.jpg");
         form.append("mode", mode);
+
+        result.textContent = "Envoi…";
 
         const res = await fetch("/upload", {
             method: "POST",
@@ -106,13 +161,17 @@ function sendToPython() {
 }
 
 
-// =====================
+
+// =========================
 // DRAW
-// =====================
+// =========================
 
 function drawRects(rects) {
 
     ctx.lineWidth = 3;
+    ctx.font = "20px Arial";
+
+    let text = "";
 
     rects.forEach(r => {
 
@@ -122,26 +181,37 @@ function drawRects(rects) {
             ctx.strokeStyle = "yellow";
         }
 
-        ctx.strokeRect(
-            r.x,
-            r.y,
-            r.w,
-            r.h
-        );
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+        if (r.name) {
+
+            ctx.fillStyle = "lime";
+
+            ctx.fillText(
+                r.name,
+                r.x,
+                r.y - 5
+            );
+
+            text += r.name + "\n";
+
+        }
 
     });
+
+    if (text) result.textContent = text;
 
 }
 
 
-// =====================
-// MATCH
-// =====================
+
+// =========================
+// MATCH SIGNATURE
+// =========================
 
 function distance(a, b) {
     return Math.abs(a - b);
 }
-
 
 function matchSignature(sig) {
 
