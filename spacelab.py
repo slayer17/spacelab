@@ -244,7 +244,62 @@ def upload():
 @app.route("/warp")
 def warp_image():
     return send_from_directory(".", "warp.jpg")
+#======================================================
+# signature
+#======================================================
+import glob
+import json
 
+
+@app.route("/build_signatures")
+def build_signatures():
+
+    files = glob.glob("cards/*.jpg")
+    files += glob.glob("cards/*.jpeg")
+    files += glob.glob("cards/*.png")
+
+    cards = []
+
+    for f in files:
+
+        img = cv2.imread(f)
+
+        if img is None:
+            continue
+
+        h, w = img.shape[:2]
+
+        quad = np.array([
+            [0, 0],
+            [w - 1, 0],
+            [w - 1, h - 1],
+            [0, h - 1]
+        ], dtype="float32")
+
+        warp = warp_quad(img, quad)
+
+        if warp is None:
+            continue
+
+        sig = compute_signature(warp)
+
+        name = os.path.basename(f)
+
+        cards.append({
+            "id": name,
+            "signature": {
+                "scan": {
+                    "globalSignature": sig
+                }
+            }
+        })
+
+    with open("cards.js", "w", encoding="utf-8") as f:
+
+        f.write("window.CARDS = ")
+        json.dump(cards, f, indent=2)
+
+    return "OK signatures built"
 
 # =====================================================
 # RUN
