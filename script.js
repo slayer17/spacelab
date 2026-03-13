@@ -141,7 +141,7 @@ function sendToPython() {
         });
 
         const json = await res.json();
-
+        console.log("SERVER SIG", json.signature);
         drawRects(json.rects);
 
    if (json.signature) {
