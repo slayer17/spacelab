@@ -217,10 +217,10 @@ function matchSignature(sig) {
 
     if (!sig) return null;
 
+    if (!sig.color) return null;
+
     let best = null;
     let bestScore = 999999;
-
-    console.log("INPUT", sig);
 
     for (let c of CARDS) {
 
@@ -230,6 +230,7 @@ function matchSignature(sig) {
         const s = c.signature.scan.globalSignature;
 
         if (!s) continue;
+        if (!s.color) continue;
 
         const score =
             distance(sig.mean, s.mean) +
@@ -238,17 +239,14 @@ function matchSignature(sig) {
             distance(sig.color[1], s.color[1]) +
             distance(sig.color[2], s.color[2]);
 
-        console.log(c.id, score);
-
         if (score < bestScore) {
 
             bestScore = score;
             best = c;
 
         }
-    }
 
-    console.log("BEST", best);
+    }
 
     return best;
 }
