@@ -250,6 +250,14 @@ def upload():
 
     if mode == "CARDS_ONLY":
 
+    rect = detect_main_card(img)
+
+    if rect is None:
+        return jsonify({
+            "rects": [],
+            "signature": None
+        })
+
         h, w = img.shape[:2]
 
         rect = {
