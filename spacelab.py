@@ -196,11 +196,12 @@ def upload():
     if img is None:
         return jsonify({"rects": []})
 
-    rects = detect_cards(img)
-
+        rects = detect_cards(img)
+    # avoir les logs
+    print("RECTS:", rects)
     # on renvoie seulement les rectangles pour STEP 1
     return jsonify({"rects": rects})
-
+    
 
 # =====================================================
 # STATIC
