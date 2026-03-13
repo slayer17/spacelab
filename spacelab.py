@@ -304,15 +304,47 @@ def warp():
 @app.route("/build_signatures")
 def build_signatures():
 
-    files = glob.glob("cards/*.jpg")
-    files += glob.glob("cards/*.jpeg")
-    files += glob.glob("cards/*.png")
+    # -------------------------
+    # charger cards.js existant
+    # -------------------------
 
-    cards = []
+    with open("cards.js", "r", encoding="utf-8") as f:
 
-    for f in files:
+        txt = f.read()
 
-        img = cv2.imread(f)
+    txt = txt.replace("window.CARDS =", "")
+
+    cards = json.loads(txt)
+
+
+    # -------------------------
+    # fonction crop %
+    # -------------------------
+
+    def crop_percent(img, x1, y1, x2, y2):
+
+        h, w = img.shape[:2]
+
+        return img[
+            int(h*y1):int(h*y2),
+            int(w*x1):int(w*x2)
+        ]
+
+
+    # -------------------------
+    # loop cartes
+    # -------------------------
+
+    for c in cards:
+
+        name = c["id"].lower() + ".jpeg"
+
+        path = os.path.join("cards", name)
+
+        if not os.path.exists(path):
+            continue
+
+        img = cv2.imread(path)
 
         if img is None:
             continue
@@ -320,10 +352,10 @@ def build_signatures():
         h, w = img.shape[:2]
 
         quad = np.array([
-            [0, 0],
-            [w - 1, 0],
-            [w - 1, h - 1],
-            [0, h - 1]
+            [0,0],
+            [w-1,0],
+            [w-1,h-1],
+            [0,h-1]
         ], dtype="float32")
 
         warp = warp_quad(img, quad)
@@ -331,25 +363,66 @@ def build_signatures():
         if warp is None:
             continue
 
-        sig = compute_signature(warp)
 
-        name = os.path.basename(f)
+        # -------------------------
+        # signatures zones
+        # -------------------------
 
-        cards.append({
-            "id": name,
-            "signature": {
-                "scan": {
-                    "globalSignature": sig
-                }
-            }
-        })
+        sig_global = compute_signature(warp)
+
+        sig_topLeft = compute_signature(
+            crop_percent(warp, 0.0, 0.0, 0.25, 0.25)
+        )
+
+        sig_topRight = compute_signature(
+            crop_percent(warp, 0.25, 0.0, 0.5, 0.25)
+        )
+
+        sig_leftIcon = compute_signature(
+            crop_percent(warp, 0.0, 0.25, 0.25, 0.5)
+        )
+
+        sig_bottom = compute_signature(
+            crop_percent(warp, 0.0, 0.7, 1.0, 1.0)
+        )
+
+        sig_color = compute_signature(
+            crop_percent(warp, 0.0, 0.0, 0.1, 1.0)
+        )
+
+        sig_art = compute_signature(
+            crop_percent(warp, 0.25, 0.25, 0.75, 0.75)
+        )
+
+
+        # -------------------------
+        # update signature
+        # -------------------------
+
+        c["signature"] = {
+
+            "global": sig_global,
+            "topLeft": sig_topLeft,
+            "topRight": sig_topRight,
+            "leftIcon": sig_leftIcon,
+            "bottom": sig_bottom,
+            "color": sig_color,
+            "art": sig_art
+
+        }
+
+
+    # -------------------------
+    # save cards.js
+    # -------------------------
 
     with open("cards.js", "w", encoding="utf-8") as f:
 
         f.write("window.CARDS = ")
         json.dump(cards, f, indent=2)
 
-    return "OK"
+
+    return "OK MULTI SIGNATURES"
 
 
 # =====================================================
