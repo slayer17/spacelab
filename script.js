@@ -156,8 +156,9 @@ function sendToPython() {
 
         }
 
-    },
-    "image/jpeg");
+    }, "image/jpeg");
+console.log("SIG", sig);
+console.log("CARD", c.id, s);
 }
 
 
@@ -208,6 +209,7 @@ function drawRects(rects) {
 // =========================
 // MATCH SIGNATURE
 // =========================
+
 function distance(a, b) {
     return Math.abs(a - b);
 }
@@ -219,7 +221,7 @@ function matchSignature(sig) {
     let best = null;
     let bestScore = 999999;
 
-    console.log("INPUT SIG", sig);
+    console.log("INPUT", sig);
 
     for (let c of CARDS) {
 
@@ -230,13 +232,14 @@ function matchSignature(sig) {
 
         if (!s) continue;
 
-        console.log("CARD", c.id, s);
-
         const score =
-            distance(sig.mean, s.mean || 0) +
-            distance(sig.std, s.std || 0);
+            distance(sig.mean, s.mean) +
+            distance(sig.std, s.std) +
+            distance(sig.color[0], s.color[0]) +
+            distance(sig.color[1], s.color[1]) +
+            distance(sig.color[2], s.color[2]);
 
-        console.log("score", c.id, score);
+        console.log(c.id, score);
 
         if (score < bestScore) {
 
@@ -244,7 +247,6 @@ function matchSignature(sig) {
             best = c;
 
         }
-
     }
 
     console.log("BEST", best);
