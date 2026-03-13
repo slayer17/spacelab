@@ -319,55 +319,59 @@ def warp():
 
 @app.route("/build_signatures")
 def build_signatures():
-    try:
-        cards = load_cards_js()
 
-        for c in cards:
-            card_id = c.get("id")
-            if not card_id:
-                continue
+    with open("cards.js", "r", encoding="utf-8") as f:
+        txt = f.read()
 
-            img_path = find_card_image(card_id)
-            if not img_path:
-                continue
+    txt = txt.replace("window.CARDS =", "").strip()
 
-            img = cv2.imread(img_path)
-            if img is None:
-                continue
+    if txt.endswith(";"):
+        txt = txt[:-1]
 
-            h, w = img.shape[:2]
+    cards = json.loads(txt)
 
-            quad = np.array([
-                [0, 0],
-                [w - 1, 0],
-                [w - 1, h - 1],
-                [0, h - 1]
-            ], dtype="float32")
+    for c in cards:
 
-            warp = warp_quad(img, quad)
-            if warp is None:
-                continue
+        name = c["id"].lower() + ".jpeg"
 
-            sig_global = compute_signature_safe(warp)
-            sig_bottom = compute_signature_safe(
-                crop_percent(warp, 0.0, 0.70, 1.0, 1.0)
-            )
-            sig_color = compute_signature_safe(
-                crop_percent(warp, 0.0, 0.0, 0.10, 1.0)
-            )
+        path = os.path.join("cards", name)
 
-            c["signature"] = {
-                "global": sig_global,
-                "bottom": sig_bottom,
-                "color": sig_color
+        if not os.path.exists(path):
+            continue
+
+        img = cv2.imread(path)
+
+        if img is None:
+            continue
+
+        h, w = img.shape[:2]
+
+        quad = np.array([
+            [0, 0],
+            [w - 1, 0],
+            [w - 1, h - 1],
+            [0, h - 1]
+        ], dtype="float32")
+
+        warp = warp_quad(img, quad)
+
+        if warp is None:
+            continue
+
+        sig = compute_signature(warp)
+
+        c["signature"] = {
+            "scan": {
+                "globalSignature": sig
             }
+        }
 
-        save_cards_js(cards)
-        return "OK"
+    with open("cards.js", "w", encoding="utf-8") as f:
 
-    except Exception as e:
-        print("BUILD SIGNATURES ERROR:", e)
-        return f"ERROR: {e}", 500
+        f.write("window.CARDS = ")
+        json.dump(cards, f, indent=2)
+
+    return "OK"
 
 
 # =====================================================
