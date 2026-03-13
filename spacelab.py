@@ -1,10 +1,75 @@
+import cv2
+import numpy as np
+from flask import Flask, request, jsonify, send_from_directory
+
+app = Flask(__name__)
+
+
+# =====================================================
+# UTILS
+# =====================================================
+
+def order_points(pts):
+
+    rect = np.zeros((4, 2), dtype="float32")
+
+    s = pts.sum(axis=1)
+
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+
+    diff = np.diff(pts, axis=1)
+
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+
+    return rect
+
+
+def warp_quad(img, pts):
+
+    rect = order_points(pts)
+
+    (tl, tr, br, bl) = rect
+
+    wA = np.linalg.norm(br - bl)
+    wB = np.linalg.norm(tr - tl)
+
+    hA = np.linalg.norm(tr - br)
+    hB = np.linalg.norm(tl - bl)
+
+    maxW = int(max(wA, wB))
+    maxH = int(max(hA, hB))
+
+    if maxW < 10 or maxH < 10:
+        return None
+
+    dst = np.array([
+        [0, 0],
+        [maxW - 1, 0],
+        [maxW - 1, maxH - 1],
+        [0, maxH - 1]
+    ], dtype="float32")
+
+    M = cv2.getPerspectiveTransform(rect, dst)
+
+    warp = cv2.warpPerspective(
+        img,
+        M,
+        (maxW, maxH)
+    )
+
+    return warp
+
+
+# =====================================================
+# STEP 1.1 MAIN CARD DETECTION
+# =====================================================
+
 def detect_main_card(img):
 
     original = img.copy()
 
-    # ----------------------------
-    # resize pour stabilité
-    # ----------------------------
     max_dim = 1400
 
     h, w = img.shape[:2]
@@ -17,9 +82,6 @@ def detect_main_card(img):
     h, w = img.shape[:2]
     image_area = h * w
 
-    # ----------------------------
-    # preprocess
-    # ----------------------------
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -40,9 +102,6 @@ def detect_main_card(img):
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    # ----------------------------
-    # contours
-    # ----------------------------
     contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
@@ -55,11 +114,9 @@ def detect_main_card(img):
 
         area = cv2.contourArea(c)
 
-        # ignore petits objets
         if area < image_area * 0.15:
             continue
 
-        # approx
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
 
@@ -69,8 +126,8 @@ def detect_main_card(img):
             rect = cv2.minAreaRect(c)
             quad = cv2.boxPoints(rect).astype("float32")
 
-        # warp test
         warp = warp_quad(img, quad)
+
         if warp is None:
             continue
 
@@ -81,11 +138,9 @@ def detect_main_card(img):
 
         ratio = wh / float(ww)
 
-        # ratio carte portrait
         if ratio < 1.3 or ratio > 1.65:
             continue
 
-        # bounding rect
         x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
 
         rect_area = bw * bh
@@ -107,9 +162,6 @@ def detect_main_card(img):
     if not candidates:
         return None
 
-    # ----------------------------
-    # meilleur candidat = plus grand
-    # ----------------------------
     candidates.sort(
         key=lambda c: c["rect_area"],
         reverse=True
@@ -134,10 +186,52 @@ def detect_main_card(img):
         "w": int(bw),
         "h": int(bh),
         "type": "MAIN_CARD",
-        "quad": quad.astype(int).tolist(),
-        "debug": {
-            "ratio": float(best["ratio"]),
-            "fill": float(best["fill"]),
-            "area": int(best["area"])
-        }
+        "quad": quad.astype(int).tolist()
     }
+
+
+# =====================================================
+# ROUTES
+# =====================================================
+
+@app.route("/")
+def index():
+    return send_from_directory(".", "index.html")
+
+
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory(".", path)
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+
+    if "image" not in request.files:
+        return jsonify({"ok": False})
+
+    file = request.files["image"]
+
+    data = np.frombuffer(file.read(), np.uint8)
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+    rect = detect_main_card(img)
+
+    if rect is None:
+        return jsonify({
+            "ok": True,
+            "rects": []
+        })
+
+    return jsonify({
+        "ok": True,
+        "rects": [rect]
+    })
+
+
+# =====================================================
+# RUN
+# =====================================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
