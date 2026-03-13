@@ -223,11 +223,27 @@ def upload():
             "rects": []
         })
 
+    quad = np.array(rect["quad"], dtype="float32")
+
+    warp = warp_quad(img, quad)
+
+    if warp is not None:
+
+        # sauvegarde JPEG
+        cv2.imwrite(
+            "warp.jpg",
+            warp,
+            [int(cv2.IMWRITE_JPEG_QUALITY), 95]
+        )
+
     return jsonify({
         "ok": True,
-        "rects": [rect]
+        "rects": [rect],
+        "warp": warp is not None
     })
-
+@app.route("/warp")
+def warp_image():
+    return send_from_directory(".", "warp.jpg")
 
 # =====================================================
 # RUN
