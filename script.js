@@ -230,23 +230,24 @@ function matchSignature(sig) {
     for (let c of CARDS) {
 
         if (!c.signature) continue;
-        if (!c.signature.scan) continue;
 
-        const s = c.signature.scan.globalSignature;
+        const s = c.signature.global;
 
         if (!s) continue;
 
-        const score =
-            distance(sig.mean, s.mean || 0) +
-            distance(sig.std, s.std || 0);
+        let score = 0;
+
+        score += distance(sig.mean, s.mean);
+        score += distance(sig.std, s.std);
+
+        score += distance(sig.color[0], s.color[0]);
+        score += distance(sig.color[1], s.color[1]);
+        score += distance(sig.color[2], s.color[2]);
 
         if (score < bestScore) {
-
             bestScore = score;
             best = c;
-
         }
-
     }
 
     return best;
