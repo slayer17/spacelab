@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>SpaceLab – Card Reader</title>
+
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -12,11 +13,30 @@
 <h2>Lecteur SpaceLab</h2>
 
 
-<!-- BOUTONS -->
-<button id="boardBtn">Board</button>
-<button id="cardsBtn">Cards</button>
+<!-- =======================
+     MODE
+======================= -->
+
+<button id="boardBtn">Mode BOARD</button>
+<button id="cardsBtn">Mode CARDS</button>
+
+<br><br>
+
+
+<!-- =======================
+     CAMERA
+======================= -->
+
 <button id="startBtn">Démarrer caméra</button>
 <button id="captureBtn">Capturer</button>
+
+<br><br>
+
+
+<!-- =======================
+     LOAD IMAGE
+======================= -->
+
 <button id="loadBtn">Charger image</button>
 
 <input
@@ -26,12 +46,13 @@
     style="display:none"
 >
 
-    
 
 <br><br>
 
 
-<!-- CAMERA -->
+<!-- =======================
+     VIDEO
+======================= -->
 
 <video
     id="video"
@@ -44,7 +65,9 @@
 <br><br>
 
 
-<!-- CANVAS -->
+<!-- =======================
+     CANVAS
+======================= -->
 
 <canvas
     id="canvas"
@@ -59,12 +82,17 @@
 <pre id="result"></pre>
 
 
+<!-- =======================
+     SCRIPTS
+======================= -->
+
 <script src="detectColor.js"></script>
 <script src="detectCards.js"></script>
 <script src="cards.js"></script>
 <script src="cardmatcher.js"></script>
 <script src="stationMatcher.js"></script>
 <script src="app.js"></script>
+
 
 </body>
 </html>
