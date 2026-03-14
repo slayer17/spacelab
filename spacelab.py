@@ -363,11 +363,14 @@ def upload():
         quad = np.array(rect["quad"], dtype="float32")
         warp = warp_quad(img, quad)
 
-        sig = None
+      sig = None
+      rois = []
 
-        if warp is not None:
-            cv2.imwrite(WARP_PATH, warp)
-            sig = compute_signature(warp)
+      if warp is not None:
+
+          cv2.imwrite(WARP_PATH, warp)
+
+          sig, rois = compute_signature(warp)
 
         return jsonify({
             "rects": [rect],
