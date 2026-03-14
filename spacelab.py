@@ -43,11 +43,15 @@ def compute_signature(img):
     # COLOR (rouge)
     # ======================
 
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.45)
+    # position horizontale
 
-    y1 = int(h * 0.00)
-    y2 = int(h * 0.18)
+x1 = int(w * 0.00)   # bord gauche de la carte
+x2 = int(w * 0.35)   # 35% de la largeur → zone gauche seulement
+
+# position verticale
+
+y1 = int(h * 0.00)   # tout en haut de la carte
+y2 = int(h * 0.12)   # 15% de la hauteur → bande du haut seulement
 
     zone = img[y1:y2, x1:x2]
 
