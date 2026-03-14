@@ -154,7 +154,7 @@ function sendToPython() {
 
    if (json.signature) {
 
-    const card = matchSignature(json.signature);
+    const card = matchSignature(json.signature, CARDS);
 
     if (card) {
 
@@ -251,99 +251,3 @@ function drawRois(rois, rect) {
     });
 }
 
-
-// =========================
-// MATCH SIGNATURE
-// =========================
-
-function distance(a, b) {
-    return Math.abs(a - b);
-}
-
-function colorVectorDistance(a, b) {
-    if (!a || !b || a.length !== 3 || b.length !== 3) return 0;
-
-    return Math.sqrt(
-        Math.pow((a[0] || 0) - (b[0] || 0), 2) +
-        Math.pow((a[1] || 0) - (b[1] || 0), 2) +
-        Math.pow((a[2] || 0) - (b[2] || 0), 2)
-    );
-}
-
-function zoneDistance(a, b) {
-
-    if (!a || !b) return 999999;
-
-    let d = 0;
-
-    // mean
-    if (a.mean !== undefined && b.mean !== undefined) {
-        d += distance(a.mean, b.mean);
-    }
-
-    // std
-    if (a.std !== undefined && b.std !== undefined) {
-        d += distance(a.std, b.std);
-    }
-
-    // color vector
-    if (a.color && b.color) {
-        d += colorVectorDistance(a.color, b.color) * 0.2;
-    }
-
-    return d;
-}
-/*-------------------------------
-fonction pour match des signatures
-------------------------------------*/
-
-function matchSignature(sig) {
-
-    if (!sig) return null;
-
-    let best = null;
-    let bestScore = 999999;
-
-    let detectedColor = null;
-
-    if (sig.color && sig.color.color) {
-
-        const c = sig.color.color; // [b,g,r]
-
-        if (c[2] > c[1] && c[2] > c[0]) detectedColor = "ROUGE";
-        else if (c[0] > c[1] && c[0] > c[2]) detectedColor = "BLEU";
-        else if (c[1] > c[2] && c[1] > c[0]) detectedColor = "VERT";
-        else detectedColor = "JAUNE";
-
-    }
-
-    for (let c of CARDS) {
-
-        if (!c.signature || !c.signature.scan) continue;
-
-        if (detectedColor && c.couleur !== detectedColor) continue;
-
-        const s = c.signature.scan;
-
-        if (!s.global) continue;
-
-        const dGlobal = zoneDistance(sig.global, s.global);
-        const dBottom = zoneDistance(sig.bottom, s.bottom);
-        const dColor = zoneDistance(sig.color, s.color);
-
-        const score =
-            dBottom * 0.5 +
-            dColor * 0.4 +
-            dGlobal * 0.1;
-
-        if (score < bestScore) {
-
-            bestScore = score;
-            best = c;
-
-        }
-
-    }
-
-    return best;
-}
