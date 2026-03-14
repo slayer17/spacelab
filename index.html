@@ -69,18 +69,23 @@
      CANVAS
 ======================= -->
 
-<canvas
-    id="canvas"
-    width="600"
-    height="900"
-    style="border:1px solid black"
->
+<div style="display: flex; gap: 20px; align-items: flex-start;">
 
+    <div>
+        <canvas
+            id="canvas"
+            width="600"
+            height="900"
+            style="border:1px solid black">
+        </canvas>
+    </div>
 
-<h3>Résultat</h3>
+    <div>
+        <h3 style="margin-top: 0;">Résultat</h3>
+        <pre id="result" style="background: #f4f4f4; padding: 10px; border-radius: 5px; min-width: 200px;"></pre>
+    </div>
 
-<pre id="result"></pre>
-</canvas>
+</div>
 
 <!-- =======================
      SCRIPTS
