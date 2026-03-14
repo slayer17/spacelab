@@ -22,20 +22,24 @@ def compute_signature(img):
     img = cv2.resize(img, (200, 300))
 
     h, w = img.shape[:2]
-# ROI interne pour enlever le bord jaune / marge warp
 
-x1 = int(w * 0.05)
-x2 = int(w * 0.95)
+    # ======================
+    # ROI interne (enlever bord)
+    # ======================
 
-y1 = int(h * 0.05)
-y2 = int(h * 0.95)
+    x1 = int(w * 0.05)
+    x2 = int(w * 0.95)
 
-img = img[y1:y2, x1:x2]
+    y1 = int(h * 0.05)
+    y2 = int(h * 0.95)
 
-h, w = img.shape[:2]
-    # =========================
+    img = img[y1:y2, x1:x2]
+
+    h, w = img.shape[:2]
+
+    # ======================
     # COLOR (haut gauche)
-    # =========================
+    # ======================
 
     x1 = int(w * 0.00)
     x2 = int(w * 0.55)
@@ -53,10 +57,9 @@ h, w = img.shape[:2]
         "color": zone.mean(axis=(0, 1)).tolist()
     }
 
-
-    # =========================
-    # SYMBOL (milieu gauche)
-    # =========================
+    # ======================
+    # SYMBOL
+    # ======================
 
     x1 = int(w * 0.00)
     x2 = int(w * 0.35)
@@ -73,10 +76,9 @@ h, w = img.shape[:2]
         "std": float(np.std(gray))
     }
 
-
-    # =========================
-    # BOTTOM (bas)
-    # =========================
+    # ======================
+    # BOTTOM
+    # ======================
 
     x1 = int(w * 0.05)
     x2 = int(w * 0.95)
@@ -93,77 +95,21 @@ h, w = img.shape[:2]
         "std": float(np.std(gray))
     }
 
+    # ======================
+    # GLOBAL
+    # ======================
 
-    # =========================
-    # EFFECT (bas gauche)
-    # =========================
-
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.35)
-
-    y1 = int(h * 0.70)
-    y2 = int(h * 0.90)
-
-    zone = img[y1:y2, x1:x2]
-
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-
-    effect_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray))
-    }
-
-
-    # =========================
-    # CENTER (dessin)
-    # =========================
-
-    x1 = int(w * 0.25)
-    x2 = int(w * 0.95)
-
-    y1 = int(h * 0.10)
-    y2 = int(h * 0.85)
-
-    zone = img[y1:y2, x1:x2]
-
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-
-    center_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray))
-    }
-
-
-    # =========================
-    # GLOBAL (secours)
-    # =========================
-
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.95)
-
-    y1 = int(h * 0.05)
-    y2 = int(h * 0.95)
-
-    zone = img[y1:y2, x1:x2]
-
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     global_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray))
     }
 
-
-    # =========================
-    # FINAL
-    # =========================
-
     return {
         "color": color_sig,
         "symbol": symbol_sig,
         "bottom": bottom_sig,
-        "effect": effect_sig,
-        "center": center_sig,
         "global": global_sig
     }
 
