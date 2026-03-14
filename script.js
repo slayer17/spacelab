@@ -229,18 +229,14 @@ function drawRois(rois, rect) {
 
     rois.forEach(r => {
 
+        if (r.type === "GLOBAL") return;
+
         if (r.type === "COLOR")
             ctx.strokeStyle = "red";
-
         else if (r.type === "SYMBOL")
             ctx.strokeStyle = "blue";
-
         else if (r.type === "BOTTOM")
             ctx.strokeStyle = "violet";
-
-        else if (r.type === "GLOBAL")
-        return;
-
         else
             ctx.strokeStyle = "white";
 
@@ -252,9 +248,7 @@ function drawRois(rois, rect) {
             r.w * scaleX,
             r.h * scaleY
         );
-
     });
-
 }
 
 // =========================
