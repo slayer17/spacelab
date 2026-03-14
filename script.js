@@ -220,6 +220,26 @@ function drawRects(rects) {
 function distance(a, b) {
     return Math.abs(a - b);
 }
+
+function colorVectorDistance(a, b) {
+    if (!a || !b || a.length !== 3 || b.length !== 3) return 0;
+
+    return Math.sqrt(
+        Math.pow((a[0] || 0) - (b[0] || 0), 2) +
+        Math.pow((a[1] || 0) - (b[1] || 0), 2) +
+        Math.pow((a[2] || 0) - (b[2] || 0), 2)
+    );
+}
+
+function zoneDistance(a, b) {
+    if (!a || !b) return 999999;
+
+    return (
+        distance(a.mean || 0, b.mean || 0) +
+        distance(a.std || 0, b.std || 0) +
+        colorVectorDistance(a.color, b.color) * 0.2
+    );
+}
 /*-------------------------------
 fonction pour match des signatures
 ------------------------------------*/
@@ -236,13 +256,18 @@ function matchSignature(sig) {
         if (!c.signature) continue;
         if (!c.signature.scan) continue;
 
-        const s = c.signature.scan.globalSignature;
+        const s = c.signature.scan;
 
-        if (!s) continue;
+        if (!s.global) continue;
+
+        const dGlobal = zoneDistance(sig.global, s.global);
+        const dBottom = zoneDistance(sig.bottom, s.bottom);
+        const dColor = zoneDistance(sig.color, s.color);
 
         const score =
-            distance(sig.mean, s.mean || 0) +
-            distance(sig.std, s.std || 0);
+            dGlobal * 0.45 +
+            dBottom * 0.40 +
+            dColor * 0.15;
 
         if (score < bestScore) {
 
