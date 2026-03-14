@@ -13,6 +13,7 @@ WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 
 
+
 # =====================================================
 # UTILS
 # =====================================================
