@@ -25,12 +25,9 @@ def compute_signature(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    mean = float(np.mean(gray))
-    std = float(np.std(gray))
-
     global_sig = {
-        "mean": mean,
-        "std": std
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
     }
 
     # ---------- COLOR ----------
@@ -47,24 +44,21 @@ def compute_signature(img):
 
     h, w = img.shape[:2]
 
-    bottom = img[int(h * 0.65):h, 0:w]
+    bottom = img[int(h * 0.65):h, :]
 
     gray_b = cv2.cvtColor(bottom, cv2.COLOR_BGR2GRAY)
 
-    bottom_mean = float(np.mean(gray_b))
-    bottom_std = float(np.std(gray_b))
-
     bottom_sig = {
-        "mean": bottom_mean,
-        "std": bottom_std
+        "mean": float(np.mean(gray_b)),
+        "std": float(np.std(gray_b))
     }
 
     # ---------- FINAL ----------
 
     return {
         "global": global_sig,
-        "color": color_sig,
-        "bottom": bottom_sig
+        "bottom": bottom_sig,
+        "color": color_sig
     }
 
 
