@@ -394,8 +394,8 @@ def build_signatures():
         sig = compute_signature(warp)
 
         c["signature"] = {
-            "scan": {
-                "globalSignature": sig
+            "scan": sig
+               
             }
         }
 
