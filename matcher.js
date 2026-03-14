@@ -20,6 +20,7 @@ function euclideanDistance(a, b) {
         const d = da - db;
         sum += d * d;
     }
+
     return Math.sqrt(sum / n);
 }
 
@@ -31,11 +32,18 @@ function similarityScore(a, b) {
 
 function getScanPart(signature, part) {
     if (!signature) return null;
-    if (signature.scan && signature.scan[part] != null) return signature.scan[part];
-    return signature[part] != null ? signature[part] : null;
+
+    if (signature.scan && signature.scan[part] != null)
+        return signature.scan[part];
+
+    if (signature[part] != null)
+        return signature[part];
+
+    return null;
 }
 
 function enrichCandidate(querySig, card) {
+
     const cardSig = card.signature || card;
 
     const colorScore = similarityScore(
@@ -68,6 +76,7 @@ function enrichCandidate(querySig, card) {
 }
 
 function keepBestBy(candidates, key, options = {}) {
+
     const {
         keepTop = 8,
         ratio = 0.92,
@@ -77,6 +86,7 @@ function keepBestBy(candidates, key, options = {}) {
     if (!candidates.length) return [];
 
     const sorted = [...candidates].sort((a, b) => b[key] - a[key]);
+
     const best = sorted[0][key];
 
     let kept = sorted.filter(c => c[key] >= best * ratio);
@@ -91,64 +101,64 @@ function keepBestBy(candidates, key, options = {}) {
 }
 
 function finalTieBreak(candidates) {
+
     if (!candidates.length) return null;
 
     const scored = candidates.map(c => ({
+
         ...c,
+
         finalScore:
             (c.colorScore * 0.15) +
             (c.symbolScore * 0.35) +
             (c.bottomScore * 0.40) +
             (c.globalScore * 0.10)
+
     }));
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
+
     return scored[0];
 }
 
-/**
- * Match hiérarchique :
- * 1) color
- * 2) symbol
- * 3) bottom
- * 4) global en secours
- *
- * @param {Object} querySig signature calculée sur la carte scannée
- * @param {Array} cardsDb base des cartes/signatures
- * @returns {Object|null}
- */
+
 function matchSignature(querySig, cardsDb) {
-    if (!querySig || !cardsDb || !cardsDb.length) return null;
 
-    // 1) enrichir tous les candidats
-    let candidates = cardsDb.map(card => enrichCandidate(querySig, card));
+    if (!querySig || !cardsDb || !cardsDb.length) {
 
-    // 2) filtre couleur
+        return {
+            card: cardsDb ? cardsDb[0] : null,
+            score: 0
+        };
+    }
+
+    let candidates = cardsDb.map(card =>
+        enrichCandidate(querySig, card)
+    );
+
     let stepColor = keepBestBy(candidates, "colorScore", {
         keepTop: 12,
         ratio: 0.90,
         minKeep: 4
     });
 
-    // 3) filtre symbole
     let stepSymbol = keepBestBy(stepColor, "symbolScore", {
         keepTop: 6,
         ratio: 0.90,
         minKeep: 2
     });
 
-    // 4) filtre bottom
     let stepBottom = keepBestBy(stepSymbol, "bottomScore", {
         keepTop: 3,
         ratio: 0.92,
         minKeep: 1
     });
 
-    // 5) choix final
     let best = finalTieBreak(stepBottom);
 
-    // Fallback si on n’a rien de convaincant
+    // fallback
     if (!best) {
+
         const fallback = [...candidates]
             .map(c => ({
                 ...c,
@@ -160,39 +170,29 @@ function matchSignature(querySig, cardsDb) {
             }))
             .sort((a, b) => b.finalScore - a.finalScore);
 
-        best = fallback[0] || null;
+        best = fallback[0];
     }
 
-    if (!best) return null;
+    if (!best || !best.card) {
+
+        return {
+            card: cardsDb[0],
+            score: 0
+        };
+    }
 
     return {
+
         card: best.card,
-        score: best.finalScore ?? (
-            (best.colorScore * 0.15) +
-            (best.symbolScore * 0.35) +
-            (best.bottomScore * 0.40) +
-            (best.globalScore * 0.10)
-        ),
-        debug: {
-            colorScore: best.colorScore,
-            symbolScore: best.symbolScore,
-            bottomScore: best.bottomScore,
-            globalScore: best.globalScore,
-            colorCandidates: stepColor.map(c => ({
-                id: c.card.id,
-                name: c.card.name,
-                score: c.colorScore
-            })),
-            symbolCandidates: stepSymbol.map(c => ({
-                id: c.card.id,
-                name: c.card.name,
-                score: c.symbolScore
-            })),
-            bottomCandidates: stepBottom.map(c => ({
-                id: c.card.id,
-                name: c.card.name,
-                score: c.bottomScore
-            }))
-        }
+
+        score:
+            best.finalScore ??
+            (
+                best.colorScore * 0.15 +
+                best.symbolScore * 0.35 +
+                best.bottomScore * 0.40 +
+                best.globalScore * 0.10
+            )
+
     };
 }
