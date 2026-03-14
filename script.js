@@ -144,8 +144,12 @@ function sendToPython() {
         console.log("SERVER SIG", json.signature);
         drawRects(json.rects);
 
-if (json.rois) {
-    drawRois(json.rois);
+        if (json.rois && json.rects && json.rects.length > 0) {
+
+    const r = json.rects[0];
+
+    drawRois(json.rois, r);
+
 }
 
    if (json.signature) {
