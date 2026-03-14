@@ -19,6 +19,8 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 
 def compute_signature(img):
 
+    rois = []
+
     img = cv2.resize(img, (200, 300))
 
     h, w = img.shape[:2]
@@ -38,7 +40,7 @@ def compute_signature(img):
     h, w = img.shape[:2]
 
     # ======================
-    # COLOR (haut gauche)
+    # COLOR
     # ======================
 
     x1 = int(w * 0.00)
@@ -48,6 +50,14 @@ def compute_signature(img):
     y2 = int(h * 0.30)
 
     zone = img[y1:y2, x1:x2]
+
+    rois.append({
+        "type": "COLOR",
+        "x": x1,
+        "y": y1,
+        "w": x2 - x1,
+        "h": y2 - y1
+    })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
@@ -69,6 +79,14 @@ def compute_signature(img):
 
     zone = img[y1:y2, x1:x2]
 
+    rois.append({
+        "type": "SYMBOL",
+        "x": x1,
+        "y": y1,
+        "w": x2 - x1,
+        "h": y2 - y1
+    })
+
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
     symbol_sig = {
@@ -88,6 +106,14 @@ def compute_signature(img):
 
     zone = img[y1:y2, x1:x2]
 
+    rois.append({
+        "type": "BOTTOM",
+        "x": x1,
+        "y": y1,
+        "w": x2 - x1,
+        "h": y2 - y1
+    })
+
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
     bottom_sig = {
@@ -101,20 +127,30 @@ def compute_signature(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
+    rois.append({
+        "type": "GLOBAL",
+        "x": 0,
+        "y": 0,
+        "w": w,
+        "h": h
+    })
+
     global_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray))
     }
 
-    return {
-        "color": color_sig,
-        "symbol": symbol_sig,
-        "bottom": bottom_sig,
-        "global": global_sig
-    },
-    rois
-   }
-
+    return (
+        {
+            "color": color_sig,
+            "symbol": symbol_sig,
+            "bottom": bottom_sig,
+            "global": global_sig
+        },
+        rois
+    )
+    
+    
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
 
@@ -328,65 +364,48 @@ def static_files(path):
 
 @app.route("/upload", methods=["POST"])
 def upload():
+
     try:
+
         if "image" not in request.files:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "error": "no image"
-            })
+            return jsonify({"rects": [], "signature": None})
 
         file = request.files["image"]
 
         data = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
-        if img is None:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "error": "invalid image"
-            })
-
-        mode = request.form.get("mode", "BOARD")
-
-        # Pour l’instant on utilise la même détection pour les 2 modes.
-        # En photo carte seule, il faut détecter la carte.
-        # En scan propre, la carte prendra naturellement presque toute l’image.
         rect = detect_main_card(img)
 
         if rect is None:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "mode": mode
-            })
+            return jsonify({"rects": [], "signature": None})
 
         quad = np.array(rect["quad"], dtype="float32")
         warp = warp_quad(img, quad)
 
-      sig = None
-      rois = []
+        sig = None
+        rois = []
 
-      if warp is not None:
+        if warp is not None:
 
-          cv2.imwrite(WARP_PATH, warp)
+            cv2.imwrite(WARP_PATH, warp)
 
-          sig, rois = compute_signature(warp)
+            sig, rois = compute_signature(warp)
 
         return jsonify({
             "rects": [rect],
             "signature": sig,
-            "mode": mode
+            "rois": rois
         })
 
     except Exception as e:
-        print("UPLOAD ERROR:", e)
+
+        print(e)
+
         return jsonify({
             "rects": [],
-            "signature": None,
-            "error": str(e)
-        }), 500
+            "signature": None
+        })
 
 
 @app.route("/warp")
@@ -441,7 +460,7 @@ def build_signatures():
         if warp is None:
             continue
 
-        sig = compute_signature(warp)
+        sig, _ = compute_signature(warp)
 
         c["signature"] = {
             "scan": sig
