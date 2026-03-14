@@ -152,19 +152,25 @@ function sendToPython() {
 
 }
 
-   if (json.signature) {
+if (json.signature) {
 
-   const resultMatch = matchSignature(json.signature, CARDS);
+    const resultMatch =
+        matchSignature(json.signature, CARDS);
 
-if (resultMatch && resultMatch.card) {
+    console.log("MATCH =", resultMatch);
 
-    result.textContent =
-        "Carte : " + resultMatch.card.id;
+    if (resultMatch && resultMatch.card) {
 
-} else {
+        result.textContent =
+            "Carte : " +
+            resultMatch.card.id;
 
-    result.textContent =
-        "Pas trouvé";
+    } else {
+
+        result.textContent =
+            "Pas trouvé";
+
+    }
 
 }
 
