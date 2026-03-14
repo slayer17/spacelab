@@ -22,7 +22,17 @@ def compute_signature(img):
     img = cv2.resize(img, (200, 300))
 
     h, w = img.shape[:2]
+# ROI interne pour enlever le bord jaune / marge warp
 
+x1 = int(w * 0.05)
+x2 = int(w * 0.95)
+
+y1 = int(h * 0.05)
+y2 = int(h * 0.95)
+
+img = img[y1:y2, x1:x2]
+
+h, w = img.shape[:2]
     # =========================
     # COLOR (haut gauche)
     # =========================
