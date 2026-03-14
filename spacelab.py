@@ -215,8 +215,10 @@ def crop_percent(img, x1, y1, x2, y2):
 
 
 def compute_signature_safe(img):
+
     if img is None or img.size == 0:
-        return None
+        return None, []
+
     return compute_signature(img)
 
 
