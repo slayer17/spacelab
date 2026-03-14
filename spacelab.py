@@ -18,21 +18,54 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 # =====================================================
 
 def compute_signature(img):
-    small = cv2.resize(img, (32, 32))
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+    img = cv2.resize(img, (200, 300))
+
+    # ---------- GLOBAL ----------
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     mean = float(np.mean(gray))
     std = float(np.std(gray))
 
-    b = float(np.mean(small[:, :, 0]))
-    g = float(np.mean(small[:, :, 1]))
-    r = float(np.mean(small[:, :, 2]))
+    global_sig = {
+        "mean": mean,
+        "std": std
+    }
 
-  return {
-    "global": global_sig,
-    "color": color_sig,
-    "bottom": bottom_sig
-}
+    # ---------- COLOR ----------
+
+    b = float(np.mean(img[:, :, 0]))
+    g = float(np.mean(img[:, :, 1]))
+    r = float(np.mean(img[:, :, 2]))
+
+    color_sig = {
+        "color": [b, g, r]
+    }
+
+    # ---------- BOTTOM ----------
+
+    h, w = img.shape[:2]
+
+    bottom = img[int(h * 0.65):h, 0:w]
+
+    gray_b = cv2.cvtColor(bottom, cv2.COLOR_BGR2GRAY)
+
+    bottom_mean = float(np.mean(gray_b))
+    bottom_std = float(np.std(gray_b))
+
+    bottom_sig = {
+        "mean": bottom_mean,
+        "std": bottom_std
+    }
+
+    # ---------- FINAL ----------
+
+    return {
+        "global": global_sig,
+        "color": color_sig,
+        "bottom": bottom_sig
+    }
 
 
 def order_points(pts):
