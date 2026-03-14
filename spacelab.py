@@ -422,12 +422,12 @@ def build_signatures():
     with open("cards.js", "r", encoding="utf-8") as f:
         txt = f.read()
 
-    txt = txt.replace("window.CARDS =", "").strip()
+    start = txt.find("[")
+    end = txt.rfind("]") + 1
 
-    if txt.endswith(";"):
-        txt = txt[:-1]
+    json_txt = txt[start:end]
 
-    cards = json.loads(txt)
+    cards = json.loads(json_txt)
 
     for c in cards:
 
@@ -461,12 +461,9 @@ def build_signatures():
 
         c["signature"] = {
             "scan": sig
-               
-            }
-        
+        }
 
     with open("cards.js", "w", encoding="utf-8") as f:
-
         f.write("window.CARDS = ")
         json.dump(cards, f, indent=2)
 
