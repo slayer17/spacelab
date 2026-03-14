@@ -144,6 +144,10 @@ function sendToPython() {
         console.log("SERVER SIG", json.signature);
         drawRects(json.rects);
 
+if (json.rois) {
+    drawRois(json.rois);
+}
+
    if (json.signature) {
 
     const card = matchSignature(json.signature);
@@ -211,7 +215,40 @@ function drawRects(rects) {
 
 }
 
+//==========================
+// DRAW ROI
+//==========================
+function drawRois(rois) {
 
+    ctx.lineWidth = 2;
+
+    rois.forEach(r => {
+
+        if (r.type === "COLOR")
+            ctx.strokeStyle = "red";
+
+        else if (r.type === "SYMBOL")
+            ctx.strokeStyle = "blue";
+
+        else if (r.type === "BOTTOM")
+            ctx.strokeStyle = "violet";
+
+        else if (r.type === "GLOBAL")
+            ctx.strokeStyle = "green";
+
+        else
+            ctx.strokeStyle = "white";
+
+        ctx.strokeRect(
+            r.x,
+            r.y,
+            r.w,
+            r.h
+        );
+
+    });
+
+}
 
 // =========================
 // MATCH SIGNATURE
