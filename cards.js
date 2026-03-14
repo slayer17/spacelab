@@ -1,5 +1,5 @@
 
-window.cards = 
+window.CARDS = 
 [
   {
     "id": "ROUGE_1",
