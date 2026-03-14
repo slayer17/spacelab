@@ -265,10 +265,24 @@ function matchSignature(sig) {
     let best = null;
     let bestScore = 999999;
 
+    let detectedColor = null;
+
+    if (sig.color && sig.color.color) {
+
+        const c = sig.color.color; // [b,g,r]
+
+        if (c[2] > c[1] && c[2] > c[0]) detectedColor = "ROUGE";
+        else if (c[0] > c[1] && c[0] > c[2]) detectedColor = "BLEU";
+        else if (c[1] > c[2] && c[1] > c[0]) detectedColor = "VERT";
+        else detectedColor = "JAUNE";
+
+    }
+
     for (let c of CARDS) {
 
-        if (!c.signature) continue;
-        if (!c.signature.scan) continue;
+        if (!c.signature || !c.signature.scan) continue;
+
+        if (detectedColor && c.couleur !== detectedColor) continue;
 
         const s = c.signature.scan;
 
@@ -279,9 +293,9 @@ function matchSignature(sig) {
         const dColor = zoneDistance(sig.color, s.color);
 
         const score =
-            dGlobal * 0.45 +
-            dBottom * 0.40 +
-            dColor * 0.15;
+            dBottom * 0.5 +
+            dColor * 0.4 +
+            dGlobal * 0.1;
 
         if (score < bestScore) {
 
