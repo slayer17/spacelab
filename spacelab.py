@@ -26,28 +26,28 @@ def compute_signature(img):
     h, w = img.shape[:2]
 
     # ======================
-    # ROI interne (enlever bord)
+    # ROI interne (GLOBAL grand)
     # ======================
 
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.95)
+    x1 = int(w * 0.02)
+    x2 = int(w * 0.98)
 
-    y1 = int(h * 0.05)
-    y2 = int(h * 0.95)
+    y1 = int(h * 0.02)
+    y2 = int(h * 0.98)
 
     img = img[y1:y2, x1:x2]
 
     h, w = img.shape[:2]
 
     # ======================
-    # COLOR
+    # COLOR (rouge)
     # ======================
 
     x1 = int(w * 0.00)
-    x2 = int(w * 0.55)
+    x2 = int(w * 0.45)
 
     y1 = int(h * 0.00)
-    y2 = int(h * 0.30)
+    y2 = int(h * 0.22)
 
     zone = img[y1:y2, x1:x2]
 
@@ -68,14 +68,14 @@ def compute_signature(img):
     }
 
     # ======================
-    # SYMBOL
+    # SYMBOL (bleu)
     # ======================
 
     x1 = int(w * 0.00)
-    x2 = int(w * 0.35)
+    x2 = int(w * 0.40)
 
-    y1 = int(h * 0.30)
-    y2 = int(h * 0.55)
+    y1 = int(h * 0.22)
+    y2 = int(h * 0.50)
 
     zone = img[y1:y2, x1:x2]
 
@@ -95,13 +95,13 @@ def compute_signature(img):
     }
 
     # ======================
-    # BOTTOM
+    # BOTTOM (violet)
     # ======================
 
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.95)
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.60)
 
-    y1 = int(h * 0.70)
+    y1 = int(h * 0.65)
     y2 = int(h * 1.00)
 
     zone = img[y1:y2, x1:x2]
@@ -122,7 +122,7 @@ def compute_signature(img):
     }
 
     # ======================
-    # GLOBAL
+    # GLOBAL (vert)
     # ======================
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
