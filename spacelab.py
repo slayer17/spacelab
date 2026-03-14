@@ -26,19 +26,7 @@ def compute_signature(img):
 
     h, w = img.shape[:2]
 
-    # ======================
-    # ROI interne (GLOBAL grand)
-    # ======================
-
-    x1 = int(w * 0.02)
-    x2 = int(w * 0.98)
-
-    y1 = int(h * 0.02)
-    y2 = int(h * 0.98)
-
-    img = img[y1:y2, x1:x2]
-
-    h, w = img.shape[:2]
+    
 
     # ======================
     # COLOR (rouge)
