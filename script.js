@@ -232,13 +232,27 @@ function colorVectorDistance(a, b) {
 }
 
 function zoneDistance(a, b) {
+
     if (!a || !b) return 999999;
 
-    return (
-        distance(a.mean || 0, b.mean || 0) +
-        distance(a.std || 0, b.std || 0) +
-        colorVectorDistance(a.color, b.color) * 0.2
-    );
+    let d = 0;
+
+    // mean
+    if (a.mean !== undefined && b.mean !== undefined) {
+        d += distance(a.mean, b.mean);
+    }
+
+    // std
+    if (a.std !== undefined && b.std !== undefined) {
+        d += distance(a.std, b.std);
+    }
+
+    // color vector
+    if (a.color && b.color) {
+        d += colorVectorDistance(a.color, b.color) * 0.2;
+    }
+
+    return d;
 }
 /*-------------------------------
 fonction pour match des signatures
