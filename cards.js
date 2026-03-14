@@ -719,6 +719,5 @@ window.CARDS =
     "effet": false,
     "signature": {
         }
-      },
-  }
-];
+      }
+  ];
