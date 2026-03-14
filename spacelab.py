@@ -111,7 +111,9 @@ def compute_signature(img):
         "symbol": symbol_sig,
         "bottom": bottom_sig,
         "global": global_sig
-    }
+    },
+    rois
+   }
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
