@@ -239,7 +239,7 @@ function drawRois(rois, rect) {
             ctx.strokeStyle = "violet";
 
         else if (r.type === "GLOBAL")
-            ctx.strokeStyle = "green";
+        return;
 
         else
             ctx.strokeStyle = "white";
