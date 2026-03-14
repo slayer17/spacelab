@@ -21,46 +21,141 @@ def compute_signature(img):
 
     img = cv2.resize(img, (200, 300))
 
-    # ---------- GLOBAL ----------
+    h, w = img.shape[:2]
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # =========================
+    # COLOR (haut gauche)
+    # =========================
+
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.55)
+
+    y1 = int(h * 0.00)
+    y2 = int(h * 0.30)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    color_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray)),
+        "color": zone.mean(axis=(0, 1)).tolist()
+    }
+
+
+    # =========================
+    # SYMBOL (milieu gauche)
+    # =========================
+
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.35)
+
+    y1 = int(h * 0.30)
+    y2 = int(h * 0.55)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    symbol_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
+    }
+
+
+    # =========================
+    # BOTTOM (bas)
+    # =========================
+
+    x1 = int(w * 0.05)
+    x2 = int(w * 0.95)
+
+    y1 = int(h * 0.70)
+    y2 = int(h * 1.00)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    bottom_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
+    }
+
+
+    # =========================
+    # EFFECT (bas gauche)
+    # =========================
+
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.35)
+
+    y1 = int(h * 0.70)
+    y2 = int(h * 0.90)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    effect_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
+    }
+
+
+    # =========================
+    # CENTER (dessin)
+    # =========================
+
+    x1 = int(w * 0.25)
+    x2 = int(w * 0.95)
+
+    y1 = int(h * 0.10)
+    y2 = int(h * 0.85)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    center_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
+    }
+
+
+    # =========================
+    # GLOBAL (secours)
+    # =========================
+
+    x1 = int(w * 0.05)
+    x2 = int(w * 0.95)
+
+    y1 = int(h * 0.05)
+    y2 = int(h * 0.95)
+
+    zone = img[y1:y2, x1:x2]
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
     global_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray))
     }
 
-    # ---------- COLOR ----------
 
-    b = float(np.mean(img[:, :, 0]))
-    g = float(np.mean(img[:, :, 1]))
-    r = float(np.mean(img[:, :, 2]))
-
-    color_sig = {
-        "color": [b, g, r]
-    }
-
-    # ---------- BOTTOM ----------
-
-    h, w = img.shape[:2]
-
-    bottom = img[int(h * 0.65):h, :]
-
-    gray_b = cv2.cvtColor(bottom, cv2.COLOR_BGR2GRAY)
-
-    bottom_sig = {
-        "mean": float(np.mean(gray_b)),
-        "std": float(np.std(gray_b))
-    }
-
-    # ---------- FINAL ----------
+    # =========================
+    # FINAL
+    # =========================
 
     return {
-        "global": global_sig,
+        "color": color_sig,
+        "symbol": symbol_sig,
         "bottom": bottom_sig,
-        "color": color_sig
+        "effect": effect_sig,
+        "center": center_sig,
+        "global": global_sig
     }
-
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
