@@ -222,9 +222,10 @@ function drawRects(rects) {
 //==========================
 // DRAW ROI
 //==========================
-function drawRois(rois) {
+function drawRois(rois, rect) {
 
-    ctx.lineWidth = 2;
+    const scaleX = rect.w / 200;
+    const scaleY = rect.h / 300;
 
     rois.forEach(r => {
 
@@ -243,11 +244,13 @@ function drawRois(rois) {
         else
             ctx.strokeStyle = "white";
 
+        ctx.lineWidth = 2;
+
         ctx.strokeRect(
-            r.x,
-            r.y,
-            r.w,
-            r.h
+            rect.x + r.x * scaleX,
+            rect.y + r.y * scaleY,
+            r.w * scaleX,
+            r.h * scaleY
         );
 
     });
