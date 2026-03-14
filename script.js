@@ -154,12 +154,19 @@ function sendToPython() {
 
    if (json.signature) {
 
-    const card = matchSignature(json.signature, CARDS);
+   const resultMatch = matchSignature(json.signature, CARDS);
 
-    if (card) {
+if (resultMatch && resultMatch.card) {
 
-        result.textContent =
-            "Carte : " + card.id;
+    result.textContent =
+        "Carte : " + resultMatch.card.id;
+
+} else {
+
+    result.textContent =
+        "Pas trouvé";
+
+}
 
     } else {
 
