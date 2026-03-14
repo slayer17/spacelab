@@ -28,11 +28,11 @@ def compute_signature(img):
     g = float(np.mean(small[:, :, 1]))
     r = float(np.mean(small[:, :, 2]))
 
-    return {
-        "mean": mean,
-        "std": std,
-        "color": [b, g, r]
-    }
+  return {
+    "global": global_sig,
+    "color": color_sig,
+    "bottom": bottom_sig
+}
 
 
 def order_points(pts):
