@@ -397,7 +397,7 @@ def build_signatures():
             "scan": sig
                
             }
-        }
+        
 
     with open("cards.js", "w", encoding="utf-8") as f:
 
