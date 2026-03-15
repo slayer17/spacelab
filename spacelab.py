@@ -35,12 +35,12 @@ def compute_signature(img):
     # position horizontale
 
     x1 = int(w * 0.00)   # bord gauche de la carte
-    x2 = int(w * 0.50)   # 50% de la largeur → gauche <--> droite
+    x2 = int(w * 0.48)   # 50% de la largeur → gauche <--> droite
 
     # position verticale
 
     y1 = int(h * 0.00)   # tout en haut de la carte
-    y2 = int(h * 0.18)   # 16% de la hauteur haut /bas
+    y2 = int(h * 0.16)   # 16% de la hauteur haut /bas
 
     zone = img[y1:y2, x1:x2]
 
@@ -70,7 +70,7 @@ def compute_signature(img):
     x2 = int(w * 0.35)
 
     y1 = int(h * 0.16)
-    y2 = int(h * 0.32)
+    y2 = int(h * 0.33)
 
     zone = img[y1:y2, x1:x2]
 
