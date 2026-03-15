@@ -211,4 +211,4 @@ function matchSignature(querySig, cardsDb) {
 
     };
 }
-}
+
