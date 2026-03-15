@@ -35,7 +35,7 @@ def compute_signature(img):
     # position horizontale
 
     x1 = int(w * 0.00)   # bord gauche de la carte
-    x2 = int(w * 032)   # 50% de la largeur → gauche <--> droite
+    x2 = int(w * 0.32)   # 50% de la largeur → gauche <--> droite
 
     # position verticale
 
