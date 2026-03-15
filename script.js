@@ -141,52 +141,44 @@ function sendToPython() {
         });
 
         const json = await res.json();
+
         console.log("SERVER SIG", json.signature);
+
         drawRects(json.rects);
 
         if (json.rois && json.rects && json.rects.length > 0) {
 
-    const r = json.rects[0];
+            const r = json.rects[0];
+            drawRois(json.rois, r);
 
-    drawRois(json.rois, r);
+        }
 
-}
+        if (json.signature) {
 
-if (json.signature) {
+            const resultMatch =
+                matchSignature(json.signature, CARDS);
 
-    const resultMatch =
-        matchSignature(json.signature, CARDS);
+            console.log("MATCH =", resultMatch);
 
-    console.log("MATCH =", resultMatch);
+            if (resultMatch && resultMatch.card) {
 
-    if (resultMatch && resultMatch.card) {
+                result.textContent =
+                    "Carte : " +
+                    resultMatch.card.id;
 
-        result.textContent =
-            "Carte : " +
-            resultMatch.card.id;
+            } else {
 
-    } else {
+                result.textContent =
+                    "Pas trouvé";
 
-        result.textContent =
-            "Pas trouvé";
+            }
 
-    }
+        } else {
 
-}
+            result.textContent =
+                "Pas de signature";
 
-    } else {
-
-        result.textContent =
-            "Pas trouvé";
-
-    }
-
-} else {
-
-    result.textContent =
-        "Pas de signature";
-
-}
+        }
 
     }, "image/jpeg");
 }
