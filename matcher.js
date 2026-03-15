@@ -162,9 +162,9 @@ function matchSignature(querySig, cardsDb) {
     // -----------------
 
     let stepSymbol = keepBestBy(stepColor, "symbolScore", {
-        keepTop: 6,
-        ratio: 0.90,
-        minKeep: 2
+        keepTop: 2,
+        ratio: 0.97,
+        minKeep: 1
     });
 
     // -----------------
