@@ -136,27 +136,42 @@ function matchSignature(querySig, cardsDb) {
         enrichCandidate(querySig, card)
     );
 
-  let stepColor = keepBestBy(candidates, "colorScore", {
-    keepTop: 6,
-    ratio: 0.97,
-    minKeep: 2
-});
+    // -----------------
+    // COLOR
+    // -----------------
 
-  let stepSymbol = keepBestBy(stepColor, "symbolScore", {
-    keepTop: 4,
-    ratio: 0.95,
-    minKeep: 1
-});
+    let stepColor = keepBestBy(candidates, "colorScore", {
+        keepTop: 12,
+        ratio: 0.90,
+        minKeep: 4
+    });
 
-let stepBottom = keepBestBy(stepSymbol, "bottomScore", {
-    keepTop: 2,
-    ratio: 0.96,
-    minKeep: 1
-});
+    // -----------------
+    // SYMBOL
+    // -----------------
+
+    let stepSymbol = keepBestBy(stepColor, "symbolScore", {
+        keepTop: 6,
+        ratio: 0.90,
+        minKeep: 2
+    });
+
+    // -----------------
+    // BOTTOM
+    // -----------------
+
+    let stepBottom = keepBestBy(stepSymbol, "bottomScore", {
+        keepTop: 3,
+        ratio: 0.92,
+        minKeep: 1
+    });
 
     let best = finalTieBreak(stepBottom);
 
+    // -----------------
     // fallback
+    // -----------------
+
     if (!best) {
 
         const fallback = [...candidates]
@@ -195,4 +210,5 @@ let stepBottom = keepBestBy(stepSymbol, "bottomScore", {
             )
 
     };
+}
 }
