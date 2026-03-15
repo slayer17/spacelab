@@ -159,6 +159,7 @@ function sendToPython() {
                 matchSignature(json.signature, CARDS);
 
             console.log("MATCH =", resultMatch);
+            console.log("DEBUG =", resultMatch?.debug);
 
             if (resultMatch && resultMatch.card) {
 
