@@ -46,10 +46,21 @@ function enrichCandidate(querySig, card) {
 
     const cardSig = card.signature || card;
 
-    const colorScore = similarityScore(
-        getScanPart(querySig, "color"),
-        getScanPart(cardSig, "color")
-    );
+ const qColor = getScanPart(querySig, "color")?.color;
+const cColor = getScanPart(cardSig, "color")?.color;
+
+let colorScore = 0;
+
+if (qColor && cColor) {
+
+    const d =
+        Math.abs(qColor[0] - cColor[0]) +
+        Math.abs(qColor[1] - cColor[1]) +
+        Math.abs(qColor[2] - cColor[2]);
+
+    colorScore = 1 / (1 + d / 50);
+
+}
 
     const symbolScore = similarityScore(
         getScanPart(querySig, "symbol"),
