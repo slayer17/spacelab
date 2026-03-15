@@ -89,6 +89,7 @@ symbol_sig = {
     "std": float(np.std(gray))
 }
 
+
     # ======================
     # BOTTOM (violet)
     # ======================
