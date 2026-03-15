@@ -195,20 +195,26 @@ function matchSignature(querySig, cardsDb) {
             score: 0
         };
     }
+return {
 
-    return {
+    card: best.card,
 
-        card: best.card,
+    score:
+        best.finalScore ??
+        (
+            best.colorScore * 0.15 +
+            best.symbolScore * 0.35 +
+            best.bottomScore * 0.40 +
+            best.globalScore * 0.10
+        ),
 
-        score:
-            best.finalScore ??
-            (
-                best.colorScore * 0.15 +
-                best.symbolScore * 0.35 +
-                best.bottomScore * 0.40 +
-                best.globalScore * 0.10
-            )
+    debug: {
+        colorScore: best.colorScore,
+        symbolScore: best.symbolScore,
+        bottomScore: best.bottomScore,
+        globalScore: best.globalScore
+    }
 
-    };
+};
 }
 
