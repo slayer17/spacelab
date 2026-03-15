@@ -26,21 +26,15 @@ def compute_signature(img):
 
     h, w = img.shape[:2]
 
-    
-
     # ======================
-    # COLOR (rouge)
+    # COLOR
     # ======================
 
-    # position horizontale
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.29)
 
-    x1 = int(w * 0.00)   # bord gauche de la carte
-    x2 = int(w * 0.29)   # 50% de la largeur → gauche <--> droite
-
-    # position verticale
-
-    y1 = int(h * 0.02)   # tout en haut de la carte
-    y2 = int(h * 0.16)   # 16% de la hauteur haut /bas
+    y1 = int(h * 0.02)
+    y2 = int(h * 0.16)
 
     zone = img[y1:y2, x1:x2]
 
@@ -61,10 +55,8 @@ def compute_signature(img):
     }
 
     # ======================
-    # SYMBOL (bleu)
+    # SYMBOL
     # ======================
-
-
 
     x1 = int(w * 0.00)
     x2 = int(w * 0.32)
@@ -72,26 +64,25 @@ def compute_signature(img):
     y1 = int(h * 0.175)
     y2 = int(h * 0.32)
 
-zone = img[y1:y2, x1:x2]
+    zone = img[y1:y2, x1:x2]
 
-rois.append({
-    "type": "SYMBOL",
-    "x": x1,
-    "y": y1,
-    "w": x2 - x1,
-    "h": y2 - y1
-})
+    rois.append({
+        "type": "SYMBOL",
+        "x": x1,
+        "y": y1,
+        "w": x2 - x1,
+        "h": y2 - y1
+    })
 
-gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-symbol_sig = {
-    "mean": float(np.mean(gray)),
-    "std": float(np.std(gray))
-}
-
+    symbol_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray))
+    }
 
     # ======================
-    # BOTTOM (violet)
+    # BOTTOM
     # ======================
 
     x1 = int(w * 0.00)
@@ -118,7 +109,7 @@ symbol_sig = {
     }
 
     # ======================
-    # GLOBAL (vert)
+    # GLOBAL
     # ======================
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
