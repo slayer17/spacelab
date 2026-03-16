@@ -38,13 +38,13 @@ def detect_symbol(zone):
 
         res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
 
-        score = res.max()
+        score = float(res.max())
 
         if score > best_score:
             best_score = score
             best_name = name
 
-    return best_name
+    return best_name, best_score
 # =====================================================
 # UTILS
 # =====================================================
