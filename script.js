@@ -1,4 +1,5 @@
-console.log("CARDS =",CARDS);
+console.log("CARDS =", CARDS);
+
 let mode = "BOARD";
 
 const video = document.getElementById("video");
@@ -153,93 +154,100 @@ function sendToPython() {
 
         }
 
- if (json.signature && json.rois && json.rects.length > 0) {
 
-    const rect = json.rects[0];
+        // =========================
+        // MATCH
+        // =========================
 
-    const colorROI =
-        json.rois.find(r => r.type === "COLOR");
+        if (json.signature && json.rois && json.rects.length > 0) {
 
-    let detectedColor = null;
+            const rect = json.rects[0];
 
-    if (colorROI) {
+            const colorROI =
+                json.rois.find(r => r.type === "COLOR");
 
-        const scaleX = rect.w / 200;
-        const scaleY = rect.h / 300;
+            let detectedColor = null;
 
-        const x =
-            rect.x + colorROI.x * scaleX;
+            if (colorROI) {
 
-        const y =
-            rect.y + colorROI.y * scaleY;
+                const scaleX = rect.w / 200;
+                const scaleY = rect.h / 300;
 
-        const w =
-            colorROI.w * scaleX;
+                const x =
+                    rect.x + colorROI.x * scaleX;
 
-        const h =
-            colorROI.h * scaleY;
+                const y =
+                    rect.y + colorROI.y * scaleY;
 
-        const imageData =
-            ctx.getImageData(
-                x,
-                y,
-                w,
-                h
-            );
+                const w =
+                    colorROI.w * scaleX;
 
-        detectedColor =
-            detectColor(imageData);
+                const h =
+                    colorROI.h * scaleY;
 
-        console.log(
-            "COLOR =",
-            detectedColor
-        );
-    }
+                const imageData =
+                    ctx.getImageData(
+                        x,
+                        y,
+                        w,
+                        h
+                    );
 
-    let cardsFiltered = CARDS;
+                detectedColor =
+                    detectColor(imageData);
 
-    if (detectedColor) {
+                console.log(
+                    "COLOR =",
+                    detectedColor
+                );
+            }
 
-        cardsFiltered =
-            CARDS.filter(
-                c => c.couleur === detectedColor
-            );
+            let cardsFiltered = CARDS;
 
-    }
+            if (detectedColor) {
 
-    const resultMatch =
-        matchSignature(
-            json.signature,
-            cardsFiltered
-        );
+                cardsFiltered =
+                    CARDS.filter(
+                        c => c.couleur === detectedColor
+                    );
 
-    console.log("MATCH =", resultMatch);
+            }
 
-    if (resultMatch && resultMatch.card) {
+            const resultMatch =
+                matchSignature(
+                    json.signature,
+                    cardsFiltered
+                );
 
-        result.textContent =
-            "Carte : " +
-            resultMatch.card.id;
+            console.log("MATCH =", resultMatch);
 
-    } else {
+            if (resultMatch && resultMatch.card) {
 
-        result.textContent =
-            "Pas trouvé";
+                result.textContent =
+                    "Carte : " +
+                    resultMatch.card.id;
 
-    }
+            } else {
 
-} else {
+                result.textContent =
+                    "Pas trouvé";
 
-    result.textContent =
-        "Pas de signature";
+            }
 
-}
+        } else {
+
+            result.textContent =
+                "Pas de signature";
+
+        }
 
     }, "image/jpeg");
 }
 
+
+
 // =========================
-// DRAW
+// DRAW RECT
 // =========================
 
 function drawRects(rects) {
@@ -279,9 +287,12 @@ function drawRects(rects) {
 
 }
 
-//==========================
+
+
+// =========================
 // DRAW ROI
-//==========================
+// =========================
+
 function drawRois(rois, rect) {
 
     const scaleX = rect.w / 200;
@@ -310,4 +321,3 @@ function drawRois(rois, rect) {
         );
     });
 }
-
