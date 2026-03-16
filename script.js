@@ -281,7 +281,7 @@ function drawRects(rects) {
 
     });
 
-    if (text) result.textContent = text;
+    if (text) resultEl.textContent = text;
 
 }
 
