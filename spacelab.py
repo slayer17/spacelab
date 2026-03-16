@@ -14,7 +14,6 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 
 
 def detect_symbol(zone):
-
     base = os.path.dirname(__file__)
 
     templates = {
@@ -24,20 +23,57 @@ def detect_symbol(zone):
         "MEDECIN": cv2.imread(os.path.join(base, "symbols", "medecin.png"), 0),
     }
 
+    if zone is None or zone.size == 0:
+        return None, 0.0
+
+    # =========================
+    # 1) Crop centre utile
+    # =========================
+    h, w = zone.shape[:2]
+
+    x1 = int(w * 0.12)
+    x2 = int(w * 0.88)
+    y1 = int(h * 0.12)
+    y2 = int(h * 0.88)
+
+    zone = zone[y1:y2, x1:x2]
+
+    if zone.size == 0:
+        return None, 0.0
+
+    # =========================
+    # 2) Préparation scan
+    # =========================
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+    gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_CUBIC)
 
     best_name = None
-    best_score = -1
+    best_score = -1.0
 
+    # =========================
+    # 3) Compare templates propres
+    # =========================
     for name, tpl in templates.items():
 
         if tpl is None:
             continue
 
-        tpl = cv2.resize(tpl, (gray.shape[1], gray.shape[0]))
+        th, tw = tpl.shape[:2]
+
+        tx1 = int(tw * 0.12)
+        tx2 = int(tw * 0.88)
+        ty1 = int(th * 0.12)
+        ty2 = int(th * 0.88)
+
+        tpl = tpl[ty1:ty2, tx1:tx2]
+
+        tpl = cv2.GaussianBlur(tpl, (3, 3), 0)
+        tpl = cv2.equalizeHist(tpl)
+        tpl = cv2.resize(tpl, (64, 64), interpolation=cv2.INTER_CUBIC)
 
         res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
-
         score = float(res.max())
 
         if score > best_score:
