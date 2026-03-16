@@ -26,6 +26,15 @@ def detect_symbol(zone):
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
+symbol_name, symbol_score = detect_symbol(zone)
+
+symbol_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "name": symbol_name,
+    "score": symbol_score
+}
+
     best_name = None
     best_score = -1
 
