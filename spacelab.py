@@ -18,16 +18,16 @@ def detect_symbol(zone):
     base = os.path.dirname(__file__)
 
     templates = {
-        "SCIENTIFIQUE": cv2.imread(os.path.join(base, "symbols/scientifique.png"), 0),
-        "COSMONAUTE": cv2.imread(os.path.join(base, "symbols/cosmonaute.png"), 0),
-        "MECANICIEN": cv2.imread(os.path.join(base, "symbols/mecanicien.png"), 0),
-        "MEDECIN": cv2.imread(os.path.join(base, "symbols/medecin.png"), 0),
+        "SCIENTIFIQUE": cv2.imread(os.path.join(base, "symbols", "scientifique.png"), 0),
+        "COSMONAUTE": cv2.imread(os.path.join(base, "symbols", "cosmonaute.png"), 0),
+        "MECANICIEN": cv2.imread(os.path.join(base, "symbols", "mecanicien.png"), 0),
+        "MEDECIN": cv2.imread(os.path.join(base, "symbols", "medecin.png"), 0),
     }
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
     best_name = None
-    best_score = 1e12
+    best_score = -1
 
     for name, tpl in templates.items():
 
@@ -36,10 +36,12 @@ def detect_symbol(zone):
 
         tpl = cv2.resize(tpl, (gray.shape[1], gray.shape[0]))
 
-        diff = np.mean((gray.astype("float") - tpl.astype("float")) ** 2)
+        res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
 
-        if diff < best_score:
-            best_score = diff
+        score = res.max()
+
+        if score > best_score:
+            best_score = score
             best_name = name
 
     return best_name
