@@ -26,33 +26,33 @@ def compute_signature(img):
 
     h, w = img.shape[:2]
 
-    # ======================
-    # COLOR
-    # ======================
+ # ======================
+# COLOR
+# ======================
 
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.29)
+x1 = int(w * 0.00)
+x2 = int(w * 0.38)
 
-    y1 = int(h * 0.02)
-    y2 = int(h * 0.16)
+y1 = int(h * 0.00)
+y2 = int(h * 0.18)
 
-    zone = img[y1:y2, x1:x2]
+zone = img[y1:y2, x1:x2]
 
-    rois.append({
-        "type": "COLOR",
-        "x": x1,
-        "y": y1,
-        "w": x2 - x1,
-        "h": y2 - y1
-    })
+rois.append({
+    "type": "COLOR",
+    "x": x1,
+    "y": y1,
+    "w": x2 - x1,
+    "h": y2 - y1
+})
 
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-    color_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "color": zone.mean(axis=(0, 1)).tolist()
-    }
+color_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "color": zone.mean(axis=(0, 1)).tolist()
+}
 
     # ======================
     # SYMBOL
