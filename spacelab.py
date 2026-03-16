@@ -88,7 +88,7 @@ def compute_signature(img):
     # ======================
 
     x1 = int(w * 0.00)
-    x2 = int(w * 0.32)
+    x2 = int(w * 0.28)
 
     y1 = int(h * 0.18)
     y2 = int(h * 0.32)
