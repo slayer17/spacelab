@@ -2,7 +2,7 @@ window.CARDS = [
   {
     "id": "ROUGE_1",
     "couleur": "ROUGE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "ROUGE",
     "portee": "GLOBAL",
@@ -42,7 +42,7 @@ window.CARDS = [
   {
     "id": "ROUGE_2",
     "couleur": "ROUGE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "ROUGE",
     "portee": "GLOBAL",
@@ -82,7 +82,7 @@ window.CARDS = [
   {
     "id": "ROUGE_3",
     "couleur": "ROUGE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 3,
     "cible": "SCIENTIFIQUE",
     "portee": "LIGNE",
@@ -122,7 +122,7 @@ window.CARDS = [
   {
     "id": "ROUGE_4",
     "couleur": "ROUGE",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 9,
     "cible": null,
     "portee": null,
@@ -162,7 +162,7 @@ window.CARDS = [
   {
     "id": "ROUGE_5",
     "couleur": "ROUGE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 7,
     "cible": null,
     "portee": null,
@@ -202,7 +202,7 @@ window.CARDS = [
   {
     "id": "ROUGE_6",
     "couleur": "ROUGE",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 6,
     "cible": null,
     "portee": null,
@@ -242,7 +242,7 @@ window.CARDS = [
   {
     "id": "ROUGE_7",
     "couleur": "ROUGE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": "EXPEDITION",
     "portee": "GLOBAL",
@@ -282,7 +282,7 @@ window.CARDS = [
   {
     "id": "ROUGE_8",
     "couleur": "ROUGE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -322,7 +322,7 @@ window.CARDS = [
   {
     "id": "ROUGE_9",
     "couleur": "ROUGE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 1,
     "cible": "ROUGE",
     "portee": "GLOBAL",
@@ -362,7 +362,7 @@ window.CARDS = [
   {
     "id": "ROUGE_10",
     "couleur": "ROUGE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": null,
     "portee": null,
@@ -402,7 +402,7 @@ window.CARDS = [
   {
     "id": "ROUGE_11",
     "couleur": "ROUGE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "MECANICIEN",
     "portee": "LIGNE",
@@ -442,7 +442,7 @@ window.CARDS = [
   {
     "id": "ROUGE_12",
     "couleur": "ROUGE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -482,7 +482,7 @@ window.CARDS = [
   {
     "id": "ROUGE_13",
     "couleur": "ROUGE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -522,7 +522,7 @@ window.CARDS = [
   {
     "id": "ROUGE_14",
     "couleur": "ROUGE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -562,7 +562,7 @@ window.CARDS = [
   {
     "id": "ROUGE_15",
     "couleur": "ROUGE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 0,
     "cible": null,
     "portee": null,
@@ -602,7 +602,7 @@ window.CARDS = [
   {
     "id": "JAUNE_1",
     "couleur": "JAUNE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": "EXPEDITION",
     "portee": "GLOBAL",
@@ -642,7 +642,7 @@ window.CARDS = [
   {
     "id": "JAUNE_2",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -682,7 +682,7 @@ window.CARDS = [
   {
     "id": "JAUNE_3",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -722,7 +722,7 @@ window.CARDS = [
   {
     "id": "JAUNE_4",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "JAUNE",
     "portee": "GLOBAL",
@@ -762,7 +762,7 @@ window.CARDS = [
   {
     "id": "JAUNE_5",
     "couleur": "JAUNE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 0,
     "cible": null,
     "portee": null,
@@ -802,7 +802,7 @@ window.CARDS = [
   {
     "id": "JAUNE_6",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 3,
     "cible": "JAUNE",
     "portee": "GLOBAL",
@@ -842,7 +842,7 @@ window.CARDS = [
   {
     "id": "JAUNE_7",
     "couleur": "JAUNE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "MECANICIEN",
     "portee": "GLOBAL",
@@ -882,7 +882,7 @@ window.CARDS = [
   {
     "id": "JAUNE_8",
     "couleur": "JAUNE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 5,
     "cible": null,
     "portee": null,
@@ -922,7 +922,7 @@ window.CARDS = [
   {
     "id": "JAUNE_9",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -962,7 +962,7 @@ window.CARDS = [
   {
     "id": "JAUNE_10",
     "couleur": "JAUNE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 1,
     "cible": "JAUNE",
     "portee": "GLOBAL",
@@ -1002,7 +1002,7 @@ window.CARDS = [
   {
     "id": "JAUNE_11",
     "couleur": "JAUNE",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 3,
     "cible": null,
     "portee": null,
@@ -1042,7 +1042,7 @@ window.CARDS = [
   {
     "id": "JAUNE_12",
     "couleur": "JAUNE",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 8,
     "cible": null,
     "portee": null,
@@ -1082,7 +1082,7 @@ window.CARDS = [
   {
     "id": "JAUNE_13",
     "couleur": "JAUNE",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "MECANICIEN",
     "portee": "LIGNE",
@@ -1122,7 +1122,7 @@ window.CARDS = [
   {
     "id": "JAUNE_14",
     "couleur": "JAUNE",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 4,
     "cible": "MEDECIN",
     "portee": "LIGNE",
@@ -1162,7 +1162,7 @@ window.CARDS = [
   {
     "id": "JAUNE_15",
     "couleur": "JAUNE",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 4,
     "cible": null,
     "portee": null,
@@ -1202,7 +1202,7 @@ window.CARDS = [
   {
     "id": "BLEU_1",
     "couleur": "BLEU",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -1242,7 +1242,7 @@ window.CARDS = [
   {
     "id": "BLEU_2",
     "couleur": "BLEU",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "BLEU",
     "portee": "GLOBAL",
@@ -1282,7 +1282,7 @@ window.CARDS = [
   {
     "id": "BLEU_3",
     "couleur": "BLEU",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 6,
     "cible": null,
     "portee": null,
@@ -1322,7 +1322,7 @@ window.CARDS = [
   {
     "id": "BLEU_4",
     "couleur": "BLEU",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 3,
     "cible": "BLEU",
     "portee": "GLOBAL",
@@ -1362,7 +1362,7 @@ window.CARDS = [
   {
     "id": "BLEU_5",
     "couleur": "BLEU",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "MECANICIEN",
     "portee": "LIGNE",
@@ -1402,7 +1402,7 @@ window.CARDS = [
   {
     "id": "BLEU_6",
     "couleur": "BLEU",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 10,
     "cible": null,
     "portee": null,
@@ -1442,7 +1442,7 @@ window.CARDS = [
   {
     "id": "BLEU_7",
     "couleur": "BLEU",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 5,
     "cible": null,
     "portee": null,
@@ -1482,7 +1482,7 @@ window.CARDS = [
   {
     "id": "BLEU_8",
     "couleur": "BLEU",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -1522,7 +1522,7 @@ window.CARDS = [
   {
     "id": "BLEU_9",
     "couleur": "BLEU",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -1562,7 +1562,7 @@ window.CARDS = [
   {
     "id": "BLEU_10",
     "couleur": "BLEU",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": null,
     "portee": null,
@@ -1602,7 +1602,7 @@ window.CARDS = [
   {
     "id": "BLEU_11",
     "couleur": "BLEU",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 3,
     "cible": "MEDECIN",
     "portee": "GLOBAL",
@@ -1642,7 +1642,7 @@ window.CARDS = [
   {
     "id": "BLEU_12",
     "couleur": "BLEU",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -1682,7 +1682,7 @@ window.CARDS = [
   {
     "id": "BLEU_13",
     "couleur": "BLEU",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "BLEU",
     "portee": "GLOBAL",
@@ -1722,7 +1722,7 @@ window.CARDS = [
   {
     "id": "BLEU_14",
     "couleur": "BLEU",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 0,
     "cible": null,
     "portee": null,
@@ -1762,7 +1762,7 @@ window.CARDS = [
   {
     "id": "BLEU_15",
     "couleur": "BLEU",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": "EXPEDITION",
     "portee": "GLOBAL",
@@ -1802,7 +1802,7 @@ window.CARDS = [
   {
     "id": "VERT_1",
     "couleur": "VERT",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 1,
     "cible": "VERT",
     "portee": "GLOBAL",
@@ -1842,7 +1842,7 @@ window.CARDS = [
   {
     "id": "VERT_2",
     "couleur": "VERT",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 3,
     "cible": null,
     "portee": null,
@@ -1882,7 +1882,7 @@ window.CARDS = [
   {
     "id": "VERT_3",
     "couleur": "VERT",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 3,
     "cible": "MECANICIEN",
     "portee": "LIGNE",
@@ -1922,7 +1922,7 @@ window.CARDS = [
   {
     "id": "VERT_4",
     "couleur": "VERT",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -1962,7 +1962,7 @@ window.CARDS = [
   {
     "id": "VERT_5",
     "couleur": "VERT",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": "VERT",
     "portee": "GLOBAL",
@@ -2002,7 +2002,7 @@ window.CARDS = [
   {
     "id": "VERT_6",
     "couleur": "VERT",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 7,
     "cible": null,
     "portee": null,
@@ -2042,7 +2042,7 @@ window.CARDS = [
   {
     "id": "VERT_7",
     "couleur": "VERT",
-    "symbole": "MEDECIN",
+    "symbol": "MEDECIN",
     "points": 3,
     "cible": "VERT",
     "portee": "GLOBAL",
@@ -2082,7 +2082,7 @@ window.CARDS = [
   {
     "id": "VERT_8",
     "couleur": "VERT",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 2,
     "cible": null,
     "portee": null,
@@ -2122,7 +2122,7 @@ window.CARDS = [
   {
     "id": "VERT_9",
     "couleur": "VERT",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 0,
     "cible": null,
     "portee": null,
@@ -2162,7 +2162,7 @@ window.CARDS = [
   {
     "id": "VERT_10",
     "couleur": "VERT",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 3,
     "cible": "SCIENTIFIQUE",
     "portee": "GLOBAL",
@@ -2202,7 +2202,7 @@ window.CARDS = [
   {
     "id": "VERT_11",
     "couleur": "VERT",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": null,
     "portee": null,
@@ -2242,7 +2242,7 @@ window.CARDS = [
   {
     "id": "VERT_12",
     "couleur": "VERT",
-    "symbole": "SCIENTIFIQUE",
+    "symbol": "SCIENTIFIQUE",
     "points": 1,
     "cible": "EXPEDITION",
     "portee": "GLOBAL",
@@ -2282,7 +2282,7 @@ window.CARDS = [
   {
     "id": "VERT_13",
     "couleur": "VERT",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": "ASTRONAUTE",
     "portee": "GLOBAL",
@@ -2322,7 +2322,7 @@ window.CARDS = [
   {
     "id": "VERT_14",
     "couleur": "VERT",
-    "symbole": "MECANICIEN",
+    "symbol": "MECANICIEN",
     "points": 8,
     "cible": null,
     "portee": null,
@@ -2362,7 +2362,7 @@ window.CARDS = [
   {
     "id": "VERT_15",
     "couleur": "VERT",
-    "symbole": "ASTRONAUTE",
+    "symbol": "ASTRONAUTE",
     "points": 1,
     "cible": "ASTRONAUTE",
     "portee": "LIGNE",
@@ -2400,6 +2400,5 @@ window.CARDS = [
     }
   }
 ];
-
 
 
