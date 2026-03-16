@@ -48,17 +48,33 @@ def normalize_card(img):
 
 
 def compute_signature(img):
+
     card = normalize_card(img)
 
-    bottom = crop_percent(card, 0.12, 0.72, 0.88, 0.97)
-    color_band = crop_percent(card, 0.03, 0.03, 0.20, 0.97)
+    h, w = card.shape[:2]
+
+    # GLOBAL
+    global_sig = compute_basic_signature(card)
+
+    # BOTTOM
+    bottom = crop_percent(card, 0.00, 0.82, 0.55, 1.00)
+    bottom_sig = compute_signature_safe(bottom)
+
+    # COLOR
+    color_band = crop_percent(card, 0.00, 0.00, 0.25, 0.20)
+    color_sig = compute_signature_safe(color_band)
+
+    # SYMBOL
+    symbol_zone = crop_percent(card, 0.05, 0.20, 0.20, 0.31)
+
+    symbol_sig = compute_signature_safe(symbol_zone)
 
     return {
-        'global': compute_basic_signature(card),
-        'bottom': compute_signature_safe(bottom),
-        'color': compute_signature_safe(color_band)
+        'global': global_sig,
+        'bottom': bottom_sig,
+        'color': color_sig,
+        'symbol': symbol_sig
     }
-
 
 def load_cards():
     with open(CARDS_JS, 'r', encoding='utf-8') as f:
