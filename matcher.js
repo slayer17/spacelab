@@ -120,9 +120,9 @@ function finalTieBreak(candidates) {
         ...c,
 
         finalScore:
-            (c.colorScore * 0.15) +
-            (c.symbolScore * 0.35) +
-            (c.bottomScore * 0.40) +
+            (c.colorScore * 0.10) +
+            (c.symbolScore * 0.50) +
+            (c.bottomScore * 0.30) +
             (c.globalScore * 0.10)
 
     }));
@@ -162,7 +162,7 @@ function matchSignature(querySig, cardsDb) {
     // -----------------
 
     let stepSymbol = keepBestBy(stepColor, "symbolScore", {
-        keepTop: 2,
+        keepTop: 3,
         ratio: 0.97,
         minKeep: 1
     });
