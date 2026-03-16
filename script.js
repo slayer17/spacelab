@@ -153,10 +153,65 @@ function sendToPython() {
 
         }
 
-        if (json.signature) {
+   if (json.signature && json.rois && json.rects.length > 0) {
 
-            const resultMatch =
-                matchSignature(json.signature, CARDS);
+    const rect = json.rects[0];
+
+    // ROI COLOR = rouge
+    const colorROI = json.rois.find(r => r.type === "COLOR");
+
+    let detectedColor = null;
+
+    if (colorROI) {
+
+        const scaleX = rect.w / 200;
+        const scaleY = rect.h / 300;
+
+        const x = rect.x + colorROI.x * scaleX;
+        const y = rect.y + colorROI.y * scaleY;
+        const w = colorROI.w * scaleX;
+        const h = colorROI.h * scaleY;
+
+        const imageData = ctx.getImageData(
+            x,
+            y,
+            w,
+            h
+        );
+
+        detectedColor = detectColor(imageData);
+
+        console.log("COLOR =", detectedColor);
+    }
+
+    let cardsFiltered = CARDS;
+
+    if (detectedColor) {
+
+        cardsFiltered = CARDS.filter(
+            c => c.couleur === detectedColor
+        );
+
+    }
+
+    const resultMatch =
+        matchSignature(json.signature, cardsFiltered);
+
+    console.log("MATCH =", resultMatch);
+
+    if (resultMatch && resultMatch.card) {
+
+        result.textContent =
+            "Carte : " +
+            resultMatch.card.id;
+
+    } else {
+
+        result.textContent = "Pas trouvé";
+
+    }
+
+}
 
             console.log("MATCH =", resultMatch);
             console.log("DEBUG =", resultMatch?.debug);
