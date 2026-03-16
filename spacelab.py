@@ -107,7 +107,7 @@ def compute_signature(img):
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-    name = detect_symbol(zone)
+    name, score = detect_symbol(zone)
 
     symbol_sig = {
         "mean": float(np.mean(gray)),
