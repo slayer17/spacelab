@@ -30,6 +30,24 @@ function similarityScore(a, b) {
     return 1 / (1 + dist);
 }
 
+function meanStdScore(a, b) {
+
+    if (!a || !b) return 0;
+
+    if (a.mean == null || b.mean == null) {
+        return similarityScore(a, b);
+    }
+
+    const dMean = Math.abs(a.mean - b.mean);
+    const dStd = Math.abs(a.std - b.std);
+
+    const max = 255;
+
+    const score = 1 - (dMean + dStd) / (2 * max);
+
+    return Math.max(0, score);
+}
+
 function getScanPart(signature, part) {
     if (!signature) return null;
 
@@ -62,20 +80,20 @@ if (qColor && cColor) {
 
 }
 
-    const symbolScore = similarityScore(
-        getScanPart(querySig, "symbol"),
-        getScanPart(cardSig, "symbol")
-    );
+const symbolScore = meanStdScore(
+    getScanPart(querySig, "symbol"),
+    getScanPart(cardSig, "symbol")
+);
 
-    const bottomScore = similarityScore(
-        getScanPart(querySig, "bottom"),
-        getScanPart(cardSig, "bottom")
-    );
+const bottomScore = meanStdScore(
+    getScanPart(querySig, "bottom"),
+    getScanPart(cardSig, "bottom")
+);
 
-    const globalScore = similarityScore(
-        getScanPart(querySig, "global"),
-        getScanPart(cardSig, "global")
-    );
+const globalScore = meanStdScore(
+    getScanPart(querySig, "global"),
+    getScanPart(cardSig, "global")
+);
 
     return {
         card,
