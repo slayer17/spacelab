@@ -159,75 +159,37 @@ function sendToPython() {
         // MATCH
         // =========================
 
-        if (json.signature && json.rois && json.rects.length > 0) {
-
-            const rect = json.rects[0];
-
-       let detectedColor = null;
-
-if (json.signature &&
-    json.signature.color &&
-    json.signature.color.color) {
-
-    const c =
-        json.signature.color.color;
-
-    const b = c[0];
-    const g = c[1];
-    const r = c[2];
-
-    if (r > g && r > b)
-        detectedColor = "ROUGE";
-
-    else if (g > r && g > b)
-        detectedColor = "VERT";
-
-    else if (b > r && b > g)
-        detectedColor = "BLEU";
-
-    else
-        detectedColor = "JAUNE";
-
-    console.log(
-        "COLOR PY =",
-        detectedColor,
-        c
-    );
-}
+        if (json.signature) {
 
             let detectedColor = null;
 
-            if (colorROI) {
+            if (
+                json.signature.color &&
+                json.signature.color.color
+            ) {
 
-                const scaleX = rect.w / 200;
-                const scaleY = rect.h / 300;
+                const c = json.signature.color.color;
 
-                const x =
-                    rect.x + colorROI.x * scaleX;
+                const b = c[0];
+                const g = c[1];
+                const r = c[2];
 
-                const y =
-                    rect.y + colorROI.y * scaleY;
+                if (r > g && r > b)
+                    detectedColor = "ROUGE";
 
-                const w =
-                    colorROI.w * scaleX;
+                else if (g > r && g > b)
+                    detectedColor = "VERT";
 
-                const h =
-                    colorROI.h * scaleY;
+                else if (b > r && b > g)
+                    detectedColor = "BLEU";
 
-                const imageData =
-                    ctx.getImageData(
-                        x,
-                        y,
-                        w,
-                        h
-                    );
-
-                detectedColor =
-                    detectColor(imageData);
+                else
+                    detectedColor = "JAUNE";
 
                 console.log(
-                    "COLOR =",
-                    detectedColor
+                    "COLOR PY =",
+                    detectedColor,
+                    c
                 );
             }
 
