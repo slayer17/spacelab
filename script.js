@@ -30,14 +30,14 @@ let currentStream = null;
 boardBtn.onclick = () => {
 
     mode = "BOARD";
-    result.textContent = "Mode BOARD";
+    resultEl.textContent = "Mode BOARD";
 
 };
 
 cardsBtn.onclick = () => {
 
     mode = "CARDS_ONLY";
-    result.textContent = "Mode CARDS_ONLY";
+    resultEl.textContent = "Mode CARDS_ONLY";
 
 };
 
@@ -61,7 +61,7 @@ startBtn.onclick = async () => {
     } catch (err) {
 
         console.error(err);
-        result.textContent = "Erreur caméra";
+        resultEl.textContent = "Erreur caméra";
 
     }
 
@@ -136,7 +136,7 @@ function sendToPython() {
         form.append("image", blob, "capture.jpg");
         form.append("mode", mode);
 
-        result.textContent = "Envoi…";
+        resultEl.textContent = "Envoi…";
 
         const res = await fetch("/upload", {
             method: "POST",
@@ -228,7 +228,7 @@ function sendToPython() {
 
 } else {
 
-    result.textContent = "Pas trouvé";
+    resultEl.textContent = "Pas trouvé";
 
 }
 
