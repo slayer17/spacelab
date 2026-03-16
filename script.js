@@ -163,8 +163,37 @@ function sendToPython() {
 
             const rect = json.rects[0];
 
-            const colorROI =
-                json.rois.find(r => r.type === "COLOR");
+       let detectedColor = null;
+
+if (json.signature &&
+    json.signature.color &&
+    json.signature.color.color) {
+
+    const c =
+        json.signature.color.color;
+
+    const b = c[0];
+    const g = c[1];
+    const r = c[2];
+
+    if (r > g && r > b)
+        detectedColor = "ROUGE";
+
+    else if (g > r && g > b)
+        detectedColor = "VERT";
+
+    else if (b > r && b > g)
+        detectedColor = "BLEU";
+
+    else
+        detectedColor = "JAUNE";
+
+    console.log(
+        "COLOR PY =",
+        detectedColor,
+        c
+    );
+}
 
             let detectedColor = null;
 
