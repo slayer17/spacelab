@@ -19,7 +19,7 @@ def detect_symbol(zone):
 
     templates = {
         "SCIENTIFIQUE": cv2.imread(os.path.join(base, "symbols", "scientifique.png"), 0),
-        "COSMONAUTE": cv2.imread(os.path.join(base, "symbols", "cosmonaute.png"), 0),
+        "ASTRONAUTE": cv2.imread(os.path.join(base, "symbols", "astronaute.png"), 0),
         "MECANICIEN": cv2.imread(os.path.join(base, "symbols", "mecanicien.png"), 0),
         "MEDECIN": cv2.imread(os.path.join(base, "symbols", "medecin.png"), 0),
     }
