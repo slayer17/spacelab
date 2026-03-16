@@ -29,28 +29,6 @@ function similarityScore(a, b) {
     if (!isFinite(dist)) return 0;
     return 1 / (1 + dist);
 }
-function meanStdScore(a, b) {
-
-    if (!a || !b) return 0;
-
-    // si c'est imbriqué (scan.symbol.symbol)
-    if (a.symbol) a = a.symbol;
-    if (b.symbol) b = b.symbol;
-
-    if (a.mean == null || b.mean == null) {
-        return similarityScore(a, b);
-    }
-
-    const dMean = Math.abs(a.mean - b.mean);
-    const dStd = Math.abs(a.std - b.std);
-
-    const max = 255;
-
-    const score = 1 - (dMean + dStd) / (2 * max);
-
-    return Math.max(0, score);
-}
-
 
 function getScanPart(signature, part) {
     if (!signature) return null;
@@ -84,20 +62,20 @@ if (qColor && cColor) {
 
 }
 
-const symbolScore = meanStdScore(
-    getScanPart(querySig, "symbol"),
-    getScanPart(cardSig, "symbol")
-);
+    const symbolScore = similarityScore(
+        getScanPart(querySig, "symbol"),
+        getScanPart(cardSig, "symbol")
+    );
 
-const bottomScore = meanStdScore(
-    getScanPart(querySig, "bottom"),
-    getScanPart(cardSig, "bottom")
-);
+    const bottomScore = similarityScore(
+        getScanPart(querySig, "bottom"),
+        getScanPart(cardSig, "bottom")
+    );
 
-const globalScore = meanStdScore(
-    getScanPart(querySig, "global"),
-    getScanPart(cardSig, "global")
-);
+    const globalScore = similarityScore(
+        getScanPart(querySig, "global"),
+        getScanPart(cardSig, "global")
+    );
 
     return {
         card,
@@ -188,7 +166,24 @@ function matchSignature(querySig, cardsDb) {
         ratio: 0.97,
         minKeep: 1
     });
+// -----------------
+// SPECIALITE FORCEE
+// -----------------
 
+if (stepSymbol.length > 0) {
+
+    const best = stepSymbol[0];
+
+    if (best.symbolScore > 0.97 && best.card.symbole) {
+
+        const wanted = best.card.symbole;
+
+        stepSymbol = stepSymbol.filter(c =>
+            c.card.symbole === wanted
+        );
+
+    }
+}
     // -----------------
     // BOTTOM
     // -----------------
