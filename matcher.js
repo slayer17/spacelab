@@ -200,12 +200,12 @@ if (stepSymbol.length > 0) {
     );
 
     // si symbole très sûr → forcer la spécialité
-    if (bestScore > 0.98 && best.card.symbole) {
+    if (bestScore > 0.98 && best.card.symbol) {
 
-        const wanted = best.card.symbole;
+        const wanted = best.card.symbol;
 
         stepSymbol = stepSymbol.filter(c =>
-            c.card.symbole === wanted
+            c.card.symbol === wanted
         );
 
     }
