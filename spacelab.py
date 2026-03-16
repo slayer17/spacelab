@@ -83,7 +83,7 @@ def compute_signature(img):
         "color": zone.mean(axis=(0, 1)).tolist()
     }
 
-    # ======================
+   # ======================
     # SYMBOL
     # ======================
 
@@ -101,7 +101,7 @@ def compute_signature(img):
         "y": y1,
         "w": x2 - x1,
         "h": y2 - y1
-   })
+    })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
