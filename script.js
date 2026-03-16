@@ -153,12 +153,12 @@ function sendToPython() {
 
         }
 
-   if (json.signature && json.rois && json.rects.length > 0) {
+ if (json.signature && json.rois && json.rects.length > 0) {
 
     const rect = json.rects[0];
 
-    // ROI COLOR = rouge
-    const colorROI = json.rois.find(r => r.type === "COLOR");
+    const colorROI =
+        json.rois.find(r => r.type === "COLOR");
 
     let detectedColor = null;
 
@@ -167,35 +167,51 @@ function sendToPython() {
         const scaleX = rect.w / 200;
         const scaleY = rect.h / 300;
 
-        const x = rect.x + colorROI.x * scaleX;
-        const y = rect.y + colorROI.y * scaleY;
-        const w = colorROI.w * scaleX;
-        const h = colorROI.h * scaleY;
+        const x =
+            rect.x + colorROI.x * scaleX;
 
-        const imageData = ctx.getImageData(
-            x,
-            y,
-            w,
-            h
+        const y =
+            rect.y + colorROI.y * scaleY;
+
+        const w =
+            colorROI.w * scaleX;
+
+        const h =
+            colorROI.h * scaleY;
+
+        const imageData =
+            ctx.getImageData(
+                x,
+                y,
+                w,
+                h
+            );
+
+        detectedColor =
+            detectColor(imageData);
+
+        console.log(
+            "COLOR =",
+            detectedColor
         );
-
-        detectedColor = detectColor(imageData);
-
-        console.log("COLOR =", detectedColor);
     }
 
     let cardsFiltered = CARDS;
 
     if (detectedColor) {
 
-        cardsFiltered = CARDS.filter(
-            c => c.couleur === detectedColor
-        );
+        cardsFiltered =
+            CARDS.filter(
+                c => c.couleur === detectedColor
+            );
 
     }
 
     const resultMatch =
-        matchSignature(json.signature, cardsFiltered);
+        matchSignature(
+            json.signature,
+            cardsFiltered
+        );
 
     console.log("MATCH =", resultMatch);
 
@@ -207,34 +223,17 @@ function sendToPython() {
 
     } else {
 
-        result.textContent = "Pas trouvé";
+        result.textContent =
+            "Pas trouvé";
 
     }
 
+} else {
+
+    result.textContent =
+        "Pas de signature";
+
 }
-
-            console.log("MATCH =", resultMatch);
-            console.log("DEBUG =", resultMatch?.debug);
-
-            if (resultMatch && resultMatch.card) {
-
-                result.textContent =
-                    "Carte : " +
-                    resultMatch.card.id;
-
-            } else {
-
-                result.textContent =
-                    "Pas trouvé";
-
-            }
-
-        } else {
-
-            result.textContent =
-                "Pas de signature";
-
-        }
 
     }, "image/jpeg");
 }
