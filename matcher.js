@@ -180,9 +180,6 @@ function matchSignature(querySig, cardsDb) {
 
 let detectedSymbol =
     getScanPart(querySig, "symbol")?.name || null;
-// -----------------
-// SYMBOL FILTER (name from Python)
-// -----------------
 
 let stepSymbol = stepColor;
 
@@ -192,20 +189,20 @@ if (detectedSymbol) {
 
         if (!c.card.symbol) return true;
 
-        return c.card.symbol === detectedSymbol;
+        return (
+            c.card.symbol &&
+            detectedSymbol &&
+            c.card.symbol.toUpperCase().trim() ===
+            detectedSymbol.toUpperCase().trim()
+        );
 
     });
 
 }
-
 // fallback si rien trouvé
 if (!stepSymbol.length) {
 
-    stepSymbol = keepBestBy(stepColor, "symbolScore", {
-        keepTop: 2,
-        ratio: 0.98,
-        minKeep: 1
-    });
+    console.log("SYMBOL FILTER FAILED");
 
 }
 
