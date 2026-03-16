@@ -87,11 +87,11 @@ def compute_signature(img):
     # SYMBOL
     # ======================
 
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.28)
+    x1 = int(w * 0.06)
+    x2 = int(w * 0.27)
 
     y1 = int(h * 0.18)
-    y2 = int(h * 0.32)
+    y2 = int(h * 0.31)
 
     zone = img[y1:y2, x1:x2]
 
