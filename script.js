@@ -219,7 +219,7 @@ function sendToPython() {
     const detectedSymbol =
         json.signature?.symbol?.name || "??";
 
-    result.textContent =
+    resultEl.textContent =
         "Carte : " + resultMatch.card.id + "\n" +
         "Couleur : " + resultMatch.card.couleur + "\n" +
         "Symbole carte : " + resultMatch.card.symbol + "\n" +
