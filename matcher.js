@@ -174,42 +174,42 @@ function matchSignature(querySig, cardsDb) {
         ratio: 0.90,
         minKeep: 4
     });
-
-    // -----------------
-    // SYMBOL
-    // -----------------
-
- let stepSymbol = keepBestBy(stepColor, "symbolScore", {
-    keepTop: 2,
-    ratio: 0.985,
-    minKeep: 1
-});
-
 // -----------------
-// SYMBOL STRICT + SPECIALITE
+// SYMBOL NAME FROM SCAN
 // -----------------
 
-if (stepSymbol.length > 0) {
+let detectedSymbol =
+    getScanPart(querySig, "symbol")?.name || null;
+// -----------------
+// SYMBOL FILTER (name from Python)
+// -----------------
 
-    const best = stepSymbol[0];
-    const bestScore = best.symbolScore;
+let stepSymbol = stepColor;
 
-    // garder seulement les scores proches
-    stepSymbol = stepSymbol.filter(c =>
-        c.symbolScore >= bestScore * 0.98
-    );
+if (detectedSymbol) {
 
-    // si symbole très sûr → forcer la spécialité
-    if (bestScore > 0.98 && best.card.symbol) {
+    stepSymbol = stepColor.filter(c => {
 
-        const wanted = best.card.symbol;
+        if (!c.card.symbol) return true;
 
-        stepSymbol = stepSymbol.filter(c =>
-            c.card.symbol === wanted
-        );
+        return c.card.symbol === detectedSymbol;
 
-    }
+    });
+
 }
+
+// fallback si rien trouvé
+if (!stepSymbol.length) {
+
+    stepSymbol = keepBestBy(stepColor, "symbolScore", {
+        keepTop: 2,
+        ratio: 0.98,
+        minKeep: 1
+    });
+
+}
+
+
     // -----------------
     // BOTTOM
     // -----------------
