@@ -13,7 +13,36 @@ WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 
 
+def detect_symbol(zone):
 
+    base = os.path.dirname(__file__)
+
+    templates = {
+        "SCIENTIFIQUE": cv2.imread(os.path.join(base, "symbols/scientifique.png"), 0),
+        "COSMONAUTE": cv2.imread(os.path.join(base, "symbols/cosmonaute.png"), 0),
+        "MECANICIEN": cv2.imread(os.path.join(base, "symbols/mecanicien.png"), 0),
+        "MEDECIN": cv2.imread(os.path.join(base, "symbols/medecin.png"), 0),
+    }
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+
+    best_name = None
+    best_score = 1e12
+
+    for name, tpl in templates.items():
+
+        if tpl is None:
+            continue
+
+        tpl = cv2.resize(tpl, (gray.shape[1], gray.shape[0]))
+
+        diff = np.mean((gray.astype("float") - tpl.astype("float")) ** 2)
+
+        if diff < best_score:
+            best_score = diff
+            best_name = name
+
+    return best_name
 # =====================================================
 # UTILS
 # =====================================================
@@ -76,10 +105,13 @@ def compute_signature(img):
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-    symbol_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray))
-    }
+  symbol_name = detect_symbol(zone)
+
+  symbol_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "name": symbol_name
+  }
 
     # ======================
     # BOTTOM
