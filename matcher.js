@@ -161,11 +161,23 @@ function matchSignature(querySig, cardsDb) {
     // SYMBOL
     // -----------------
 
-    let stepSymbol = keepBestBy(stepColor, "symbolScore", {
-        keepTop: 3,
-        ratio: 0.97,
-        minKeep: 1
-    });
+ let stepSymbol = keepBestBy(stepColor, "symbolScore", {
+    keepTop: 2,
+    ratio: 0.985,
+    minKeep: 1
+});
+   // -----------------
+// SYMBOL OBLIGATOIRE
+// -----------------
+
+if (stepSymbol.length > 0) {
+
+    const bestSymbol = stepSymbol[0].symbolScore;
+
+    stepSymbol = stepSymbol.filter(c =>
+        c.symbolScore >= bestSymbol * 0.98
+    );
+} 
 // -----------------
 // SPECIALITE FORCEE
 // -----------------
