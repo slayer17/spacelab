@@ -15,7 +15,9 @@ const fileInput = document.getElementById("file");
 const boardBtn = document.getElementById("boardBtn");
 const cardsBtn = document.getElementById("cardsBtn");
 
-const result = document.getElementById("result");
+const resultEl = document.getElementById("result");
+
+
 
 let currentStream = null;
 
@@ -212,18 +214,23 @@ function sendToPython() {
 
             console.log("MATCH =", resultMatch);
 
-            if (resultMatch && resultMatch.card) {
+         if (resultMatch && resultMatch.card) {
 
-                result.textContent =
-                    "Carte : " +
-                    resultMatch.card.id;
+    const detectedSymbol =
+        json.signature?.symbol?.name || "??";
 
-            } else {
+    result.textContent =
+        "Carte : " + resultMatch.card.id + "\n" +
+        "Couleur : " + resultMatch.card.couleur + "\n" +
+        "Symbole carte : " + resultMatch.card.symbol + "\n" +
+        "Symbole détecté : " + detectedSymbol + "\n" +
+        "Score : " + resultMatch.score.toFixed(3);
 
-                result.textContent =
-                    "Pas trouvé";
+} else {
 
-            }
+    result.textContent = "Pas trouvé";
+
+}
 
         } else {
 
