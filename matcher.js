@@ -199,10 +199,17 @@ if (detectedSymbol) {
     });
 
 }
+
 // fallback si rien trouvé
 if (!stepSymbol.length) {
 
-    console.log("SYMBOL FILTER FAILED");
+    console.log("SYMBOL FILTER FAILED → fallback");
+
+    stepSymbol = keepBestBy(stepColor, "symbolScore", {
+        keepTop: 3,
+        ratio: 0.97,
+        minKeep: 1
+    });
 
 }
 
