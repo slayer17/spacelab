@@ -33,6 +33,10 @@ function meanStdScore(a, b) {
 
     if (!a || !b) return 0;
 
+    // si c'est imbriqué (scan.symbol.symbol)
+    if (a.symbol) a = a.symbol;
+    if (b.symbol) b = b.symbol;
+
     if (a.mean == null || b.mean == null) {
         return similarityScore(a, b);
     }
@@ -46,6 +50,8 @@ function meanStdScore(a, b) {
 
     return Math.max(0, score);
 }
+
+
 function getScanPart(signature, part) {
     if (!signature) return null;
 
