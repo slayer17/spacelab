@@ -101,17 +101,17 @@ def compute_signature(img):
         "y": y1,
         "w": x2 - x1,
         "h": y2 - y1
-    })
+   })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-  symbol_name = detect_symbol(zone)
+    symbol_name = detect_symbol(zone)
 
-  symbol_sig = {
-    "mean": float(np.mean(gray)),
-    "std": float(np.std(gray)),
-    "name": symbol_name
-  }
+    symbol_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray)),
+        "name": symbol_name
+    }
 
     # ======================
     # BOTTOM
