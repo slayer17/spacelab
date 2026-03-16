@@ -5,7 +5,8 @@ import json
 
 CARDS_JS = 'cards.js'
 CARDS_FOLDER = 'cards'
-
+print("CWD =", os.getcwd())
+print("FILES =", os.listdir("."))
 
 def crop_percent(img, x1, y1, x2, y2):
     h, w = img.shape[:2]
