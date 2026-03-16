@@ -26,19 +26,6 @@ def detect_symbol(zone):
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
 
-    # ---------- NEW : crop center ----------
-    h, w = gray.shape
-
-    x1 = int(w * 0.2)
-    x2 = int(w * 0.8)
-
-    y1 = int(h * 0.2)
-    y2 = int(h * 0.8)
-
-    gray = gray[y1:y2, x1:x2]
-
-    gray = cv2.GaussianBlur(gray, (5,5), 0)
-
     best_name = None
     best_score = -1
 
@@ -47,19 +34,9 @@ def detect_symbol(zone):
         if tpl is None:
             continue
 
-        tpl = cv2.resize(
-            tpl,
-            (gray.shape[1], gray.shape[0]),
-            interpolation=cv2.INTER_AREA
-        )
+        tpl = cv2.resize(tpl, (gray.shape[1], gray.shape[0]))
 
-        tpl = cv2.GaussianBlur(tpl, (5,5), 0)
-
-        res = cv2.matchTemplate(
-            gray,
-            tpl,
-            cv2.TM_CCOEFF_NORMED
-        )
+        res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
 
         score = float(res.max())
 
@@ -68,7 +45,6 @@ def detect_symbol(zone):
             best_name = name
 
     return best_name, best_score
-
 # =====================================================
 # UTILS
 # =====================================================
@@ -133,11 +109,11 @@ def compute_signature(img):
 
     name, score = detect_symbol(zone)
 
-symbol_sig = {
-    "mean": float(np.mean(gray)),
-    "std": float(np.std(gray)),
-    "name": name,
-    "score": score
+    symbol_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray)),
+        "name": name,
+        "score":score
     }
 
     # ======================
