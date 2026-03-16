@@ -112,7 +112,8 @@ def compute_signature(img):
     symbol_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray)),
-        "name": symbol_name
+        "name": name,
+        "score":score
     }
 
     # ======================
