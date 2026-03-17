@@ -101,34 +101,34 @@ fileInput.onchange = e => {
 // COLOR
 // =========================
 
-function detectColorFromBGR(b, g, r) {
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const delta = max - min;
+// function detectColorFromBGR(b, g, r) {
+    // const max = Math.max(r, g, b);
+    // const min = Math.min(r, g, b);
+    // const delta = max - min;
 
-    if (delta < 15) {
-        return "ROUGE";
-    }
+    // if (delta < 15) {
+        // return "ROUGE";
+    // }
 
-    let hue = 0;
+    // let hue = 0;
 
-    if (max === r) {
-        hue = 60 * (((g - b) / delta) % 6);
-    } else if (max === g) {
-        hue = 60 * (((b - r) / delta) + 2);
-    } else {
-        hue = 60 * (((r - g) / delta) + 4);
-    }
+    // if (max === r) {
+        // hue = 60 * (((g - b) / delta) % 6);
+    // } else if (max === g) {
+        // hue = 60 * (((b - r) / delta) + 2);
+    // } else {
+        // hue = 60 * (((r - g) / delta) + 4);
+    // }
 
-    if (hue < 0) hue += 360;
+    // if (hue < 0) hue += 360;
 
-    if (hue >= 340 || hue <= 20) return "ROUGE";
-    if (hue >= 25 && hue <= 75) return "JAUNE";
-    if (hue >= 80 && hue <= 170) return "VERT";
-    if (hue >= 190 && hue <= 260) return "BLEU";
+    // if (hue >= 340 || hue <= 20) return "ROUGE";
+    // if (hue >= 25 && hue <= 75) return "JAUNE";
+    // if (hue >= 80 && hue <= 170) return "VERT";
+    // if (hue >= 190 && hue <= 260) return "BLEU";
 
-    return "ROUGE";
-}
+    // return "ROUGE";
+// }
 
 
 // =========================
