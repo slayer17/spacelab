@@ -195,8 +195,15 @@ function sendToPython() {
                 console.log("MATCH =", resultMatch);
 
                 if (resultMatch && resultMatch.card) {
+                    
                 const detectedSymbol =
     json.signature?.symbol?.name || "??";
+
+const detectedSymbol =
+    json.signature?.symbol?.name || "??";
+
+const rawDetectedSymbol =
+    json.signature?.symbol?.raw_name || "??";
 
 const detectedSymbolScore =
     json.signature?.symbol?.score ?? 0;
@@ -206,6 +213,7 @@ resultEl.textContent =
     "Couleur : " + resultMatch.card.couleur + "\n" +
     "Symbole carte : " + resultMatch.card.symbol + "\n" +
     "Symbole détecté : " + detectedSymbol + "\n" +
+    "Symbole brut : " + rawDetectedSymbol + "\n" +
     "Score symbole : " + Number(detectedSymbolScore).toFixed(3) + "\n" +
     "Score : " + resultMatch.score.toFixed(3);
                 } else {
