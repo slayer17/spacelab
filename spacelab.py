@@ -207,7 +207,34 @@ def compute_signature(img):
         },
         rois
     )
-    
+    def detect_card_color(zone):
+    if zone is None or zone.size == 0:
+        return "ROUGE", {"reason": "empty"}
+
+    hsv = cv2.cvtColor(zone, cv2.COLOR_BGR2HSV)
+
+    h = hsv[:, :, 0]
+    s = hsv[:, :, 1]
+    v = hsv[:, :, 2]
+
+    # On garde surtout les pixels colorés
+    mask = (s > 60) & (v > 50)
+
+    hues = h[mask]
+
+    if len(hues) == 0:
+        return "ROUGE", {"reason": "no_saturated_pixels"}
+
+    counts = {
+        "ROUGE": int(np.sum((hues <= 10) | (hues >= 170))),
+        "JAUNE": int(np.sum((hues >= 15) & (hues <= 35))),
+        "VERT":  int(np.sum((hues >= 40) & (hues <= 85))),
+        "BLEU":  int(np.sum((hues >= 90) & (hues <= 130))),
+    }
+
+    detected = max(counts, key=counts.get)
+
+    return detected, counts
     
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
