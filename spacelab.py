@@ -245,8 +245,8 @@ def detect_symbol(zone):
 
 def _normalize_digit_mask(img_or_mask):
     """
-    Transforme une image de chiffre en masque propre, centré et stable.
-    Ici on garde le badge entier, pas seulement le chiffre noir.
+    Transforme une image de badge chiffre en masque propre,
+    centré et stable.
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -262,8 +262,10 @@ def _normalize_digit_mask(img_or_mask):
     candidates = []
     kernel = np.ones((3, 3), np.uint8)
 
-    for th_mode in [cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
-                    cv2.THRESH_BINARY + cv2.THRESH_OTSU]:
+    for th_mode in [
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    ]:
         _, bin_img = cv2.threshold(gray, 0, 255, th_mode)
 
         test = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
@@ -281,8 +283,6 @@ def _normalize_digit_mask(img_or_mask):
             continue
 
         area_ratio = np.count_nonzero(crop) / float(crop.size)
-
-        # On garde une forme raisonnable
         if area_ratio < 0.10 or area_ratio > 0.95:
             continue
 
@@ -291,7 +291,6 @@ def _normalize_digit_mask(img_or_mask):
     if not candidates:
         return None
 
-    # On prend le candidat au remplissage le plus "naturel"
     candidates.sort(key=lambda x: abs(x[1] - 0.45))
     crop = candidates[0][0]
 
@@ -347,7 +346,7 @@ def _digit_score(a, b):
 
 def detect_digit(zone):
     """
-    Détecte un nombre de 1 à 10 dans la zone du badge points.
+    Détecte un nombre de 1 à 10 dans la zone points.
     Retourne :
       - le nombre détecté
       - le score du meilleur match
