@@ -161,26 +161,22 @@ function sendToPython() {
                 drawRois(json.rois, r);
             }
 
-            // =========================
+                  // =========================
             // MATCH
             // =========================
 
             if (json.signature) {
                 let detectedColor = null;
 
-                if (
-                    json.signature.color &&
-                    json.signature.color.color
-                ) {
-                    const c = json.signature.color.color;
+                if (json.signature?.color?.detected) {
+                    detectedColor = json.signature.color.detected;
 
-                    const b = c[0];
-                    const g = c[1];
-                    const r = c[2];
-
-                    detectedColor = detectColorFromBGR(b, g, r);
-                console.log("RAW COLOR =", { b, g, r, detectedColor });
-                    console.log("COLOR PY =", detectedColor, c);
+                    console.log(
+                        "COLOR PY =",
+                        detectedColor,
+                        json.signature.color.debug,
+                        json.signature.color.color
+                    );
                 }
 
                 let cardsFiltered = CARDS;
