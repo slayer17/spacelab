@@ -185,9 +185,7 @@ def compute_signature(img):
     img = cv2.resize(img, (200, 300))
     h, w = img.shape[:2]
 
-    # ======================
     # COLOR
-    # ======================
     x1 = int(w * 0.00)
     x2 = int(w * 0.38)
     y1 = int(h * 0.00)
@@ -214,9 +212,7 @@ def compute_signature(img):
         "debug": color_debug
     }
 
-    # ======================
     # SYMBOL
-    # ======================
     x1 = int(w * 0.05)
     x2 = int(w * 0.20)
     y1 = int(h * 0.20)
@@ -235,8 +231,8 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     symbol_name, symbol_score = detect_symbol(zone)
 
-if symbol_score < 0.35:
-    symbol_name = None
+    if symbol_score < 0.35:
+        symbol_name = None
 
     symbol_sig = {
         "mean": float(np.mean(gray)),
@@ -245,9 +241,7 @@ if symbol_score < 0.35:
         "score": float(symbol_score)
     }
 
-    # ======================
     # BOTTOM
-    # ======================
     x1 = int(w * 0.00)
     x2 = int(w * 0.55)
     y1 = int(h * 0.82)
@@ -265,9 +259,7 @@ if symbol_score < 0.35:
 
     bottom_sig = compute_patch_signature(zone, size=(16, 16))
 
-    # ======================
     # GLOBAL
-    # ======================
     rois.append({
         "type": "GLOBAL",
         "x": 0,
@@ -278,15 +270,12 @@ if symbol_score < 0.35:
 
     global_sig = compute_patch_signature(img, size=(16, 16))
 
-    return (
-        {
-            "color": color_sig,
-            "symbol": symbol_sig,
-            "bottom": bottom_sig,
-            "global": global_sig
-        },
-        rois
-    )
+    return {
+        "color": color_sig,
+        "symbol": symbol_sig,
+        "bottom": bottom_sig,
+        "global": global_sig
+    }, rois
 
 
 def compute_signature_safe(img):
