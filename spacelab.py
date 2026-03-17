@@ -25,6 +25,9 @@ def detect_symbol(zone):
         "MECANICIEN": cv2.imread(os.path.join(SYMBOLS_DIR, "mecanicien.png"), 0),
         "MEDECIN": cv2.imread(os.path.join(SYMBOLS_DIR, "medecin.png"), 0),
     }
+    print("SYMBOLS DIR =", SYMBOLS_DIR if 'SYMBOLS_DIR' in globals() else os.path.join(os.path.dirname(__file__), "symbols"))
+for k, v in templates.items():
+    print("TEMPLATE", k, "=", "OK" if v is not None else "MISSING")
 
     if zone is None or zone.size == 0:
         return None, 0.0
