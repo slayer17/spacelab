@@ -18,7 +18,163 @@ WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 # SYMBOL DETECTION
 # =====================================================
 
+def _keep_largest_component(bin_img):
+    """
+    Garde uniquement le plus gros composant blanc.
+    Ça évite que du bruit parasite casse la reconnaissance.
+    """
+    if bin_img is None or bin_img.size == 0:
+        return bin_img
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
+
+    if num_labels <= 1:
+        return bin_img
+
+    largest_label = 1
+    largest_area = stats[1, cv2.CC_STAT_AREA]
+
+    for i in range(2, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area > largest_area:
+            largest_area = area
+            largest_label = i
+
+    out = np.zeros_like(bin_img)
+    out[labels == largest_label] = 255
+    return out
+
+
+def _normalize_symbol_mask(img_or_mask, is_template=False):
+    """
+    Transforme une image de symbole en masque binaire propre,
+    centré et redimensionné de manière stable.
+    """
+    if img_or_mask is None or img_or_mask.size == 0:
+        return None
+
+    # Si l'image est en couleur, on passe en gris
+    if len(img_or_mask.shape) == 3:
+        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img_or_mask.copy()
+
+    # Lissage léger
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+
+    # Binarisation
+    _, bin_img = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    # Nettoyage
+    kernel = np.ones((3, 3), np.uint8)
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
+
+    # On garde seulement le plus gros objet
+    bin_img = _keep_largest_component(bin_img)
+
+    ys, xs = np.where(bin_img > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+
+    crop = bin_img[y1:y2 + 1, x1:x2 + 1]
+    if crop is None or crop.size == 0:
+        return None
+
+    # On place la forme dans un canvas carré
+    target = 96
+    canvas = np.zeros((target, target), dtype=np.uint8)
+
+    h, w = crop.shape[:2]
+    if h == 0 or w == 0:
+        return None
+
+    scale = min((target - 16) / w, (target - 16) / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+
+    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    x = (target - new_w) // 2
+    y = (target - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+
+    return canvas
+
+
+def _symbol_iou(a, b):
+    """
+    Compare deux masques binaires par recouvrement.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    a_bool = a > 0
+    b_bool = b > 0
+
+    inter = np.logical_and(a_bool, b_bool).sum()
+    union = np.logical_or(a_bool, b_bool).sum()
+
+    if union == 0:
+        return 0.0
+
+    return float(inter / union)
+
+
+def _symbol_xor_score(a, b):
+    """
+    Mesure simple de différence de forme.
+    Plus c'est proche de 1, mieux c'est.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    diff = cv2.bitwise_xor(a, b)
+    ratio = np.count_nonzero(diff) / float(diff.size)
+
+    return float(max(0.0, 1.0 - ratio))
+
+
+def _hu_score(a, b):
+    """
+    Compare les moments de Hu.
+    Sert de sécurité supplémentaire sur la forme.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    ma = cv2.moments(a)
+    mb = cv2.moments(b)
+
+    hua = cv2.HuMoments(ma).flatten()
+    hub = cv2.HuMoments(mb).flatten()
+
+    # Passage log pour stabiliser
+    eps = 1e-10
+    hua = -np.sign(hua) * np.log10(np.abs(hua) + eps)
+    hub = -np.sign(hub) * np.log10(np.abs(hub) + eps)
+
+    dist = np.mean(np.abs(hua - hub))
+    score = 1.0 / (1.0 + dist)
+
+    return float(score)
+
+
 def detect_symbol(zone):
+    """
+    Détection symbole plus robuste :
+    - crop un peu plus large
+    - nettoyage fort
+    - recentrage du symbole
+    - comparaison de forme
+    - retour du meilleur score + écart avec le 2e
+    """
     templates = {
         "SCIENTIFIQUE": cv2.imread(os.path.join(SYMBOLS_DIR, "scientifique.png"), 0),
         "ASTRONAUTE": cv2.imread(os.path.join(SYMBOLS_DIR, "astronaute.png"), 0),
@@ -26,91 +182,61 @@ def detect_symbol(zone):
         "MEDECIN": cv2.imread(os.path.join(SYMBOLS_DIR, "medecin.png"), 0),
     }
 
-    print("SYMBOLS DIR =", SYMBOLS_DIR)
-    for k, v in templates.items():
-        print("TEMPLATE", k, "=", "OK" if v is not None else "MISSING")
-
     if zone is None or zone.size == 0:
-        return None, 0.0
+        return None, 0.0, 0.0
 
     h, w = zone.shape[:2]
 
-    # Crop encore un peu plus centré
-    x1 = int(w * 0.18)
-    x2 = int(w * 0.82)
-    y1 = int(h * 0.18)
-    y2 = int(h * 0.82)
+    # Crop un peu plus large que la version précédente
+    x1 = int(w * 0.10)
+    x2 = int(w * 0.90)
+    y1 = int(h * 0.10)
+    y2 = int(h * 0.90)
 
     zone = zone[y1:y2, x1:x2]
 
     if zone is None or zone.size == 0:
-        return None, 0.0
+        return None, 0.0, 0.0
 
-    # Préparation image scan
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    gray = cv2.equalizeHist(gray)
-    gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_CUBIC)
+    scan_mask = _normalize_symbol_mask(zone, is_template=False)
 
-    # Binarisation pour isoler la forme
-    _, scan_bin = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
+    if scan_mask is None:
+        return None, 0.0, 0.0
 
-    # Petit nettoyage morphologique
-    kernel = np.ones((3, 3), np.uint8)
-    scan_bin = cv2.morphologyEx(scan_bin, cv2.MORPH_OPEN, kernel)
-    scan_bin = cv2.morphologyEx(scan_bin, cv2.MORPH_CLOSE, kernel)
-
-    best_name = None
-    best_score = -1.0
+    scores = []
 
     for name, tpl in templates.items():
         if tpl is None or tpl.size == 0:
             continue
 
-        th, tw = tpl.shape[:2]
-
-        tx1 = int(tw * 0.18)
-        tx2 = int(tw * 0.82)
-        ty1 = int(th * 0.18)
-        ty2 = int(th * 0.82)
-
-        tpl = tpl[ty1:ty2, tx1:tx2]
-
-        if tpl is None or tpl.size == 0:
+        tpl_mask = _normalize_symbol_mask(tpl, is_template=True)
+        if tpl_mask is None:
             continue
 
-        tpl = cv2.GaussianBlur(tpl, (3, 3), 0)
-        tpl = cv2.equalizeHist(tpl)
-        tpl = cv2.resize(tpl, (64, 64), interpolation=cv2.INTER_CUBIC)
+        # 3 scores complémentaires
+        iou = _symbol_iou(scan_mask, tpl_mask)
+        xor_score = _symbol_xor_score(scan_mask, tpl_mask)
+        hu = _hu_score(scan_mask, tpl_mask)
 
-        _, tpl_bin = cv2.threshold(
-            tpl, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        # Score combiné : priorité à la forme réelle
+        score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
 
-        tpl_bin = cv2.morphologyEx(tpl_bin, cv2.MORPH_OPEN, kernel)
-        tpl_bin = cv2.morphologyEx(tpl_bin, cv2.MORPH_CLOSE, kernel)
+        scores.append((name, float(score)))
 
-        # Score gris
-        res_gray = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
-        score_gray = float(res_gray.max())
+    if not scores:
+        return None, 0.0, 0.0
 
-        # Score masque binaire
-        res_bin = cv2.matchTemplate(scan_bin, tpl_bin, cv2.TM_CCOEFF_NORMED)
-        score_bin = float(res_bin.max())
+    scores.sort(key=lambda x: x[1], reverse=True)
 
-        # Score combiné : on favorise la forme
-        score = (score_gray * 0.35) + (score_bin * 0.65)
+    best_name, best_score = scores[0]
 
-        if score > best_score:
-            best_score = score
-            best_name = name
+    if len(scores) >= 2:
+        second_score = scores[1][1]
+        gap = float(best_score - second_score)
+    else:
+        gap = float(best_score)
 
-    if best_name is None:
-        return None, 0.0
-
-    return best_name, best_score
+    return best_name, float(best_score), gap
 
 
 # =====================================================
