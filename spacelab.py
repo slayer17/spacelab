@@ -31,21 +31,32 @@ def detect_symbol(zone):
 
     h, w = zone.shape[:2]
 
-    # Crop centre utile
-    x1 = int(w * 0.12)
-    x2 = int(w * 0.88)
-    y1 = int(h * 0.12)
-    y2 = int(h * 0.88)
+    # Crop encore un peu plus centré
+    x1 = int(w * 0.18)
+    x2 = int(w * 0.82)
+    y1 = int(h * 0.18)
+    y2 = int(h * 0.82)
 
     zone = zone[y1:y2, x1:x2]
 
     if zone is None or zone.size == 0:
         return None, 0.0
 
+    # Préparation image scan
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
     gray = cv2.resize(gray, (64, 64), interpolation=cv2.INTER_CUBIC)
+
+    # Binarisation pour isoler la forme
+    _, scan_bin = cv2.threshold(
+        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    # Petit nettoyage morphologique
+    kernel = np.ones((3, 3), np.uint8)
+    scan_bin = cv2.morphologyEx(scan_bin, cv2.MORPH_OPEN, kernel)
+    scan_bin = cv2.morphologyEx(scan_bin, cv2.MORPH_CLOSE, kernel)
 
     best_name = None
     best_score = -1.0
@@ -56,10 +67,10 @@ def detect_symbol(zone):
 
         th, tw = tpl.shape[:2]
 
-        tx1 = int(tw * 0.12)
-        tx2 = int(tw * 0.88)
-        ty1 = int(th * 0.12)
-        ty2 = int(th * 0.88)
+        tx1 = int(tw * 0.18)
+        tx2 = int(tw * 0.82)
+        ty1 = int(th * 0.18)
+        ty2 = int(th * 0.82)
 
         tpl = tpl[ty1:ty2, tx1:tx2]
 
@@ -70,8 +81,23 @@ def detect_symbol(zone):
         tpl = cv2.equalizeHist(tpl)
         tpl = cv2.resize(tpl, (64, 64), interpolation=cv2.INTER_CUBIC)
 
-        res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
-        score = float(res.max())
+        _, tpl_bin = cv2.threshold(
+            tpl, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+
+        tpl_bin = cv2.morphologyEx(tpl_bin, cv2.MORPH_OPEN, kernel)
+        tpl_bin = cv2.morphologyEx(tpl_bin, cv2.MORPH_CLOSE, kernel)
+
+        # Score gris
+        res_gray = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+        score_gray = float(res_gray.max())
+
+        # Score masque binaire
+        res_bin = cv2.matchTemplate(scan_bin, tpl_bin, cv2.TM_CCOEFF_NORMED)
+        score_bin = float(res_bin.max())
+
+        # Score combiné : on favorise la forme
+        score = (score_gray * 0.35) + (score_bin * 0.65)
 
         if score > best_score:
             best_score = score
