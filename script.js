@@ -179,7 +179,7 @@ function sendToPython() {
                     const r = c[2];
 
                     detectedColor = detectColorFromBGR(b, g, r);
-
+                console.log("RAW COLOR =", { b, g, r, detectedColor });
                     console.log("COLOR PY =", detectedColor, c);
                 }
 
