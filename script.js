@@ -17,10 +17,7 @@ const cardsBtn = document.getElementById("cardsBtn");
 
 const resultEl = document.getElementById("result");
 
-
-
 let currentStream = null;
-
 
 
 // =========================
@@ -28,19 +25,14 @@ let currentStream = null;
 // =========================
 
 boardBtn.onclick = () => {
-
     mode = "BOARD";
     resultEl.textContent = "Mode BOARD";
-
 };
 
 cardsBtn.onclick = () => {
-
     mode = "CARDS_ONLY";
     resultEl.textContent = "Mode CARDS_ONLY";
-
 };
-
 
 
 // =========================
@@ -48,25 +40,18 @@ cardsBtn.onclick = () => {
 // =========================
 
 startBtn.onclick = async () => {
-
     try {
-
-        currentStream =
-            await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment" }
-            });
+        currentStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" }
+        });
 
         video.srcObject = currentStream;
 
     } catch (err) {
-
         console.error(err);
         resultEl.textContent = "Erreur caméra";
-
     }
-
 };
-
 
 
 // =========================
@@ -74,7 +59,6 @@ startBtn.onclick = async () => {
 // =========================
 
 captureBtn.onclick = () => {
-
     if (!currentStream) return;
 
     canvas.width = video.videoWidth;
@@ -83,9 +67,7 @@ captureBtn.onclick = () => {
     ctx.drawImage(video, 0, 0);
 
     sendToPython();
-
 };
-
 
 
 // =========================
@@ -93,72 +75,33 @@ captureBtn.onclick = () => {
 // =========================
 
 loadBtn.onclick = () => {
-
     fileInput.click();
-
 };
 
 fileInput.onchange = e => {
-
     const file = e.target.files[0];
-
     if (!file) return;
 
     const img = new Image();
 
     img.onload = () => {
-
         canvas.width = img.width;
         canvas.height = img.height;
 
         ctx.drawImage(img, 0, 0);
 
         sendToPython();
-
     };
 
     img.src = URL.createObjectURL(file);
-
 };
 
 
-
 // =========================
-// SEND TO PYTHON
+// COLOR
 // =========================
 
-function sendToPython() {
-
-    canvas.toBlob(async blob => {
-
-        const form = new FormData();
-
-        form.append("image", blob, "capture.jpg");
-        form.append("mode", mode);
-
-        resultEl.textContent = "Envoi…";
-
-        const res = await fetch("/upload", {
-            method: "POST",
-            body: form
-        });
-
-        const json = await res.json();
-
-        console.log("SERVER SIG", json.signature);
-
-        drawRects(json.rects);
-
-        if (json.rois && json.rects && json.rects.length > 0) {
-
-            const r = json.rects[0];
-            drawRois(json.rois, r);
-
-        }
-
-
-
-        function detectColorFromBGR(b, g, r) {
+function detectColorFromBGR(b, g, r) {
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     const delta = max - min;
@@ -187,75 +130,98 @@ function sendToPython() {
     return "ROUGE";
 }
 
-        // =========================
-        // MATCH
-        // =========================
 
-  if (json.signature) {
+// =========================
+// SEND TO PYTHON
+// =========================
 
-    let detectedColor = null;
+function sendToPython() {
+    canvas.toBlob(async blob => {
+        const form = new FormData();
 
-    if (
-        json.signature.color &&
-        json.signature.color.color
-    ) {
+        form.append("image", blob, "capture.jpg");
+        form.append("mode", mode);
 
-        const c = json.signature.color.color;
+        resultEl.textContent = "Envoi…";
 
-        const b = c[0];
-        const g = c[1];
-        const r = c[2];
+        try {
+            const res = await fetch("/upload", {
+                method: "POST",
+                body: form
+            });
 
-        detectedColor = detectColorFromBGR(b, g, r);
+            const json = await res.json();
 
-        console.log(
-            "COLOR PY =",
-            detectedColor,
-            c
-        );
-    }
+            console.log("SERVER SIG", json.signature);
 
-    let cardsFiltered = CARDS;
+            drawRects(json.rects || []);
 
-    if (detectedColor) {
-        cardsFiltered =
-            CARDS.filter(
-                c => c.couleur === detectedColor
-            );
-    }
+            if (json.rois && json.rects && json.rects.length > 0) {
+                const r = json.rects[0];
+                drawRois(json.rois, r);
+            }
 
-    const resultMatch =
-        matchSignature(
-            json.signature,
-            cardsFiltered
-        );
+            // =========================
+            // MATCH
+            // =========================
 
-    console.log("MATCH =", resultMatch);
+            if (json.signature) {
+                let detectedColor = null;
 
-    if (resultMatch && resultMatch.card) {
+                if (
+                    json.signature.color &&
+                    json.signature.color.color
+                ) {
+                    const c = json.signature.color.color;
 
-        const detectedSymbol =
-            json.signature?.symbol?.name || "??";
+                    const b = c[0];
+                    const g = c[1];
+                    const r = c[2];
 
-        resultEl.textContent =
-            "Carte : " + resultMatch.card.id + "\n" +
-            "Couleur : " + resultMatch.card.couleur + "\n" +
-            "Symbole carte : " + resultMatch.card.symbol + "\n" +
-            "Symbole détecté : " + detectedSymbol + "\n" +
-            "Score : " + resultMatch.score.toFixed(3);
+                    detectedColor = detectColorFromBGR(b, g, r);
 
-    } else {
+                    console.log("COLOR PY =", detectedColor, c);
+                }
 
-        resultEl.textContent = "Pas trouvé";
+                let cardsFiltered = CARDS;
 
-    }
+                if (detectedColor) {
+                    cardsFiltered = CARDS.filter(
+                        c => c.couleur === detectedColor
+                    );
+                }
 
-} else {
+                const resultMatch = matchSignature(
+                    json.signature,
+                    cardsFiltered
+                );
 
-    resultEl.textContent = "Pas de signature";
+                console.log("MATCH =", resultMatch);
 
+                if (resultMatch && resultMatch.card) {
+                    const detectedSymbol =
+                        json.signature?.symbol?.name || "??";
+
+                    resultEl.textContent =
+                        "Carte : " + resultMatch.card.id + "\n" +
+                        "Couleur : " + resultMatch.card.couleur + "\n" +
+                        "Symbole carte : " + resultMatch.card.symbol + "\n" +
+                        "Symbole détecté : " + detectedSymbol + "\n" +
+                        "Score : " + resultMatch.score.toFixed(3);
+                } else {
+                    resultEl.textContent = "Pas trouvé";
+                }
+
+            } else {
+                resultEl.textContent = "Pas de signature";
+            }
+
+        } catch (err) {
+            console.error(err);
+            resultEl.textContent = "Erreur serveur";
+        }
+    }, "image/jpeg");
 }
-
 
 
 // =========================
@@ -263,14 +229,12 @@ function sendToPython() {
 // =========================
 
 function drawRects(rects) {
-
     ctx.lineWidth = 3;
     ctx.font = "20px Arial";
 
     let text = "";
 
     rects.forEach(r => {
-
         if (r.type === "STATION") {
             ctx.strokeStyle = "red";
         } else {
@@ -280,25 +244,14 @@ function drawRects(rects) {
         ctx.strokeRect(r.x, r.y, r.w, r.h);
 
         if (r.name) {
-
             ctx.fillStyle = "lime";
-
-            ctx.fillText(
-                r.name,
-                r.x,
-                r.y - 5
-            );
-
+            ctx.fillText(r.name, r.x, r.y - 5);
             text += r.name + "\n";
-
         }
-
     });
 
     if (text) resultEl.textContent = text;
-
 }
-
 
 
 // =========================
@@ -306,12 +259,10 @@ function drawRects(rects) {
 // =========================
 
 function drawRois(rois, rect) {
-
     const scaleX = rect.w / 200;
     const scaleY = rect.h / 300;
 
     rois.forEach(r => {
-
         if (r.type === "GLOBAL") return;
 
         if (r.type === "COLOR")
