@@ -511,7 +511,6 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
 
-    # Règle de confiance du symbole
     if symbol_score < 0.50 or symbol_gap < 0.06:
         symbol_name = None
 
@@ -524,10 +523,9 @@ def compute_signature(img):
     }
 
     # POINTS
-    # On prend le badge du nombre dans la zone violette
     x1 = int(w * 0.00)
-    x2 = int(w * 0.28)
-    y1 = int(h * 0.82)
+    x2 = int(w * 0.24)
+    y1 = int(h * 0.80)
     y2 = int(h * 1.00)
 
     zone = img[y1:y2, x1:x2]
@@ -543,7 +541,6 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     points_digit, points_score, points_gap = detect_digit(zone)
 
-    # Règle de confiance du chiffre
     if points_score < 0.40:
         points_digit = None
     elif points_score < 0.52 and points_gap < 0.03:
