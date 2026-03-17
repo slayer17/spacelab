@@ -157,89 +157,103 @@ function sendToPython() {
         }
 
 
+
+        function detectColorFromBGR(b, g, r) {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+
+    if (delta < 15) {
+        return "ROUGE";
+    }
+
+    let hue = 0;
+
+    if (max === r) {
+        hue = 60 * (((g - b) / delta) % 6);
+    } else if (max === g) {
+        hue = 60 * (((b - r) / delta) + 2);
+    } else {
+        hue = 60 * (((r - g) / delta) + 4);
+    }
+
+    if (hue < 0) hue += 360;
+
+    if (hue >= 340 || hue <= 20) return "ROUGE";
+    if (hue >= 25 && hue <= 75) return "JAUNE";
+    if (hue >= 80 && hue <= 170) return "VERT";
+    if (hue >= 190 && hue <= 260) return "BLEU";
+
+    return "ROUGE";
+}
+
         // =========================
         // MATCH
         // =========================
 
-        if (json.signature) {
+  if (json.signature) {
 
-            let detectedColor = null;
+    let detectedColor = null;
 
-            if (
-                json.signature.color &&
-                json.signature.color.color
-            ) {
+    if (
+        json.signature.color &&
+        json.signature.color.color
+    ) {
 
-                const c = json.signature.color.color;
+        const c = json.signature.color.color;
 
-                const b = c[0];
-                const g = c[1];
-                const r = c[2];
+        const b = c[0];
+        const g = c[1];
+        const r = c[2];
 
-                if (r > g && r > b)
-                    detectedColor = "ROUGE";
+        detectedColor = detectColorFromBGR(b, g, r);
 
-                else if (g > r && g > b)
-                    detectedColor = "VERT";
+        console.log(
+            "COLOR PY =",
+            detectedColor,
+            c
+        );
+    }
 
-                else if (b > r && b > g)
-                    detectedColor = "BLEU";
+    let cardsFiltered = CARDS;
 
-                else
-                    detectedColor = "JAUNE";
+    if (detectedColor) {
+        cardsFiltered =
+            CARDS.filter(
+                c => c.couleur === detectedColor
+            );
+    }
 
-                console.log(
-                    "COLOR PY =",
-                    detectedColor,
-                    c
-                );
-            }
+    const resultMatch =
+        matchSignature(
+            json.signature,
+            cardsFiltered
+        );
 
-            let cardsFiltered = CARDS;
+    console.log("MATCH =", resultMatch);
 
-            if (detectedColor) {
+    if (resultMatch && resultMatch.card) {
 
-                cardsFiltered =
-                    CARDS.filter(
-                        c => c.couleur === detectedColor
-                    );
+        const detectedSymbol =
+            json.signature?.symbol?.name || "??";
 
-            }
+        resultEl.textContent =
+            "Carte : " + resultMatch.card.id + "\n" +
+            "Couleur : " + resultMatch.card.couleur + "\n" +
+            "Symbole carte : " + resultMatch.card.symbol + "\n" +
+            "Symbole détecté : " + detectedSymbol + "\n" +
+            "Score : " + resultMatch.score.toFixed(3);
 
-            const resultMatch =
-                matchSignature(
-                    json.signature,
-                    cardsFiltered
-                );
+    } else {
 
-            console.log("MATCH =", resultMatch);
+        resultEl.textContent = "Pas trouvé";
 
-         if (resultMatch && resultMatch.card) {
-
-    const detectedSymbol =
-        json.signature?.symbol?.name || "??";
-
-    resultEl.textContent =
-        "Carte : " + resultMatch.card.id + "\n" +
-        "Couleur : " + resultMatch.card.couleur + "\n" +
-        "Symbole carte : " + resultMatch.card.symbol + "\n" +
-        "Symbole détecté : " + detectedSymbol + "\n" +
-        "Score : " + resultMatch.score.toFixed(3);
+    }
 
 } else {
 
-    resultEl.textContent = "Pas trouvé";
+    resultEl.textContent = "Pas de signature";
 
-}
-
-        } else {
-
-            result.textContent =
-                "Pas de signature";
-
-        }
-
-    }, "image/jpeg");
 }
 
 
