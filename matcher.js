@@ -223,14 +223,60 @@ function matchSignature(querySig, cardsDb) {
         });
     }
 
+      // -----------------
+    // BOTTOM FIRST
     // -----------------
-    // BOTTOM
-    // -----------------
-    let stepBottom = keepBestBy(stepSymbol, "bottomScore", {
-        keepTop: 4,
-        ratio: 0.96,
+    // La zone violette du bas devient le critère principal
+    // pour départager les cartes d'une même couleur.
+    let stepBottom = keepBestBy(stepColor, "bottomScore", {
+        keepTop: 5,
+        ratio: 0.985,
         minKeep: 2
     });
+
+    // -----------------
+    // SYMBOL NAME FROM SCAN
+    // -----------------
+    // Le symbole du haut devient une aide.
+    // Il ne doit plus casser la détection si ce n'est pas fiable.
+    const detectedSymbol =
+        getScanPart(querySig, "symbol")?.name || null;
+
+    const detectedSymbolScore =
+        Number(getScanPart(querySig, "symbol")?.score || 0);
+
+    let stepSymbol = stepBottom;
+
+    // Filtre fort uniquement si le symbole paraît assez fiable
+    if (detectedSymbol && detectedSymbolScore >= 0.45) {
+        const filtered = stepBottom.filter(c => {
+            if (!c.card.symbol) return true;
+
+            return (
+                c.card.symbol &&
+                detectedSymbol &&
+                c.card.symbol.toUpperCase().trim() ===
+                detectedSymbol.toUpperCase().trim()
+            );
+        });
+
+        // On n'applique le filtre que s'il reste au moins 1 candidat
+        if (filtered.length >= 1) {
+            stepSymbol = filtered;
+            console.log("SYMBOL HELP =", detectedSymbol);
+        } else {
+            console.log("SYMBOL FILTER FAILED → keep bottom result");
+        }
+    }
+
+    // Si le symbole n'est pas assez fiable, on ne coupe pas brutalement.
+    // On garde juste les meilleurs selon le score symbole, mais après le bottom.
+    if (stepSymbol === stepBottom) {
+        stepSymbol = keepBestBy(stepBottom, "symbolScore", {
+            keepTop: 3,
+            ratio: 0.97,
+            minKeep: 1
+        });
 
     // -----------------
     // GLOBAL
