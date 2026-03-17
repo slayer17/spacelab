@@ -359,17 +359,22 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    symbol_name, symbol_score = detect_symbol(zone)
+symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
 
-    if symbol_score < 0.30:
-        symbol_name = None
+# Règle de confiance :
+# - si le score brut est trop faible, on annule
+# - si le meilleur symbole est trop proche du 2e, on annule
+# Ça évite les faux positifs.
+if symbol_score < 0.50 or symbol_gap < 0.06:
+    symbol_name = None
 
-    symbol_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "name": symbol_name,
-        "score": float(symbol_score)
-    }
+symbol_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "name": symbol_name,
+    "score": float(symbol_score),
+    "gap": float(symbol_gap)
+}
 
     # BOTTOM
     x1 = int(w * 0.00)
