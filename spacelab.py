@@ -239,7 +239,157 @@ def detect_symbol(zone):
 
     return best_name, float(best_score), gap
 
+# =====================================================
+# DIGIT DETECTION
+# =====================================================
 
+def _normalize_digit_mask(img_or_mask):
+    """
+    Transforme une image de chiffre en masque propre, centré et stable.
+    Ici on garde le badge entier, pas seulement le chiffre noir.
+    """
+    if img_or_mask is None or img_or_mask.size == 0:
+        return None
+
+    if len(img_or_mask.shape) == 3:
+        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img_or_mask.copy()
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+
+    candidates = []
+    kernel = np.ones((3, 3), np.uint8)
+
+    for th_mode in [cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+                    cv2.THRESH_BINARY + cv2.THRESH_OTSU]:
+        _, bin_img = cv2.threshold(gray, 0, 255, th_mode)
+
+        test = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
+        test = cv2.morphologyEx(test, cv2.MORPH_CLOSE, kernel)
+
+        ys, xs = np.where(test > 0)
+        if len(xs) == 0 or len(ys) == 0:
+            continue
+
+        x1, x2 = xs.min(), xs.max()
+        y1, y2 = ys.min(), ys.max()
+
+        crop = test[y1:y2 + 1, x1:x2 + 1]
+        if crop is None or crop.size == 0:
+            continue
+
+        area_ratio = np.count_nonzero(crop) / float(crop.size)
+
+        # On garde une forme raisonnable
+        if area_ratio < 0.10 or area_ratio > 0.95:
+            continue
+
+        candidates.append((crop, area_ratio))
+
+    if not candidates:
+        return None
+
+    # On prend le candidat au remplissage le plus "naturel"
+    candidates.sort(key=lambda x: abs(x[1] - 0.45))
+    crop = candidates[0][0]
+
+    target = 80
+    canvas = np.zeros((target, target), dtype=np.uint8)
+
+    h, w = crop.shape[:2]
+    if h == 0 or w == 0:
+        return None
+
+    scale = min((target - 10) / w, (target - 10) / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+
+    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    x = (target - new_w) // 2
+    y = (target - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+
+    return canvas
+
+
+def _digit_score(a, b):
+    """
+    Compare deux badges de chiffre.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    iou = _symbol_iou(a, b)
+    xor_score = _symbol_xor_score(a, b)
+    hu = _hu_score(a, b)
+
+    cnts_a, _ = cv2.findContours(a, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts_b, _ = cv2.findContours(b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if cnts_a and cnts_b:
+        ca = max(cnts_a, key=cv2.contourArea)
+        cb = max(cnts_b, key=cv2.contourArea)
+        shape_dist = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
+        shape_score = 1.0 / (1.0 + shape_dist)
+    else:
+        shape_score = 0.0
+
+    return float(
+        (iou * 0.25) +
+        (xor_score * 0.20) +
+        (hu * 0.15) +
+        (shape_score * 0.40)
+    )
+
+
+def detect_digit(zone):
+    """
+    Détecte un nombre de 1 à 10 dans la zone du badge points.
+    Retourne :
+      - le nombre détecté
+      - le score du meilleur match
+      - l'écart avec le 2e meilleur
+    """
+    if zone is None or zone.size == 0:
+        return None, 0.0, 0.0
+
+    scan_mask = _normalize_digit_mask(zone)
+    if scan_mask is None:
+        return None, 0.0, 0.0
+
+    scores = []
+
+    for n in range(1, 11):
+        path = os.path.join(DIGITS_DIR, f"{n}.png")
+        tpl = cv2.imread(path, 0)
+
+        if tpl is None or tpl.size == 0:
+            continue
+
+        tpl_mask = _normalize_digit_mask(tpl)
+        if tpl_mask is None:
+            continue
+
+        score = _digit_score(scan_mask, tpl_mask)
+        scores.append((n, float(score)))
+
+    if not scores:
+        return None, 0.0, 0.0
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+
+    best_digit, best_score = scores[0]
+
+    if len(scores) >= 2:
+        second_score = scores[1][1]
+        gap = float(best_score - second_score)
+    else:
+        gap = float(best_score)
+
+    return int(best_digit), float(best_score), gap
 # =====================================================
 # COLOR DETECTION
 # =====================================================
@@ -343,7 +493,7 @@ def compute_signature(img):
         "debug": color_debug
     }
 
-# SYMBOL
+    # SYMBOL
     x1 = int(w * 0.05)
     x2 = int(w * 0.20)
     y1 = int(h * 0.20)
@@ -362,10 +512,7 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
 
-    # Règle de confiance :
-    # - si le score brut est trop faible, on annule
-    # - si le meilleur symbole est trop proche du 2e, on annule
-    # Ça évite les faux positifs.
+    # Règle de confiance du symbole
     if symbol_score < 0.50 or symbol_gap < 0.06:
         symbol_name = None
 
@@ -375,6 +522,40 @@ def compute_signature(img):
         "name": symbol_name,
         "score": float(symbol_score),
         "gap": float(symbol_gap)
+    }
+
+    # POINTS
+    # On prend le badge du nombre dans la zone violette
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.18)
+    y1 = int(h * 0.82)
+    y2 = int(h * 1.00)
+
+    zone = img[y1:y2, x1:x2]
+
+    rois.append({
+        "type": "POINTS",
+        "x": x1,
+        "y": y1,
+        "w": x2 - x1,
+        "h": y2 - y1
+    })
+
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    points_digit, points_score, points_gap = detect_digit(zone)
+
+    # Règle de confiance du chiffre
+    if points_score < 0.40:
+        points_digit = None
+    elif points_score < 0.52 and points_gap < 0.03:
+        points_digit = None
+
+    points_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray)),
+        "digit": points_digit,
+        "score": float(points_score),
+        "gap": float(points_gap)
     }
 
     # BOTTOM
@@ -409,6 +590,7 @@ def compute_signature(img):
     return {
         "color": color_sig,
         "symbol": symbol_sig,
+        "points": points_sig,
         "bottom": bottom_sig,
         "global": global_sig
     }, rois
