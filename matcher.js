@@ -184,46 +184,6 @@ function matchSignature(querySig, cardsDb) {
     });
 
     // -----------------
-    // SYMBOL NAME FROM SCAN
-    // -----------------
-    const detectedSymbol =
-        getScanPart(querySig, "symbol")?.name || null;
-
-    const detectedSymbolScore =
-        Number(getScanPart(querySig, "symbol")?.score || 0);
-
-    let stepSymbol = stepColor;
-
-    // On ne filtre par symbole QUE si le score est assez fiable
-    if (detectedSymbol && detectedSymbolScore >= 0.35) {
-        const filtered = stepColor.filter(c => {
-            if (!c.card.symbol) return true;
-
-            return (
-                c.card.symbol &&
-                detectedSymbol &&
-                c.card.symbol.toUpperCase().trim() ===
-                detectedSymbol.toUpperCase().trim()
-            );
-        });
-
-        if (filtered.length) {
-            stepSymbol = filtered;
-        } else {
-            console.log("SYMBOL FILTER FAILED → fallback");
-        }
-    }
-
-    // Si symbole peu fiable, on ne coupe pas brutalement
-    if (stepSymbol === stepColor) {
-        stepSymbol = keepBestBy(stepColor, "symbolScore", {
-            keepTop: 6,
-            ratio: 0.94,
-            minKeep: 2
-        });
-    }
-
-      // -----------------
     // BOTTOM FIRST
     // -----------------
     // La zone violette du bas devient le critère principal
@@ -277,11 +237,12 @@ function matchSignature(querySig, cardsDb) {
             ratio: 0.97,
             minKeep: 1
         });
+    }
 
     // -----------------
     // GLOBAL
     // -----------------
-    let stepGlobal = keepBestBy(stepBottom, "globalScore", {
+    let stepGlobal = keepBestBy(stepSymbol, "globalScore", {
         keepTop: 2,
         ratio: 0.97,
         minKeep: 1
@@ -297,10 +258,10 @@ function matchSignature(querySig, cardsDb) {
             .map(c => ({
                 ...c,
                 finalScore:
-                    (c.colorScore * 0.10) +
-                    (c.symbolScore * 0.20) +
-                    (c.bottomScore * 0.50) +
-                    (c.globalScore * 0.20)
+                    (c.colorScore * 0.05) +
+                    (c.symbolScore * 0.10) +
+                    (c.bottomScore * 0.70) +
+                    (c.globalScore * 0.15)
             }))
             .sort((a, b) => b.finalScore - a.finalScore);
 
@@ -319,10 +280,10 @@ function matchSignature(querySig, cardsDb) {
         score:
             best.finalScore ??
             (
-                best.colorScore * 0.10 +
-                best.symbolScore * 0.20 +
-                best.bottomScore * 0.50 +
-                best.globalScore * 0.20
+                best.colorScore * 0.05 +
+                best.symbolScore * 0.10 +
+                best.bottomScore * 0.70 +
+                best.globalScore * 0.15
             ),
         debug: {
             colorScore: best.colorScore,
