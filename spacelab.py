@@ -284,6 +284,7 @@ def compute_signature_safe(img):
     return compute_signature(img)
 
 
+
 # =====================================================
 # GEOMETRY
 # =====================================================
