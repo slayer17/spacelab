@@ -196,10 +196,7 @@ function sendToPython() {
 
                 if (resultMatch && resultMatch.card) {
                     
-                const detectedSymbol =
-    json.signature?.symbol?.name || "??";
-
-const detectedSymbol =
+     const detectedSymbol =
     json.signature?.symbol?.name || "??";
 
 const rawDetectedSymbol =
