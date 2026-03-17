@@ -10,6 +10,7 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARDS_DIR = os.path.join(BASE_DIR, "cards")
 SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
+DIGITS_DIR = os.path.join(BASE_DIR, "digits")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
