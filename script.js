@@ -195,15 +195,19 @@ function sendToPython() {
                 console.log("MATCH =", resultMatch);
 
                 if (resultMatch && resultMatch.card) {
-                    const detectedSymbol =
-                        json.signature?.symbol?.name || "??";
+                const detectedSymbol =
+    json.signature?.symbol?.name || "??";
 
-                    resultEl.textContent =
-                        "Carte : " + resultMatch.card.id + "\n" +
-                        "Couleur : " + resultMatch.card.couleur + "\n" +
-                        "Symbole carte : " + resultMatch.card.symbol + "\n" +
-                        "Symbole détecté : " + detectedSymbol + "\n" +
-                        "Score : " + resultMatch.score.toFixed(3);
+const detectedSymbolScore =
+    json.signature?.symbol?.score ?? 0;
+
+resultEl.textContent =
+    "Carte : " + resultMatch.card.id + "\n" +
+    "Couleur : " + resultMatch.card.couleur + "\n" +
+    "Symbole carte : " + resultMatch.card.symbol + "\n" +
+    "Symbole détecté : " + detectedSymbol + "\n" +
+    "Score symbole : " + Number(detectedSymbolScore).toFixed(3) + "\n" +
+    "Score : " + resultMatch.score.toFixed(3);
                 } else {
                     resultEl.textContent = "Pas trouvé";
                 }
