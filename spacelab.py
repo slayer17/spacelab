@@ -527,7 +527,7 @@ def compute_signature(img):
     # POINTS
     # On prend le badge du nombre dans la zone violette
     x1 = int(w * 0.00)
-    x2 = int(w * 0.18)
+    x2 = int(w * 0.28)
     y1 = int(h * 0.82)
     y2 = int(h * 1.00)
 
