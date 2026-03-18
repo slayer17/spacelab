@@ -389,6 +389,7 @@ def detect_digit(zone):
         gap = float(best_score)
 
     return int(best_digit), float(best_score), gap
+    
 # =====================================================
 # COLOR DETECTION
 # =====================================================
