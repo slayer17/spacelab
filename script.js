@@ -194,26 +194,39 @@ function sendToPython() {
 
                 console.log("MATCH =", resultMatch);
 
-                if (resultMatch && resultMatch.card) {
-                    
-     const detectedSymbol =
-    json.signature?.symbol?.name || "??";
+        if (resultMatch && resultMatch.card) {
 
-const rawDetectedSymbol =
-    json.signature?.symbol?.raw_name || "??";
+    const detectedSymbol =
+        json.signature?.symbol?.name || "??";
 
-const detectedSymbolScore =
-    json.signature?.symbol?.score ?? 0;
+    const rawDetectedSymbol =
+        json.signature?.symbol?.raw_name || "??";
 
-resultEl.textContent =
-    "Carte : " + resultMatch.card.id + "\n" +
-    "Couleur : " + resultMatch.card.couleur + "\n" +
-    "Symbole carte : " + resultMatch.card.symbol + "\n" +
-    "Symbole détecté : " + detectedSymbol + "\n" +
-    "Symbole brut : " + rawDetectedSymbol + "\n" +
-    "Score symbole : " + Number(detectedSymbolScore).toFixed(3) + "\n" +
-    "Score : " + resultMatch.score.toFixed(3);
-                } else {
+    const detectedSymbolScore =
+        json.signature?.symbol?.score ?? 0;
+
+    const detectedPoints =
+        json.signature?.points?.digit ?? "??";
+
+    const rawDetectedPoints =
+        json.signature?.points?.digit ?? "??";
+
+    const detectedPointsScore =
+        json.signature?.points?.score ?? 0;
+
+    resultEl.textContent =
+        "Carte : " + resultMatch.card.id + "\n" +
+        "Couleur : " + resultMatch.card.couleur + "\n" +
+        "Symbole carte : " + resultMatch.card.symbol + "\n" +
+        "Symbole détecté : " + detectedSymbol + "\n" +
+        "Symbole brut : " + rawDetectedSymbol + "\n" +
+        "Score symbole : " + Number(detectedSymbolScore).toFixed(3) + "\n" +
+        "Points carte : " + resultMatch.card.points + "\n" +
+        "Points détectés : " + detectedPoints + "\n" +
+        "Points bruts : " + rawDetectedPoints + "\n" +
+        "Score points : " + Number(detectedPointsScore).toFixed(3) + "\n" +
+        "Score : " + resultMatch.score.toFixed(3);
+} else {
                     resultEl.textContent = "Pas trouvé";
                 }
 
