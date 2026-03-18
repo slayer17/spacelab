@@ -524,7 +524,7 @@ def compute_signature(img):
     }
 
     # POINTS
-    x1 = int(w * 0.00)
+    x1 = int(w * 0.02)
     x2 = int(w * 0.24)
     y1 = int(h * 0.82)
     y2 = int(h * 1.00)
