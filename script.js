@@ -283,15 +283,16 @@ function drawRois(rois, rect) {
 
     rois.forEach(r => {
         if (r.type === "GLOBAL") return;
-
-        if (r.type === "COLOR")
-            ctx.strokeStyle = "red";
-        else if (r.type === "SYMBOL")
-            ctx.strokeStyle = "blue";
-        else if (r.type === "BOTTOM")
-            ctx.strokeStyle = "violet";
-        else
-            ctx.strokeStyle = "white";
+if (r.type === "COLOR")
+    ctx.strokeStyle = "red";
+else if (r.type === "SYMBOL")
+    ctx.strokeStyle = "blue";
+else if (r.type === "BOTTOM")
+    ctx.strokeStyle = "violet";
+else if (r.type === "POINTS_BADGE")
+    ctx.strokeStyle = "white";
+else
+    ctx.strokeStyle = "white";
 
         ctx.lineWidth = 2;
 
