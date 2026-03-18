@@ -540,18 +540,23 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    points_digit, points_score, points_gap = detect_digit(zone)
 
+    raw_points_digit, points_score, points_gap = detect_digit(zone)
+    points_digit = raw_points_digit
+
+    # Validation stricte :
+    # - on garde le chiffre brut pour le debug
+    # - on annule le chiffre détecté si la confiance est trop faible
     if points_score < 0.40:
         points_digit = None
     elif points_score < 0.52 and points_gap < 0.03:
         points_digit = None
 
-   points_sig = {
+    points_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray)),
-        "digit": points_digit,          # chiffre validé
-        "raw_digit": raw_points_digit,  # meilleur chiffre brut trouvé
+        "digit": points_digit,
+        "raw_digit": raw_points_digit,
         "score": float(points_score),
         "gap": float(points_gap)
     }
