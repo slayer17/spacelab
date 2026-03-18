@@ -542,9 +542,9 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     points_digit, points_score, points_gap = detect_digit(zone)
 
-    if points_score < 0.40:
+    if points_score < 0.34:
         points_digit = None
-    elif points_score < 0.52 and points_gap < 0.03:
+    elif points_score < 0.46 and points_gap < 0.02:
         points_digit = None
 
     points_sig = {
