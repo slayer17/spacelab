@@ -205,14 +205,14 @@ function sendToPython() {
     const detectedSymbolScore =
         json.signature?.symbol?.score ?? 0;
 
-    const detectedPoints =
-        json.signature?.points?.digit ?? "??";
+const detectedPoints =
+    json.signature?.points?.digit ?? "??";
 
-    const rawDetectedPoints =
-        json.signature?.points?.digit ?? "??";
+const rawDetectedPoints =
+    json.signature?.points?.raw_digit ?? "??";
 
-    const detectedPointsScore =
-        json.signature?.points?.score ?? 0;
+const detectedPointsScore =
+    json.signature?.points?.score ?? 0;
 
     resultEl.textContent =
         "Carte : " + resultMatch.card.id + "\n" +
