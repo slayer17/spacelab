@@ -459,6 +459,95 @@ def compute_patch_signature(zone, size=(16, 16)):
 # =====================================================
 # CORE SIGNATURE
 # =====================================================
+# =====================================================
+# POINTS BADGE DETECTION
+# =====================================================
+
+def _clip_box(x, y, w, h, max_w, max_h):
+    x = max(0, min(int(x), max_w - 1))
+    y = max(0, min(int(y), max_h - 1))
+    w = max(1, min(int(w), max_w - x))
+    h = max(1, min(int(h), max_h - y))
+    return x, y, w, h
+
+
+def find_points_badge(bottom_zone):
+    """
+    Cherche automatiquement le badge blanc du chiffre
+    dans la zone violette / noire du bas.
+    Retourne :
+      - crop du badge
+      - bbox locale dans bottom_zone : (x, y, w, h)
+    """
+    if bottom_zone is None or bottom_zone.size == 0:
+        return None, None
+
+    gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # On cherche les zones très claires
+    _, mask = cv2.threshold(blur, 170, 255, cv2.THRESH_BINARY)
+
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return None, None
+
+    h, w = gray.shape[:2]
+    candidates = []
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area < (w * h) * 0.01:
+            continue
+
+        if bw < w * 0.08 or bh < h * 0.30:
+            continue
+
+        if x > w * 0.45:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.60 or ratio > 1.40:
+            continue
+
+        # plus le contour est à gauche et grand, mieux c'est
+        score = area - (x * 2.0)
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    # petite marge autour du badge
+    pad_x = int(bw * 0.10)
+    pad_y = int(bh * 0.10)
+
+    x = x - pad_x
+    y = y - pad_y
+    bw = bw + (2 * pad_x)
+    bh = bh + (2 * pad_y)
+
+    x, y, bw, bh = _clip_box(x, y, bw, bh, w, h)
+
+    crop = bottom_zone[y:y + bh, x:x + bw]
+    if crop is None or crop.size == 0:
+        return None, None
+
+    return crop, (x, y, bw, bh)
+
 
 def compute_signature(img):
     rois = []
@@ -523,61 +612,74 @@ def compute_signature(img):
         "gap": float(symbol_gap)
     }
 
-    # POINTS
-    x1 = int(w * 0.02)
-    x2 = int(w * 0.24)
-    y1 = int(h * 0.82)
-    y2 = int(h * 1.00)
-
-    zone = img[y1:y2, x1:x2]
-
-    rois.append({
-        "type": "POINTS",
-        "x": x1,
-        "y": y1,
-        "w": x2 - x1,
-        "h": y2 - y1
-    })
-
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-
-    raw_points_digit, points_score, points_gap = detect_digit(zone)
-    points_digit = raw_points_digit
-
-    # Validation stricte :
-    # - on garde le chiffre brut pour le debug
-    # - on annule le chiffre détecté si la confiance est trop faible
-    if points_score < 0.40:
-        points_digit = None
-    elif points_score < 0.52 and points_gap < 0.03:
-        points_digit = None
-
-    points_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "digit": points_digit,
-        "raw_digit": raw_points_digit,
-        "score": float(points_score),
-        "gap": float(points_gap)
-    }
-
     # BOTTOM
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.55)
-    y1 = int(h * 0.82)
-    y2 = int(h * 1.00)
+    bottom_x1 = int(w * 0.00)
+    bottom_x2 = int(w * 0.55)
+    bottom_y1 = int(h * 0.82)
+    bottom_y2 = int(h * 1.00)
 
-    zone = img[y1:y2, x1:x2]
+    bottom_zone = img[bottom_y1:bottom_y2, bottom_x1:bottom_x2]
 
     rois.append({
         "type": "BOTTOM",
-        "x": x1,
-        "y": y1,
-        "w": x2 - x1,
-        "h": y2 - y1
+        "x": bottom_x1,
+        "y": bottom_y1,
+        "w": bottom_x2 - bottom_x1,
+        "h": bottom_y2 - bottom_y1
     })
 
-    bottom_sig = compute_patch_signature(zone, size=(16, 16))
+    bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
+
+    # POINTS BADGE AUTO-DETECTED
+    badge_crop, badge_box = find_points_badge(bottom_zone)
+
+    raw_points_digit = None
+    points_digit = None
+    points_score = 0.0
+    points_gap = 0.0
+
+    if badge_crop is not None:
+        bx, by, bw2, bh2 = badge_box
+
+        rois.append({
+            "type": "POINTS_BADGE",
+            "x": bottom_x1 + bx,
+            "y": bottom_y1 + by,
+            "w": bw2,
+            "h": bh2
+        })
+
+        gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
+
+        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
+        points_digit = raw_points_digit
+
+        # Validation stricte :
+        # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
+        if points_score < 0.40:
+            points_digit = None
+        elif points_score < 0.52 and points_gap < 0.03:
+            points_digit = None
+
+        points_sig = {
+            "mean": float(np.mean(gray_badge)),
+            "std": float(np.std(gray_badge)),
+            "digit": points_digit,
+            "raw_digit": raw_points_digit,
+            "score": float(points_score),
+            "gap": float(points_gap),
+            "found": True
+        }
+    else:
+        points_sig = {
+            "mean": 0.0,
+            "std": 0.0,
+            "digit": None,
+            "raw_digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "found": False
+        }
 
     # GLOBAL
     rois.append({
