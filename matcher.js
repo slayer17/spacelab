@@ -151,10 +151,10 @@ function finalTieBreak(candidates) {
     const scored = candidates.map(c => ({
         ...c,
         finalScore:
-            (c.colorScore * 0.10) +
-            (c.symbolScore * 0.30) +
-            (c.bottomScore * 0.45) +
-            (c.globalScore * 0.15)
+            (c.colorScore * 0.15) +
+            (c.symbolScore * 0.55) +
+            (c.bottomScore * 0.20) +
+            (c.globalScore * 0.10)
     }));
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
@@ -241,11 +241,11 @@ function matchSignature(querySig, cardsDb) {
         const fallback = [...candidates]
             .map(c => ({
                 ...c,
-                finalScore:
-                    (c.colorScore * 0.10) +
-                    (c.symbolScore * 0.30) +
-                    (c.bottomScore * 0.45) +
-                    (c.globalScore * 0.15)
+                     finalScore:
+                (c.colorScore * 0.15) +
+                (c.symbolScore * 0.55) +
+                (c.bottomScore * 0.20) +
+                (c.globalScore * 0.10)
             }))
             .sort((a, b) => b.finalScore - a.finalScore);
 
