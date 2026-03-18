@@ -151,10 +151,10 @@ function finalTieBreak(candidates) {
     const scored = candidates.map(c => ({
         ...c,
         finalScore:
-    (c.colorScore * 0.05) +
-    (c.symbolScore * 0.10) +
-    (c.bottomScore * 0.70) +
-    (c.globalScore * 0.15)
+            (c.colorScore * 0.10) +
+            (c.symbolScore * 0.30) +
+            (c.bottomScore * 0.45) +
+            (c.globalScore * 0.15)
     }));
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
