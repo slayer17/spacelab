@@ -245,9 +245,8 @@ def detect_symbol(zone):
 
 def _normalize_digit_mask(img_or_mask):
     """
-    Normalise un badge points complet :
-    - on garde la forme globale du badge
-    - on ne cherche plus à isoler seulement le chiffre
+    Normalise le badge complet des points.
+    On garde ici le contexte global du badge.
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -260,14 +259,13 @@ def _normalize_digit_mask(img_or_mask):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    # On cherche les zones claires du badge
-    _, mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
 
-    ys, xs = np.where(mask > 0)
+    ys, xs = np.where(white_mask > 0)
     if len(xs) == 0 or len(ys) == 0:
         return None
 
@@ -297,6 +295,194 @@ def _normalize_digit_mask(img_or_mask):
 
     return canvas
 
+
+def _extract_digit_only_mask(img_or_mask):
+    """
+    Extrait seulement la forme noire du chiffre
+    à l'intérieur du badge blanc.
+
+    C'est cette partie qui aide vraiment à distinguer
+    1 / 2 / 3 / etc.
+    """
+    if img_or_mask is None or img_or_mask.size == 0:
+        return None
+
+    if len(img_or_mask.shape) == 3:
+        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img_or_mask.copy()
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+
+    # On isole d'abord le badge blanc
+    _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+    kernel = np.ones((3, 3), np.uint8)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+
+    ys, xs = np.where(white_mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+
+    crop_gray = gray[y1:y2 + 1, x1:x2 + 1]
+    crop_white = white_mask[y1:y2 + 1, x1:x2 + 1]
+
+    if crop_gray is None or crop_gray.size == 0:
+        return None
+
+    # On reste à l'intérieur du badge
+    inner_white = cv2.erode(crop_white, np.ones((7, 7), np.uint8), iterations=1)
+
+    # On cherche les zones sombres (le chiffre)
+    _, dark_inv = cv2.threshold(
+        crop_gray,
+        0,
+        255,
+        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+
+    digit_mask = cv2.bitwise_and(dark_inv, inner_white)
+
+    digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_OPEN, kernel)
+    digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_CLOSE, kernel)
+
+    ys, xs = np.where(digit_mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+
+    crop_digit = digit_mask[y1:y2 + 1, x1:x2 + 1]
+    if crop_digit is None or crop_digit.size == 0:
+        return None
+
+    target = 64
+    canvas = np.zeros((target, target), dtype=np.uint8)
+
+    h, w = crop_digit.shape[:2]
+    if h == 0 or w == 0:
+        return None
+
+    scale = min((target - 10) / w, (target - 10) / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+
+    resized = cv2.resize(crop_digit, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    x = (target - new_w) // 2
+    y = (target - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+
+    return canvas
+
+
+def _binary_mask_score(a, b):
+    """
+    Compare deux masques binaires.
+    Plus proche de 1 = meilleur.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    aa = (a > 0).astype(np.uint8)
+    bb = (b > 0).astype(np.uint8)
+
+    inter = np.logical_and(aa, bb).sum()
+    union = np.logical_or(aa, bb).sum()
+
+    if union == 0:
+        return 0.0
+
+    iou = float(inter) / float(union)
+
+    xor_pixels = np.logical_xor(aa, bb).sum()
+    xor_score = 1.0 - (float(xor_pixels) / float(union))
+
+    return float((iou * 0.65) + (xor_score * 0.35))
+
+
+def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
+    """
+    Score final :
+    - un peu de badge complet
+    - surtout la forme du chiffre
+    """
+    if full_a is None or full_b is None:
+        return 0.0
+
+    diff = cv2.absdiff(full_a, full_b)
+    diff_score = 1.0 - (float(np.mean(diff)) / 255.0)
+
+    blur_a = cv2.GaussianBlur(full_a, (3, 3), 0)
+    blur_b = cv2.GaussianBlur(full_b, (3, 3), 0)
+
+    diff2 = cv2.absdiff(blur_a, blur_b)
+    structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
+
+    full_score = float((diff_score * 0.60) + (structure_score * 0.40))
+
+    if digit_a is None or digit_b is None:
+        return full_score
+
+    digit_score = _binary_mask_score(digit_a, digit_b)
+
+    return float((full_score * 0.30) + (digit_score * 0.70))
+
+
+def detect_digit(zone):
+    """
+    Détecte le badge points de 1 à 10
+    en comparant :
+    - le badge complet
+    - et la forme du chiffre lui-même
+    """
+    if zone is None or zone.size == 0:
+        return None, 0.0, 0.0
+
+    scan_badge = _normalize_digit_mask(zone)
+    if scan_badge is None:
+        return None, 0.0, 0.0
+
+    scan_digit = _extract_digit_only_mask(zone)
+
+    scores = []
+
+    for n in range(1, 11):
+        path = os.path.join(DIGITS_DIR, f"{n}.png")
+        tpl = cv2.imread(path)
+
+        if tpl is None or tpl.size == 0:
+            continue
+
+        tpl_badge = _normalize_digit_mask(tpl)
+        if tpl_badge is None:
+            continue
+
+        tpl_digit = _extract_digit_only_mask(tpl)
+
+        score = _digit_score(scan_badge, tpl_badge, scan_digit, tpl_digit)
+        scores.append((n, float(score)))
+
+    if not scores:
+        return None, 0.0, 0.0
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+
+    best_digit, best_score = scores[0]
+
+    if len(scores) >= 2:
+        second_score = scores[1][1]
+        gap = float(best_score - second_score)
+    else:
+        gap = float(best_score)
+
+    return int(best_digit), float(best_score), gap
 
 def _digit_score(a, b):
     """
