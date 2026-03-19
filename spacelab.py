@@ -440,21 +440,9 @@ def _clip_box(x, y, w, h, max_w, max_h):
     return x, y, w, h
 
 
-# def find_points_badge(bottom_zone):def find_points_badge(bottom_zone):
-def find_points_badge(bottom_zone)
-    """
-    Cherche automatiquement le badge blanc du chiffre
-    dans la zone du bas.
 
-    Nouvelle logique :
-    - on cherche des zones très claires
-    - on garde seulement des candidats plausibles
-    - on favorise fortement une zone :
-        * à gauche
-        * vers le bas
-        * assez carrée
-        * avec une bonne présence de blanc
-    """
+def find_points_badge(bottom_zone)
+    
     if bottom_zone is None or bottom_zone.size == 0:
         return None, None
 
