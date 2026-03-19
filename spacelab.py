@@ -666,9 +666,9 @@ def compute_signature(img):
 
         # Validation stricte :
         # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-        if points_score < 0.60:
+        if points_score < 0.45:
             points_digit = None
-        elif points_gap < 0.05:
+        elif points_gap < 0.02:
             points_digit = None
 
         points_sig = {
