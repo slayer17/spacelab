@@ -300,63 +300,51 @@ def _normalize_digit_mask(img_or_mask):
 
 def _digit_score(a, b):
     """
-    Compare deux badges de chiffre.
+    Compare deux badges complets.
+    Plus proche de 1 = meilleur.
     """
     if a is None or b is None:
         return 0.0
 
-    iou = _symbol_iou(a, b)
-    xor_score = _symbol_xor_score(a, b)
-    hu = _hu_score(a, b)
+    # Différence pixel à pixel normalisée
+    diff = cv2.absdiff(a, b)
+    diff_score = 1.0 - (float(np.mean(diff)) / 255.0)
 
-    cnts_a, _ = cv2.findContours(a, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cnts_b, _ = cv2.findContours(b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Un peu de structure
+    blur_a = cv2.GaussianBlur(a, (3, 3), 0)
+    blur_b = cv2.GaussianBlur(b, (3, 3), 0)
+    diff2 = cv2.absdiff(blur_a, blur_b)
+    structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
 
-    if cnts_a and cnts_b:
-        ca = max(cnts_a, key=cv2.contourArea)
-        cb = max(cnts_b, key=cv2.contourArea)
-        shape_dist = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
-        shape_score = 1.0 / (1.0 + shape_dist)
-    else:
-        shape_score = 0.0
-
-    return float(
-        (iou * 0.25) +
-        (xor_score * 0.20) +
-        (hu * 0.15) +
-        (shape_score * 0.40)
-    )
+    return float((diff_score * 0.65) + (structure_score * 0.35))
 
 
 def detect_digit(zone):
     """
-    Détecte un nombre de 1 à 10 dans la zone points.
-    Retourne :
-      - le nombre détecté
-      - le score du meilleur match
-      - l'écart avec le 2e meilleur
+    Détecte le badge points de 1 à 10
+    en comparant directement avec les PNG du dossier digits.
     """
     if zone is None or zone.size == 0:
         return None, 0.0, 0.0
 
-    scan_mask = _normalize_digit_mask(zone)
-    if scan_mask is None:
+    scan_badge = _normalize_digit_mask(zone)
+    if scan_badge is None:
         return None, 0.0, 0.0
 
     scores = []
 
     for n in range(1, 11):
         path = os.path.join(DIGITS_DIR, f"{n}.png")
-        tpl = cv2.imread(path, 0)
+        tpl = cv2.imread(path)
 
         if tpl is None or tpl.size == 0:
             continue
 
-        tpl_mask = _normalize_digit_mask(tpl)
-        if tpl_mask is None:
+        tpl_badge = _normalize_digit_mask(tpl)
+        if tpl_badge is None:
             continue
 
-        score = _digit_score(scan_mask, tpl_mask)
+        score = _digit_score(scan_badge, tpl_badge)
         scores.append((n, float(score)))
 
     if not scores:
