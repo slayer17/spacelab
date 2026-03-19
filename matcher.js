@@ -84,11 +84,10 @@ function getScanPart(signature, part) {
 }
 
 /*
-    On récupère le chiffre détecté SEULEMENT
-    s'il a déjà été validé côté Python.
-    Donc :
-    - si digit = null -> on ne force rien
-    - si digit existe -> on peut l'utiliser
+    Cette fonction récupère le chiffre détecté côté scan.
+    Important :
+    - si le chiffre n'existe pas, on renvoie null
+    - si le chiffre existe, on le convertit en nombre
 */
 function getReliableDetectedPoints(querySig) {
     const points = getScanPart(querySig, "points");
@@ -104,11 +103,11 @@ function getReliableDetectedPoints(querySig) {
 }
 
 /*
-    Score simple des points :
-    - 1.00 si le chiffre détecté correspond exactement à la carte
-    - 0.15 si on est à 1 point d'écart
+    Score des points :
+    - 1.00 si le chiffre détecté correspond exactement
+    - 0.15 si on a 1 point d'écart
     - 0.00 sinon
-    - 0.50 neutre si on n'a pas de chiffre fiable
+    - 0.50 neutre si aucun chiffre fiable n'a été détecté
 */
 function pointsMatchScore(querySig, card) {
     const detectedPoints = getReliableDetectedPoints(querySig);
@@ -227,12 +226,10 @@ function matchSignature(querySig, cardsDb) {
         };
     }
 
-    let candidates = cardsDb.map(card =>
-        enrichCandidate(querySig, card)
-    );
+    let candidates = cardsDb.map(card => enrichCandidate(querySig, card));
 
     // -----------------
-    // COLOR
+    // 1) COULEUR
     // -----------------
     let stepColor = keepBestBy(candidates, "colorScore", {
         keepTop: 12,
@@ -241,7 +238,7 @@ function matchSignature(querySig, cardsDb) {
     });
 
     // -----------------
-    // SYMBOL
+    // 2) SYMBOLE
     // -----------------
     const detectedSymbol =
         getScanPart(querySig, "symbol")?.name || null;
@@ -272,7 +269,7 @@ function matchSignature(querySig, cardsDb) {
     }
 
     // -----------------
-    // POINTS
+    // 3) POINTS
     // -----------------
     const detectedPoints = getReliableDetectedPoints(querySig);
 
@@ -294,7 +291,7 @@ function matchSignature(querySig, cardsDb) {
     }
 
     // -----------------
-    // BOTTOM
+    // 4) BAS DE CARTE
     // -----------------
     let stepBottom = keepBestBy(stepPoints, "bottomScore", {
         keepTop: 4,
@@ -303,7 +300,7 @@ function matchSignature(querySig, cardsDb) {
     });
 
     // -----------------
-    // GLOBAL
+    // 5) SCORE GLOBAL
     // -----------------
     let stepGlobal = keepBestBy(stepBottom, "globalScore", {
         keepTop: 2,
@@ -344,11 +341,11 @@ function matchSignature(querySig, cardsDb) {
         score:
             best.finalScore ??
             (
-                best.colorScore * 0.15 +
-                best.symbolScore * 0.45 +
-                best.pointsScore * 0.20 +
-                best.bottomScore * 0.15 +
-                best.globalScore * 0.05
+                (best.colorScore * 0.15) +
+                (best.symbolScore * 0.45) +
+                (best.pointsScore * 0.20) +
+                (best.bottomScore * 0.15) +
+                (best.globalScore * 0.05)
             ),
         debug: {
             colorScore: best.colorScore,
@@ -359,7 +356,6 @@ function matchSignature(querySig, cardsDb) {
         }
     };
 }
-
 function enrichCandidate(querySig, card) {
     const cardSig = card.signature || card;
 
@@ -556,5 +552,3 @@ function matchSignature(querySig, cardsDb) {
         }
     };
 }
-
-
