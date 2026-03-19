@@ -435,8 +435,13 @@ def _find_special_white_panel_box(bottom_zone):
 
 def _find_points_badge_in_black_panel(panel_zone):
     """
-    Version simple : on prend la zone gauche du panneau noir.
-    C'est volontairement séparé et simple à modifier.
+    Cherche la zone du badge points dans un panneau noir classique.
+
+    Nouvelle version :
+    - crop plus large
+    - plus haut
+    - presque toute la hauteur
+    - pour ne plus couper le badge
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -445,12 +450,14 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    x = int(pw * 0.02)
-    y = int(ph * 0.10)
-    w = int(pw * 0.36)
-    h = int(ph * 0.78)
+    # Zone gauche plus large qu'avant
+    x = int(pw * 0.00)
+    y = int(ph * 0.04)
+    w = int(pw * 0.46)
+    h = int(ph * 0.92)
 
     x, y, w, h = _clip_box(x, y, w, h, pw, ph)
+
     crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
