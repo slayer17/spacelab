@@ -4,10 +4,15 @@ import cv2
 import numpy as np
 
 from flask import Flask, request, jsonify, send_from_directory
-
 import base64
 
-import bottom
+from bottom import (
+    extract_bottom_roi_from_full_card,
+    analyze_bottom,
+    _normalize_badge,
+    _extract_digit_mask,
+    build_overlay,
+)
 app = Flask(__name__)
 def _img_to_base64(img):
     if img is None or img.size == 0:
@@ -1843,7 +1848,7 @@ def build_signatures():
 
 
 # =====================================================
-# RUN
+# BOTTOM TEST
 # =====================================================
 
 @app.route("/bottom-test", methods=["GET", "POST"])
@@ -1871,7 +1876,6 @@ def bottom_test():
         return "Aucun fichier envoyé", 400
 
     file = request.files["image"]
-
     if not file or file.filename == "":
         return "Fichier vide", 400
 
@@ -1881,13 +1885,11 @@ def bottom_test():
 
     np_arr = np.frombuffer(data, np.uint8)
     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
     if img is None:
         return "Image invalide", 400
 
     full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
     result = analyze_bottom(bottom_roi, DIGITS_DIR)
-
     overlay = build_overlay(full_img, bottom_box, result)
 
     points_crop = None
@@ -1898,7 +1900,6 @@ def bottom_test():
     if points_box is not None:
         x, y, w, h = points_box
         points_crop = bottom_roi[y:y + h, x:x + w]
-
         if points_crop is not None and points_crop.size != 0:
             badge_norm = _normalize_badge(points_crop)
             digit_mask = _extract_digit_mask(points_crop)
@@ -1920,12 +1921,9 @@ def bottom_test():
     </head>
     <body style="font-family:Arial,sans-serif; padding:20px;">
       <h1>Résultat du test du bas</h1>
-
       <p><a href="/bottom-test">← Revenir au formulaire</a></p>
-
       <h2>Résultat JSON</h2>
       <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
-
       {_html_img_block("Image complète", full_b64)}
       {_html_img_block("ROI du bas", bottom_b64)}
       {_html_img_block("Overlay debug", overlay_b64)}
@@ -1936,6 +1934,10 @@ def bottom_test():
     </html>
     """
 
+
+# =====================================================
+# RUN
+# =====================================================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
