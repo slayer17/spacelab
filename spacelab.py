@@ -245,8 +245,9 @@ def detect_symbol(zone):
 
 def _normalize_digit_mask(img_or_mask):
     """
-    Transforme une image de badge chiffre en masque propre,
-    centré et stable.
+    Normalise un badge points complet :
+    - on garde la forme globale du badge
+    - on ne cherche plus à isoler seulement le chiffre
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -259,53 +260,36 @@ def _normalize_digit_mask(img_or_mask):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    candidates = []
+    # On cherche les zones claires du badge
+    _, mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
     kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    for th_mode in [
-        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    ]:
-        _, bin_img = cv2.threshold(gray, 0, 255, th_mode)
-
-        test = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-        test = cv2.morphologyEx(test, cv2.MORPH_CLOSE, kernel)
-
-        ys, xs = np.where(test > 0)
-        if len(xs) == 0 or len(ys) == 0:
-            continue
-
-        x1, x2 = xs.min(), xs.max()
-        y1, y2 = ys.min(), ys.max()
-
-        crop = test[y1:y2 + 1, x1:x2 + 1]
-        if crop is None or crop.size == 0:
-            continue
-
-        area_ratio = np.count_nonzero(crop) / float(crop.size)
-        if area_ratio < 0.10 or area_ratio > 0.95:
-            continue
-
-        candidates.append((crop, area_ratio))
-
-    if not candidates:
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
         return None
 
-    candidates.sort(key=lambda x: abs(x[1] - 0.45))
-    crop = candidates[0][0]
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
 
-    target = 80
+    crop = gray[y1:y2 + 1, x1:x2 + 1]
+    if crop is None or crop.size == 0:
+        return None
+
+    target = 96
     canvas = np.zeros((target, target), dtype=np.uint8)
 
     h, w = crop.shape[:2]
     if h == 0 or w == 0:
         return None
 
-    scale = min((target - 10) / w, (target - 10) / h)
+    scale = min((target - 12) / w, (target - 12) / h)
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
 
-    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     x = (target - new_w) // 2
     y = (target - new_h) // 2
