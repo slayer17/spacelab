@@ -628,10 +628,10 @@ def compute_signature(img):
 
         # Validation stricte :
         # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-        if points_score < 0.40:
-            points_digit = None
-        elif points_score < 0.52 and points_gap < 0.03:
-            points_digit = None
+   if points_score < 0.60:
+    points_digit = None
+elif points_gap < 0.05:
+    points_digit = None
 
         points_sig = {
             "mean": float(np.mean(gray_badge)),
