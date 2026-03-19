@@ -4,9 +4,38 @@ import cv2
 import numpy as np
 
 from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
+import base64
 
+from bottom import (
+    extract_bottom_roi_from_full_card,
+    analyze_bottom,
+    _normalize_badge,
+    _extract_digit_mask,
+    build_overlay,
+)
 app = Flask(__name__)
+def _img_to_base64(img):
+    if img is None or img.size == 0:
+        return None
 
+    ok, buffer = cv2.imencode(".png", img)
+    if not ok:
+        return None
+
+    return base64.b64encode(buffer.tobytes()).decode("utf-8")
+
+
+def _html_img_block(title, img_b64):
+    if not img_b64:
+        return f"<h3>{title}</h3><p>Image absente</p>"
+
+    return f"""
+    <div style="margin-bottom:20px;">
+      <h3 style="margin:0 0 8px 0;">{title}</h3>
+      <img src="data:image/png;base64,{img_b64}" style="max-width:100%; border:1px solid #ccc;" />
+    </div>
+    """
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARDS_DIR = os.path.join(BASE_DIR, "cards")
 SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
