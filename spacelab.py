@@ -749,6 +749,491 @@ def find_points_badge(bottom_zone):
     final_h = bh
 
     return crop, (final_x, final_y, final_w, final_h)
+    
+def _offset_box(box, dx, dy):
+    if box is None:
+        return None
+    x, y, w, h = box
+    return (int(x + dx), int(y + dy), int(w), int(h))
+
+
+def _make_bottom_light_mask(zone):
+    """
+    Construit un masque des zones claires / blanches
+    dans le ROI du bas.
+    """
+    if zone is None or zone.size == 0:
+        return None, None
+
+    hsv = cv2.cvtColor(zone, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    mask_hsv = cv2.inRange(hsv, (0, 0, 140), (180, 120, 255))
+    _, mask_gray = cv2.threshold(blur, 155, 255, cv2.THRESH_BINARY)
+
+    mask = cv2.bitwise_or(mask_hsv, mask_gray)
+
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    return mask, gray
+
+
+def _find_black_panel_box(bottom_zone):
+    """
+    Cherche le grand panneau noir du bas
+    pour les cartes classiques.
+    """
+    if bottom_zone is None or bottom_zone.size == 0:
+        return None
+
+    gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    _, dark_mask = cv2.threshold(blur, 95, 255, cv2.THRESH_BINARY_INV)
+
+    kernel = np.ones((5, 5), np.uint8)
+    dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(
+        dark_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return None
+
+    h, w = gray.shape[:2]
+    image_area = float(max(w * h, 1))
+    candidates = []
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / image_area
+
+        if area_ratio < 0.18:
+            continue
+
+        if bw < w * 0.45:
+            continue
+
+        if bh < h * 0.45:
+            continue
+
+        if x > w * 0.20:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 1.2 or ratio > 4.8:
+            continue
+
+        cx = x + (bw / 2.0)
+        left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
+        size_score = min(area_ratio / 0.45, 1.0)
+
+        score = (size_score * 3.0) + (left_score * 1.0)
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    return _clip_box(x, y, bw, bh, w, h)
+
+
+def _find_special_white_panel_box(bottom_zone):
+    """
+    Cherche le format spécial jaune/blanc
+    comme JAUNE_5.
+    """
+    if bottom_zone is None or bottom_zone.size == 0:
+        return None
+
+    mask, gray = _make_bottom_light_mask(bottom_zone)
+    if mask is None:
+        return None
+
+    h, w = gray.shape[:2]
+    dark_ratio = float(np.count_nonzero(gray < 90)) / float(max(gray.size, 1))
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(w * h, 1))
+
+        if area_ratio < 0.12:
+            continue
+
+        if x < w * 0.10:
+            continue
+
+        if bw < w * 0.35:
+            continue
+
+        if bh < h * 0.42:
+            continue
+
+        if y > h * 0.35:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.6 or ratio > 1.8:
+            continue
+
+        cx = x + (bw / 2.0)
+        cy = y + (bh / 2.0)
+
+        center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
+        size_score = min(area_ratio / 0.28, 1.0)
+
+        score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None
+
+    # Le format spécial ne doit pas être trop sombre
+    if dark_ratio > 0.22:
+        return None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    return _clip_box(x, y, bw, bh, w, h)
+
+
+def _find_slash_box(panel_zone):
+    """
+    Cherche le slash blanc au centre du panneau noir.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None
+
+    ph, pw = panel_zone.shape[:2]
+    x1 = int(pw * 0.35)
+    x2 = int(pw * 0.60)
+
+    zone = panel_zone[:, x1:x2]
+    if zone is None or zone.size == 0:
+        return None
+
+    mask, _ = _make_bottom_light_mask(zone)
+    if mask is None:
+        return None
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+    zh, zw = zone.shape[:2]
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(zw * zh, 1))
+
+        if area_ratio < 0.01:
+            continue
+
+        if bh < zh * 0.28:
+            continue
+
+        if bw > zw * 0.45:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio > 0.80:
+            continue
+
+        cx = x + (bw / 2.0)
+        center_score = 1.0 - min(abs(cx - (zw * 0.50)) / float(max(zw * 0.35, 1)), 1.0)
+        tall_score = min(bh / float(max(zh * 0.65, 1)), 1.0)
+
+        score = (center_score * 2.0) + (tall_score * 2.0) + (area_ratio * 3.0)
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    x += x1
+    return (x, y, bw, bh)
+
+
+def _find_right_icon_box(panel_zone):
+    """
+    Cherche la grande icône blanche à droite.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None
+
+    ph, pw = panel_zone.shape[:2]
+    x1 = int(pw * 0.56)
+    x2 = pw
+    y1 = int(ph * 0.05)
+    y2 = int(ph * 0.78)
+
+    zone = panel_zone[y1:y2, x1:x2]
+    if zone is None or zone.size == 0:
+        return None
+
+    mask, _ = _make_bottom_light_mask(zone)
+    if mask is None:
+        return None
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+    zh, zw = zone.shape[:2]
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(zw * zh, 1))
+
+        if area_ratio < 0.05:
+            continue
+
+        if bw < zw * 0.20:
+            continue
+
+        if bh < zh * 0.25:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.45 or ratio > 1.65:
+            continue
+
+        score = (area_ratio * 4.0) + (bh / float(max(zh, 1)))
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    return (x + x1, y + y1, bw, bh)
+
+
+def _find_bottom_line_box(panel_zone):
+    """
+    Cherche la ligne / double flèche en bas à droite.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None
+
+    ph, pw = panel_zone.shape[:2]
+    x1 = int(pw * 0.46)
+    x2 = pw
+    y1 = int(ph * 0.56)
+    y2 = ph
+
+    zone = panel_zone[y1:y2, x1:x2]
+    if zone is None or zone.size == 0:
+        return None
+
+    mask, _ = _make_bottom_light_mask(zone)
+    if mask is None:
+        return None
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    candidates = []
+    zh, zw = zone.shape[:2]
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(zw * zh, 1))
+
+        if area_ratio < 0.01:
+            continue
+
+        if bw < zw * 0.18:
+            continue
+
+        if bh > zh * 0.38:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 1.8:
+            continue
+
+        score = (ratio * 1.0) + (area_ratio * 6.0)
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    return (x + x1, y + y1, bw, bh)
+
+
+def analyze_bottom_layout(bottom_zone):
+    """
+    Analyse le ROI complet du bas.
+
+    Cette fonction ne cherche plus seulement un petit ROI blanc.
+    Elle essaie de comprendre la structure :
+    - panneau noir classique
+    - format spécial jaune/blanc
+    - slash
+    - icône à droite
+    - ligne en bas
+    - points
+    """
+    result = {
+        "layout": "UNKNOWN",
+        "points": None,
+        "raw_points": None,
+        "points_score": 0.0,
+        "points_gap": 0.0,
+        "has_slash": False,
+        "has_right_icon": False,
+        "has_bottom_line": False,
+        "has_special_white_panel": False,
+        "panel_box": None,
+        "points_box": None,
+        "slash_box": None,
+        "right_icon_box": None,
+        "bottom_line_box": None,
+        "special_box": None
+    }
+
+    if bottom_zone is None or bottom_zone.size == 0:
+        return result
+
+    # 1) Cas spécial JAUNE_5
+    special_box = _find_special_white_panel_box(bottom_zone)
+    if special_box is not None:
+        result["layout"] = "SPECIAL_WHITE_PANEL"
+        result["has_special_white_panel"] = True
+        result["special_box"] = special_box
+        return result
+
+    # 2) Cas panneau noir classique
+    panel_box = _find_black_panel_box(bottom_zone)
+    if panel_box is None:
+        return result
+
+    px, py, pw, ph = panel_box
+    panel_zone = bottom_zone[py:py + ph, px:px + pw]
+    if panel_zone is None or panel_zone.size == 0:
+        return result
+
+    result["panel_box"] = panel_box
+
+    # 3) Points : on garde l'ancien lecteur du chiffre,
+    # mais on l'applique seulement sur la partie gauche du panneau.
+    left_w = max(1, int(pw * 0.46))
+    left_zone = panel_zone[:, :left_w]
+
+    badge_crop, badge_box_local = find_points_badge(left_zone)
+
+    raw_points_digit = None
+    points_digit = None
+    points_score = 0.0
+    points_gap = 0.0
+
+    if badge_crop is not None and badge_box_local is not None:
+        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
+
+        if points_score >= 0.80:
+            points_digit = raw_points_digit
+        elif points_score >= 0.68 and points_gap >= 0.03:
+            points_digit = raw_points_digit
+        else:
+            points_digit = None
+
+        bx, by, bw2, bh2 = badge_box_local
+        result["points_box"] = (px + bx, py + by, bw2, bh2)
+
+    # 4) Slash / icône droite / ligne du bas
+    slash_box_local = _find_slash_box(panel_zone)
+    if slash_box_local is not None:
+        result["has_slash"] = True
+        result["slash_box"] = _offset_box(slash_box_local, px, py)
+
+    right_box_local = _find_right_icon_box(panel_zone)
+    if right_box_local is not None:
+        result["has_right_icon"] = True
+        result["right_icon_box"] = _offset_box(right_box_local, px, py)
+
+    line_box_local = _find_bottom_line_box(panel_zone)
+    if line_box_local is not None:
+        result["has_bottom_line"] = True
+        result["bottom_line_box"] = _offset_box(line_box_local, px, py)
+
+    # 5) Famille de layout
+    if points_digit is not None and not result["has_slash"] and not result["has_right_icon"]:
+        layout = "NUMBER_ONLY"
+    elif points_digit is not None and result["has_slash"] and result["has_right_icon"] and result["has_bottom_line"]:
+        layout = "NUMBER_ICON_LINE"
+    elif points_digit is not None and result["has_slash"] and result["has_right_icon"]:
+        layout = "NUMBER_ICON"
+    else:
+        layout = "BLACK_PANEL"
+
+    result["layout"] = layout
+    result["points"] = points_digit
+    result["raw_points"] = raw_points_digit
+    result["points_score"] = float(points_score)
+    result["points_gap"] = float(points_gap)
+
+    return result
+
+    
 def compute_signature(img):
     rois = []
 
@@ -829,48 +1314,88 @@ def compute_signature(img):
     })
 
     bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
+    bottom_layout = analyze_bottom_layout(bottom_zone)
 
-    # POINTS BADGE AUTO-DETECTED
-    badge_crop, badge_box = find_points_badge(bottom_zone)
-
-    raw_points_digit = None
-    points_digit = None
-    points_score = 0.0
-    points_gap = 0.0
-
-    if badge_crop is not None:
-        bx, by, bw2, bh2 = badge_box
-
+    # ROI debug du layout
+    panel_box = bottom_layout.get("panel_box")
+    if panel_box is not None:
+        x, y, bw2, bh2 = panel_box
         rois.append({
-            "type": "POINTS_BADGE",
-            "x": bottom_x1 + bx,
-            "y": bottom_y1 + by,
+            "type": "BOTTOM_PANEL",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
             "w": bw2,
             "h": bh2
         })
 
+    special_box = bottom_layout.get("special_box")
+    if special_box is not None:
+        x, y, bw2, bh2 = special_box
+        rois.append({
+            "type": "BOTTOM_SPECIAL",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
+            "w": bw2,
+            "h": bh2
+        })
+
+    points_box = bottom_layout.get("points_box")
+    if points_box is not None:
+        x, y, bw2, bh2 = points_box
+        rois.append({
+            "type": "POINTS_BADGE",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
+            "w": bw2,
+            "h": bh2
+        })
+
+    slash_box = bottom_layout.get("slash_box")
+    if slash_box is not None:
+        x, y, bw2, bh2 = slash_box
+        rois.append({
+            "type": "BOTTOM_SLASH",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
+            "w": bw2,
+            "h": bh2
+        })
+
+    right_box = bottom_layout.get("right_icon_box")
+    if right_box is not None:
+        x, y, bw2, bh2 = right_box
+        rois.append({
+            "type": "BOTTOM_RIGHT_ICON",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
+            "w": bw2,
+            "h": bh2
+        })
+
+    line_box = bottom_layout.get("bottom_line_box")
+    if line_box is not None:
+        x, y, bw2, bh2 = line_box
+        rois.append({
+            "type": "BOTTOM_LINE",
+            "x": bottom_x1 + x,
+            "y": bottom_y1 + y,
+            "w": bw2,
+            "h": bh2
+        })
+
+    # points classiques, gardés pour ne pas casser le reste
+    if points_box is not None:
+        px, py, pw2, ph2 = points_box
+        badge_crop = bottom_zone[py:py + ph2, px:px + pw2]
         gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
-
-        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
-        points_digit = raw_points_digit
-
-             # Validation plus intelligente :
-        # - si le score est très bon, on garde le chiffre
-        # - si le score est moyen, il faut aussi un vrai écart avec le 2e
-        if points_score >= 0.80:
-            points_digit = raw_points_digit
-        elif points_score >= 0.68 and points_gap >= 0.03:
-            points_digit = raw_points_digit
-        else:
-            points_digit = None
 
         points_sig = {
             "mean": float(np.mean(gray_badge)),
             "std": float(np.std(gray_badge)),
-            "digit": points_digit,
-            "raw_digit": raw_points_digit,
-            "score": float(points_score),
-            "gap": float(points_gap),
+            "digit": bottom_layout.get("points"),
+            "raw_digit": bottom_layout.get("raw_points"),
+            "score": float(bottom_layout.get("points_score", 0.0)),
+            "gap": float(bottom_layout.get("points_gap", 0.0)),
             "found": True
         }
     else:
@@ -883,6 +1408,19 @@ def compute_signature(img):
             "gap": 0.0,
             "found": False
         }
+
+    # nouveau bloc debug
+    bottom_layout_sig = {
+        "layout": bottom_layout.get("layout"),
+        "points": bottom_layout.get("points"),
+        "raw_points": bottom_layout.get("raw_points"),
+        "points_score": float(bottom_layout.get("points_score", 0.0)),
+        "points_gap": float(bottom_layout.get("points_gap", 0.0)),
+        "has_slash": bool(bottom_layout.get("has_slash", False)),
+        "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
+        "has_bottom_line": bool(bottom_layout.get("has_bottom_line", False)),
+        "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False))
+    }
 
     # GLOBAL
     rois.append({
@@ -900,10 +1438,11 @@ def compute_signature(img):
         "symbol": symbol_sig,
         "points": points_sig,
         "bottom": bottom_sig,
+        "bottom_layout": bottom_layout_sig,
         "global": global_sig
     }, rois
-
-
+    
+    
 def compute_signature_safe(img):
     if img is None or img.size == 0:
         return None, []
