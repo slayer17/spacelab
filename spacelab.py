@@ -7,13 +7,7 @@ from flask import Flask, request, jsonify, send_from_directory
 
 import base64
 
-from bottom import (
-    extract_bottom_roi_from_full_card,
-    analyze_bottom,
-    _normalize_badge,
-    _extract_digit_mask,
-    build_overlay,
-)
+import bottom
 app = Flask(__name__)
 def _img_to_base64(img):
     if img is None or img.size == 0:
