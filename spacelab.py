@@ -1121,7 +1121,10 @@ def _find_bottom_line_box(panel_zone):
 
 def _find_points_badge_in_black_panel(panel_zone):
     """
-    Cherche le badge blanc du chiffre dans un panneau noir classique.
+    Version simple et robuste :
+    on ne cherche plus le badge avec des contours.
+    On prend directement la zone gauche du panneau noir,
+    car le chiffre est toujours là sur les layouts noirs classiques.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -1130,122 +1133,23 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    x1 = 0
-    x2 = max(1, int(pw * 0.44))
+    # ROI fixe dans le panneau noir
+    # gauche = badge points
+    x = int(pw * 0.02)
+    y = int(ph * 0.10)
+    w = int(pw * 0.36)
+    h = int(ph * 0.78)
 
-    zone = panel_zone[:, x1:x2]
-    if zone is None or zone.size == 0:
-        return None, None
+    x, y, w, h = _clip_box(x, y, w, h, pw, ph)
 
-    mask, gray = _make_bottom_light_mask(zone)
-    if mask is None:
-        return None, None
-
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
-        return None, None
-
-    zh, zw = zone.shape[:2]
-    candidates = []
-
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-
-        if area <= 0:
-            continue
-
-        area_ratio = area / float(max(zw * zh, 1))
-
-        if area_ratio < 0.04:
-            continue
-
-        if area_ratio > 0.70:
-            continue
-
-        if bw < zw * 0.22 or bw > zw * 0.98:
-            continue
-
-        if bh < zh * 0.35 or bh > zh * 0.98:
-            continue
-
-        ratio = bw / float(max(bh, 1))
-        if ratio < 0.60 or ratio > 1.40:
-            continue
-
-        if x > zw * 0.18:
-            continue
-
-        box_mask = mask[y:y + bh, x:x + bw]
-        if box_mask is None or box_mask.size == 0:
-            continue
-
-        white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
-        if white_ratio < 0.22:
-            continue
-
-        crop_gray = gray[y:y + bh, x:x + bw]
-        if crop_gray is None or crop_gray.size == 0:
-            continue
-
-        dark_ratio = float(np.count_nonzero(crop_gray < 130)) / float(crop_gray.size)
-        if dark_ratio < 0.07:
-            continue
-
-        cx = x + (bw / 2.0)
-        cy = y + (bh / 2.0)
-
-        left_score = 1.0 - min(cx / float(max(zw * 0.60, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.40, 1)), 1.0)
-        square_score = 1.0 - min(abs(ratio - 1.0) / 0.40, 1.0)
-
-        target_area = 0.28
-        area_score = 1.0 - min(abs(area_ratio - target_area) / 0.25, 1.0)
-
-        score = (
-            left_score * 2.5 +
-            center_y_score * 1.5 +
-            square_score * 2.5 +
-            area_score * 2.0 +
-            white_ratio * 1.5 +
-            dark_ratio * 1.0
-        )
-
-        candidates.append((score, x, y, bw, bh))
-
-    if not candidates:
-        return None, None
-
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    _, x, y, bw, bh = candidates[0]
-
-    pad_x = int(bw * 0.06)
-    pad_y = int(bh * 0.06)
-
-    x = x - pad_x
-    y = y - pad_y
-    bw = bw + (2 * pad_x)
-    bh = bh + (2 * pad_y)
-
-    x, y, bw, bh = _clip_box(x, y, bw, bh, zw, zh)
-
-    crop = zone[y:y + bh, x:x + bw]
+    crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
 
-    final_x = x1 + x
-    final_y = y
-    final_w = bw
-    final_h = bh
-
-    return crop, (final_x, final_y, final_w, final_h)
-
-
+    return crop, (x, y, w, h)
+    
+    
+    
 def analyze_bottom_layout(bottom_zone):
     """
     Analyse le ROI complet du bas.
@@ -1289,12 +1193,26 @@ def analyze_bottom_layout(bottom_zone):
 
     result["panel_box"] = panel_box
 
-    badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
+      badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
 
     raw_points_digit = None
     points_digit = None
     points_score = 0.0
     points_gap = 0.0
+
+    if badge_crop is not None and badge_box_local is not None:
+        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
+
+        # Validation un peu plus souple pour relancer la chaîne
+        if points_score >= 0.72:
+            points_digit = raw_points_digit
+        elif points_score >= 0.60 and points_gap >= 0.02:
+            points_digit = raw_points_digit
+        else:
+            points_digit = None
+
+        bx, by, bw2, bh2 = badge_box_local
+        result["points_box"] = (px + bx, py + by, bw2, bh2)
 
     if badge_crop is not None and badge_box_local is not None:
         raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
