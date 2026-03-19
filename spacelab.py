@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from flask import Flask, request, jsonify, send_from_directory
-from flask import Flask, request, jsonify, send_from_directory
+
 import base64
 
 from bottom import (
