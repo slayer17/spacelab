@@ -1852,8 +1852,7 @@ def build_signatures():
 # RUN
 # =====================================================
 
-if __name__ == "__main__":
-    @app.route("/bottom-test", methods=["GET", "POST"])
+@app.route("/bottom-test", methods=["GET", "POST"])
 def bottom_test():
     if request.method == "GET":
         return """
@@ -1892,7 +1891,6 @@ def bottom_test():
     if img is None:
         return "Image invalide", 400
 
-    # On utilise bottom.py
     full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
     result = analyze_bottom(bottom_roi, DIGITS_DIR)
 
@@ -1943,4 +1941,7 @@ def bottom_test():
     </body>
     </html>
     """
+
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
