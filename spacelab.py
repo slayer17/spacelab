@@ -484,69 +484,7 @@ def detect_digit(zone):
 
     return int(best_digit), float(best_score), gap
 
-def _digit_score(a, b):
-    """
-    Compare deux badges complets.
-    Plus proche de 1 = meilleur.
-    """
-    if a is None or b is None:
-        return 0.0
 
-    # Différence pixel à pixel normalisée
-    diff = cv2.absdiff(a, b)
-    diff_score = 1.0 - (float(np.mean(diff)) / 255.0)
-
-    # Un peu de structure
-    blur_a = cv2.GaussianBlur(a, (3, 3), 0)
-    blur_b = cv2.GaussianBlur(b, (3, 3), 0)
-    diff2 = cv2.absdiff(blur_a, blur_b)
-    structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
-
-    return float((diff_score * 0.65) + (structure_score * 0.35))
-
-
-def detect_digit(zone):
-    """
-    Détecte le badge points de 1 à 10
-    en comparant directement avec les PNG du dossier digits.
-    """
-    if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
-
-    scan_badge = _normalize_digit_mask(zone)
-    if scan_badge is None:
-        return None, 0.0, 0.0
-
-    scores = []
-
-    for n in range(1, 11):
-        path = os.path.join(DIGITS_DIR, f"{n}.png")
-        tpl = cv2.imread(path)
-
-        if tpl is None or tpl.size == 0:
-            continue
-
-        tpl_badge = _normalize_digit_mask(tpl)
-        if tpl_badge is None:
-            continue
-
-        score = _digit_score(scan_badge, tpl_badge)
-        scores.append((n, float(score)))
-
-    if not scores:
-        return None, 0.0, 0.0
-
-    scores.sort(key=lambda x: x[1], reverse=True)
-
-    best_digit, best_score = scores[0]
-
-    if len(scores) >= 2:
-        second_score = scores[1][1]
-        gap = float(best_score - second_score)
-    else:
-        gap = float(best_score)
-
-    return int(best_digit), float(best_score), gap
     
 # =====================================================
 # COLOR DETECTION
@@ -916,11 +854,14 @@ def compute_signature(img):
         raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
         points_digit = raw_points_digit
 
-        # Validation stricte :
-        # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-        if points_score < 0.60:
-            points_digit = None
-        elif points_gap < 0.05:
+             # Validation plus intelligente :
+        # - si le score est très bon, on garde le chiffre
+        # - si le score est moyen, il faut aussi un vrai écart avec le 2e
+        if points_score >= 0.80:
+            points_digit = raw_points_digit
+        elif points_score >= 0.68 and points_gap >= 0.03:
+            points_digit = raw_points_digit
+        else:
             points_digit = None
 
         points_sig = {
