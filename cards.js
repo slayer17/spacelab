@@ -2363,7 +2363,7 @@ window.CARDS = [
     "id": "VERT_15",
     "couleur": "VERT",
     "symbol": "ASTRONAUTE",
-    "points": 1,
+    "points": 3,
     "cible": "ASTRONAUTE",
     "portee": "LIGNE",
     "effet": false,
