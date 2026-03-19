@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 from pathlib import Path
 
 import cv2
@@ -98,7 +97,6 @@ def _normalize_badge(img_or_mask, target=96):
         return None
 
     canvas = np.zeros((target, target), dtype=np.uint8)
-
     ch, cw = crop.shape[:2]
     if ch == 0 or cw == 0:
         return None
@@ -117,8 +115,6 @@ def _normalize_badge(img_or_mask, target=96):
 def _extract_digit_mask(img_or_mask, target=64):
     """
     Extrait seulement la forme noire du chiffre.
-    Cette fonction est volontairement isolée pour pouvoir être modifiée
-    sans toucher au reste du projet.
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -205,6 +201,7 @@ def _extract_digit_mask(img_or_mask, target=64):
 def _binary_mask_score(a, b):
     if a is None or b is None:
         return 0.0
+
     aa = (a > 0).astype(np.uint8)
     bb = (b > 0).astype(np.uint8)
 
@@ -242,21 +239,11 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
 
 def detect_digit(zone, digits_dir):
     if zone is None or zone.size == 0:
-        return {
-            "digit": None,
-            "score": 0.0,
-            "gap": 0.0,
-            "scores": []
-        }
+        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
 
     scan_badge = _normalize_badge(zone)
     if scan_badge is None:
-        return {
-            "digit": None,
-            "score": 0.0,
-            "gap": 0.0,
-            "scores": []
-        }
+        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
 
     scan_digit = _extract_digit_mask(zone)
     scores = []
@@ -276,12 +263,7 @@ def detect_digit(zone, digits_dir):
         scores.append({"digit": n, "score": float(score)})
 
     if not scores:
-        return {
-            "digit": None,
-            "score": 0.0,
-            "gap": 0.0,
-            "scores": []
-        }
+        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
 
     scores = sorted(scores, key=lambda x: x["score"], reverse=True)
     best = scores[0]
@@ -291,7 +273,7 @@ def detect_digit(zone, digits_dir):
         "digit": int(best["digit"]),
         "score": float(best["score"]),
         "gap": float(best["score"] - second["score"]),
-        "scores": scores
+        "scores": scores,
     }
 
 
@@ -435,13 +417,7 @@ def _find_special_white_panel_box(bottom_zone):
 
 def _find_points_badge_in_black_panel(panel_zone):
     """
-    Cherche la zone du badge points dans un panneau noir classique.
-
-    Nouvelle version :
-    - crop plus large
-    - plus haut
-    - presque toute la hauteur
-    - pour ne plus couper le badge
+    Crop fixe large sur la zone gauche du panneau noir.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -450,14 +426,12 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    # Zone gauche plus large qu'avant
     x = int(pw * 0.00)
     y = int(ph * 0.04)
     w = int(pw * 0.46)
     h = int(ph * 0.92)
 
     x, y, w, h = _clip_box(x, y, w, h, pw, ph)
-
     crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
@@ -518,12 +492,7 @@ def _find_slash_box(panel_zone):
 
 def _find_right_icon_box(panel_zone):
     """
-    Cherche la grande icône blanche à droite.
-
-    Nouvelle version :
-    - zone plus à droite
-    - filtres plus stricts
-    - évite de prendre le bord décoratif
+    Plus strict pour éviter les faux positifs.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None
@@ -533,7 +502,6 @@ def _find_right_icon_box(panel_zone):
     x2 = pw
     y1 = int(ph * 0.08)
     y2 = int(ph * 0.72)
-
     zone = panel_zone[y1:y2, x1:x2]
     if zone is None or zone.size == 0:
         return None
@@ -543,7 +511,6 @@ def _find_right_icon_box(panel_zone):
         return None
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     candidates = []
     zh, zw = zone.shape[:2]
 
@@ -554,21 +521,16 @@ def _find_right_icon_box(panel_zone):
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
         if area_ratio < 0.08:
             continue
-
         if bw < zw * 0.22:
             continue
-
         if bh < zh * 0.28:
             continue
 
         ratio = bw / float(max(bh, 1))
         if ratio < 0.55 or ratio > 1.50:
             continue
-
-        # On évite les éléments trop collés au bord droit du décor
         if (x + bw) >= (zw - 1):
             continue
 
@@ -580,16 +542,12 @@ def _find_right_icon_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
+    return x + x1, y + y1, bw, bh
 
-    return (x + x1, y + y1, bw, bh)
 
 def _find_bottom_line_box(panel_zone):
     """
-    Cherche la ligne / double flèche en bas à droite.
-
-    Nouvelle version :
-    - plus stricte
-    - évite de prendre les bords du panneau
+    Plus strict pour éviter les faux positifs.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None
@@ -599,7 +557,6 @@ def _find_bottom_line_box(panel_zone):
     x2 = pw
     y1 = int(ph * 0.68)
     y2 = ph
-
     zone = panel_zone[y1:y2, x1:x2]
     if zone is None or zone.size == 0:
         return None
@@ -609,7 +566,6 @@ def _find_bottom_line_box(panel_zone):
         return None
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     candidates = []
     zh, zw = zone.shape[:2]
 
@@ -620,21 +576,16 @@ def _find_bottom_line_box(panel_zone):
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
         if area_ratio < 0.015:
             continue
-
         if bw < zw * 0.24:
             continue
-
         if bh > zh * 0.32:
             continue
 
         ratio = bw / float(max(bh, 1))
         if ratio < 2.4:
             continue
-
-        # On évite les traits collés au bas ou au bord
         if (y + bh) >= (zh - 1):
             continue
 
@@ -646,8 +597,8 @@ def _find_bottom_line_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
+    return x + x1, y + y1, bw, bh
 
-    return (x + x1, y + y1, bw, bh)
 
 def analyze_bottom(bottom_zone, digits_dir):
     result = {
@@ -739,40 +690,25 @@ def draw_box(img, box, color, label):
         return
     x, y, w, h = box
     cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-    cv2.putText(
-        img,
-        label,
-        (x, max(15, y - 6)),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        color,
-        1,
-        cv2.LINE_AA,
-    )
+    cv2.putText(img, label, (x, max(15, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
 
 def build_overlay(full_img, bottom_box, result):
     overlay = full_img.copy()
 
     draw_box(overlay, bottom_box, (255, 0, 255), "BOTTOM")
-
     bx, by, _, _ = bottom_box
 
     if result.get("panel_box") is not None:
         draw_box(overlay, _offset_box(result["panel_box"], bx, by), (255, 255, 255), "PANEL")
-
     if result.get("special_box") is not None:
         draw_box(overlay, _offset_box(result["special_box"], bx, by), (0, 255, 255), "SPECIAL")
-
     if result.get("points_box") is not None:
         draw_box(overlay, _offset_box(result["points_box"], bx, by), (255, 255, 255), "POINTS")
-
     if result.get("slash_box") is not None:
         draw_box(overlay, _offset_box(result["slash_box"], bx, by), (220, 220, 220), "SLASH")
-
     if result.get("right_icon_box") is not None:
         draw_box(overlay, _offset_box(result["right_icon_box"], bx, by), (0, 255, 255), "ICON")
-
     if result.get("bottom_line_box") is not None:
         draw_box(overlay, _offset_box(result["bottom_line_box"], bx, by), (0, 255, 0), "LINE")
 
@@ -796,7 +732,6 @@ def main():
         raise FileNotFoundError(f"Image introuvable : {image_path}")
 
     digits_dir = Path(args.digits_dir) if args.digits_dir else (Path(__file__).resolve().parent / "digits")
-
     if not digits_dir.exists():
         raise FileNotFoundError(
             f"Dossier digits introuvable : {digits_dir}\n"
@@ -808,9 +743,7 @@ def main():
         raise RuntimeError(f"Impossible de lire l'image : {image_path}")
 
     if args.mode == "full":
-        full_img, bottom_roi, bottom_box = bottom.extract_bottom_roi_from_full_card(img)
-result = bottom.analyze_bottom(bottom_roi, DIGITS_DIR)
-overlay = bottom.build_overlay(full_img, bottom_box, result)
+        full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
     else:
         full_img = img.copy()
         bottom_roi = img.copy()
@@ -834,8 +767,7 @@ overlay = bottom.build_overlay(full_img, bottom_box, result)
         points_crop = bottom_roi[y:y + h, x:x + w]
         _save_image(out_dir / "04_points_crop.png", points_crop)
 
-        badge_norm = bottom._normalize_badge(points_crop)
-        digit_mask = bottom._extract_digit_mask(points_crop)
+        badge_norm = _normalize_badge(points_crop)
         if badge_norm is not None:
             _save_image(out_dir / "05_points_badge_norm.png", badge_norm)
 
