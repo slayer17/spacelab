@@ -749,7 +749,7 @@ def find_points_badge(bottom_zone):
     final_h = bh
 
     return crop, (final_x, final_y, final_w, final_h)
-    
+
 def _offset_box(box, dx, dy):
     if box is None:
         return None
@@ -1122,9 +1122,7 @@ def _find_bottom_line_box(panel_zone):
 def _find_points_badge_in_black_panel(panel_zone):
     """
     Version simple et robuste :
-    on ne cherche plus le badge avec des contours.
-    On prend directement la zone gauche du panneau noir,
-    car le chiffre est toujours là sur les layouts noirs classiques.
+    on prend directement la zone gauche du panneau noir.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -1133,8 +1131,6 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    # ROI fixe dans le panneau noir
-    # gauche = badge points
     x = int(pw * 0.02)
     y = int(ph * 0.10)
     w = int(pw * 0.36)
@@ -1147,9 +1143,8 @@ def _find_points_badge_in_black_panel(panel_zone):
         return None, None
 
     return crop, (x, y, w, h)
-    
-    
-    
+
+
 def analyze_bottom_layout(bottom_zone):
     """
     Analyse le ROI complet du bas.
@@ -1193,7 +1188,7 @@ def analyze_bottom_layout(bottom_zone):
 
     result["panel_box"] = panel_box
 
-      badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
+    badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
 
     raw_points_digit = None
     points_digit = None
@@ -1203,23 +1198,9 @@ def analyze_bottom_layout(bottom_zone):
     if badge_crop is not None and badge_box_local is not None:
         raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
 
-        # Validation un peu plus souple pour relancer la chaîne
         if points_score >= 0.72:
             points_digit = raw_points_digit
         elif points_score >= 0.60 and points_gap >= 0.02:
-            points_digit = raw_points_digit
-        else:
-            points_digit = None
-
-        bx, by, bw2, bh2 = badge_box_local
-        result["points_box"] = (px + bx, py + by, bw2, bh2)
-
-    if badge_crop is not None and badge_box_local is not None:
-        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
-
-        if points_score >= 0.80:
-            points_digit = raw_points_digit
-        elif points_score >= 0.68 and points_gap >= 0.03:
             points_digit = raw_points_digit
         else:
             points_digit = None
@@ -1258,7 +1239,8 @@ def analyze_bottom_layout(bottom_zone):
     result["points_gap"] = float(points_gap)
 
     return result
-    
+
+
 def compute_signature(img):
     rois = []
 
@@ -1341,7 +1323,6 @@ def compute_signature(img):
     bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
     bottom_layout = analyze_bottom_layout(bottom_zone)
 
-    # ROI debug du layout
     panel_box = bottom_layout.get("panel_box")
     if panel_box is not None:
         x, y, bw2, bh2 = panel_box
@@ -1408,7 +1389,6 @@ def compute_signature(img):
             "h": bh2
         })
 
-    # points classiques, gardés pour ne pas casser le reste
     if points_box is not None:
         px, py, pw2, ph2 = points_box
         badge_crop = bottom_zone[py:py + ph2, px:px + pw2]
@@ -1434,7 +1414,6 @@ def compute_signature(img):
             "found": False
         }
 
-    # nouveau bloc debug
     bottom_layout_sig = {
         "layout": bottom_layout.get("layout"),
         "points": bottom_layout.get("points"),
@@ -1466,8 +1445,8 @@ def compute_signature(img):
         "bottom_layout": bottom_layout_sig,
         "global": global_sig
     }, rois
-    
-    
+
+
 def compute_signature_safe(img):
     if img is None or img.size == 0:
         return None, []
