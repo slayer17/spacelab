@@ -808,7 +808,9 @@ def main():
         raise RuntimeError(f"Impossible de lire l'image : {image_path}")
 
     if args.mode == "full":
-        full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
+        full_img, bottom_roi, bottom_box = bottom.extract_bottom_roi_from_full_card(img)
+result = bottom.analyze_bottom(bottom_roi, DIGITS_DIR)
+overlay = bottom.build_overlay(full_img, bottom_box, result)
     else:
         full_img = img.copy()
         bottom_roi = img.copy()
@@ -832,7 +834,8 @@ def main():
         points_crop = bottom_roi[y:y + h, x:x + w]
         _save_image(out_dir / "04_points_crop.png", points_crop)
 
-        badge_norm = _normalize_badge(points_crop)
+        badge_norm = bottom._normalize_badge(points_crop)
+        digit_mask = bottom._extract_digit_mask(points_crop)
         if badge_norm is not None:
             _save_image(out_dir / "05_points_badge_norm.png", badge_norm)
 
