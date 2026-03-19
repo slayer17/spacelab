@@ -618,27 +618,17 @@ def compute_signature(img):
             "h": bh2
         })
 
-    gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
+        gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
 
         raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
         points_digit = raw_points_digit
 
-        # CORRECTION : Alignez bien ces lignes avec "points_digit = ..."
+        # Validation stricte :
+        # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
         if points_score < 0.60:
             points_digit = None
         elif points_gap < 0.05:
             points_digit = None
-
-        points_sig = {
-            "mean": float(np.mean(gray_badge)),
-       
-
-       # Validation stricte :
-        # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-   if points_score < 0.60:
-    points_digit = None
-   elif points_gap < 0.05:
-    points_digit = None
 
         points_sig = {
             "mean": float(np.mean(gray_badge)),
