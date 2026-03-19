@@ -1853,4 +1853,94 @@ def build_signatures():
 # =====================================================
 
 if __name__ == "__main__":
+    @app.route("/bottom-test", methods=["GET", "POST"])
+def bottom_test():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Bottom Test</title>
+        </head>
+        <body style="font-family:Arial,sans-serif; padding:20px;">
+          <h1>Test du bas de carte</h1>
+          <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
+
+          <form method="post" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*" required />
+            <button type="submit">Analyser</button>
+          </form>
+        </body>
+        </html>
+        """
+
+    if "image" not in request.files:
+        return "Aucun fichier envoyé", 400
+
+    file = request.files["image"]
+
+    if not file or file.filename == "":
+        return "Fichier vide", 400
+
+    data = file.read()
+    if not data:
+        return "Impossible de lire le fichier", 400
+
+    np_arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    if img is None:
+        return "Image invalide", 400
+
+    # On utilise bottom.py
+    full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
+    result = analyze_bottom(bottom_roi, DIGITS_DIR)
+
+    overlay = build_overlay(full_img, bottom_box, result)
+
+    points_crop = None
+    badge_norm = None
+    digit_mask = None
+
+    points_box = result.get("points_box")
+    if points_box is not None:
+        x, y, w, h = points_box
+        points_crop = bottom_roi[y:y + h, x:x + w]
+
+        if points_crop is not None and points_crop.size != 0:
+            badge_norm = _normalize_badge(points_crop)
+            digit_mask = _extract_digit_mask(points_crop)
+
+    full_b64 = _img_to_base64(full_img)
+    bottom_b64 = _img_to_base64(bottom_roi)
+    overlay_b64 = _img_to_base64(overlay)
+    points_b64 = _img_to_base64(points_crop) if points_crop is not None else None
+    badge_b64 = _img_to_base64(badge_norm) if badge_norm is not None else None
+    digit_b64 = _img_to_base64(digit_mask) if digit_mask is not None else None
+
+    pretty_json = json.dumps(result, indent=2, ensure_ascii=False)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Bottom Test</title>
+    </head>
+    <body style="font-family:Arial,sans-serif; padding:20px;">
+      <h1>Résultat du test du bas</h1>
+
+      <p><a href="/bottom-test">← Revenir au formulaire</a></p>
+
+      <h2>Résultat JSON</h2>
+      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
+
+      {_html_img_block("Image complète", full_b64)}
+      {_html_img_block("ROI du bas", bottom_b64)}
+      {_html_img_block("Overlay debug", overlay_b64)}
+      {_html_img_block("Crop points", points_b64)}
+      {_html_img_block("Badge normalisé", badge_b64)}
+      {_html_img_block("Masque du chiffre", digit_b64)}
+    </body>
+    </html>
+    """
     app.run(host="0.0.0.0", port=8080, debug=True)
