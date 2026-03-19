@@ -301,8 +301,10 @@ def _extract_digit_only_mask(img_or_mask):
     Extrait seulement la forme noire du chiffre
     à l'intérieur du badge blanc.
 
-    C'est cette partie qui aide vraiment à distinguer
-    1 / 2 / 3 / etc.
+    Nouvelle logique :
+    - on trouve le vrai badge blanc
+    - on remplit sa forme
+    - puis on cherche les zones sombres à l'intérieur
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -315,50 +317,90 @@ def _extract_digit_only_mask(img_or_mask):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    # On isole d'abord le badge blanc
-    _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    # 1) Trouver les zones blanches du badge
+    _, white_mask = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
     white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
     white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
 
-    ys, xs = np.where(white_mask > 0)
-    if len(xs) == 0 or len(ys) == 0:
+    contours, _ = cv2.findContours(
+        white_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
         return None
 
-    x1, x2 = xs.min(), xs.max()
-    y1, y2 = ys.min(), ys.max()
+    # On prend le plus gros contour blanc = le badge
+    best = max(contours, key=cv2.contourArea)
 
-    crop_gray = gray[y1:y2 + 1, x1:x2 + 1]
-    crop_white = white_mask[y1:y2 + 1, x1:x2 + 1]
+    if cv2.contourArea(best) < max(20, white_mask.shape[0] * white_mask.shape[1] * 0.05):
+        return None
+
+    badge_fill = np.zeros_like(white_mask)
+    cv2.drawContours(badge_fill, [best], -1, 255, thickness=-1)
+
+    x, y, w, h = cv2.boundingRect(best)
+
+    crop_gray = gray[y:y + h, x:x + w]
+    crop_badge = badge_fill[y:y + h, x:x + w]
 
     if crop_gray is None or crop_gray.size == 0:
         return None
 
-    # On reste à l'intérieur du badge
-    inner_white = cv2.erode(crop_white, np.ones((7, 7), np.uint8), iterations=1)
-
-    # On cherche les zones sombres (le chiffre)
-    _, dark_inv = cv2.threshold(
-        crop_gray,
-        0,
-        255,
-        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    # Petite érosion pour rester un peu à l'intérieur du badge
+    inner_badge = cv2.erode(
+        crop_badge,
+        np.ones((3, 3), np.uint8),
+        iterations=1
     )
 
-    digit_mask = cv2.bitwise_and(dark_inv, inner_white)
+    badge_pixels = crop_gray[inner_badge > 0]
+    if badge_pixels.size == 0:
+        return None
+
+    # On cherche les pixels sombres du chiffre
+    # avec un seuil relatif au contenu du badge
+    dark_threshold = np.percentile(badge_pixels, 45)
+
+    dark_mask = (crop_gray < dark_threshold).astype(np.uint8) * 255
+    digit_mask = cv2.bitwise_and(dark_mask, inner_badge)
 
     digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_OPEN, kernel)
     digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_CLOSE, kernel)
 
-    ys, xs = np.where(digit_mask > 0)
+    contours, _ = cv2.findContours(
+        digit_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return None
+
+    min_area = max(6, digit_mask.shape[0] * digit_mask.shape[1] * 0.01)
+
+    kept = []
+    for c in contours:
+        if cv2.contourArea(c) >= min_area:
+            kept.append(c)
+
+    if not kept:
+        return None
+
+    clean_mask = np.zeros_like(digit_mask)
+    cv2.drawContours(clean_mask, kept, -1, 255, thickness=-1)
+
+    ys, xs = np.where(clean_mask > 0)
     if len(xs) == 0 or len(ys) == 0:
         return None
 
     x1, x2 = xs.min(), xs.max()
     y1, y2 = ys.min(), ys.max()
 
-    crop_digit = digit_mask[y1:y2 + 1, x1:x2 + 1]
+    crop_digit = clean_mask[y1:y2 + 1, x1:x2 + 1]
     if crop_digit is None or crop_digit.size == 0:
         return None
 
@@ -373,7 +415,11 @@ def _extract_digit_only_mask(img_or_mask):
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
 
-    resized = cv2.resize(crop_digit, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    resized = cv2.resize(
+        crop_digit,
+        (new_w, new_h),
+        interpolation=cv2.INTER_NEAREST
+    )
 
     x = (target - new_w) // 2
     y = (target - new_h) // 2
