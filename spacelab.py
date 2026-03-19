@@ -831,6 +831,11 @@ def _find_black_panel_box(bottom_zone):
     """
     Cherche le grand panneau noir du bas
     pour les cartes classiques.
+
+    Important :
+    si la détection par contours échoue,
+    on renvoie un fallback fixe raisonnable
+    pour ne pas perdre les cas simples comme BLEU_1.
     """
     if bottom_zone is None or bottom_zone.size == 0:
         return None
@@ -849,52 +854,55 @@ def _find_black_panel_box(bottom_zone):
         cv2.CHAIN_APPROX_SIMPLE
     )
 
-    if not contours:
-        return None
-
     h, w = gray.shape[:2]
     image_area = float(max(w * h, 1))
     candidates = []
 
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
+    if contours:
+        for c in contours:
+            x, y, bw, bh = cv2.boundingRect(c)
+            area = cv2.contourArea(c)
 
-        if area <= 0:
-            continue
+            if area <= 0:
+                continue
 
-        area_ratio = area / image_area
+            area_ratio = area / image_area
 
-        if area_ratio < 0.18:
-            continue
+            if area_ratio < 0.18:
+                continue
 
-        if bw < w * 0.45:
-            continue
+            if bw < w * 0.45:
+                continue
 
-        if bh < h * 0.45:
-            continue
+            if bh < h * 0.45:
+                continue
 
-        if x > w * 0.20:
-            continue
+            if x > w * 0.20:
+                continue
 
-        ratio = bw / float(max(bh, 1))
-        if ratio < 1.2 or ratio > 4.8:
-            continue
+            ratio = bw / float(max(bh, 1))
+            if ratio < 1.2 or ratio > 4.8:
+                continue
 
-        cx = x + (bw / 2.0)
-        left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
-        size_score = min(area_ratio / 0.45, 1.0)
+            cx = x + (bw / 2.0)
+            left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
+            size_score = min(area_ratio / 0.45, 1.0)
 
-        score = (size_score * 3.0) + (left_score * 1.0)
-        candidates.append((score, x, y, bw, bh))
+            score = (size_score * 3.0) + (left_score * 1.0)
+            candidates.append((score, x, y, bw, bh))
 
-    if not candidates:
-        return None
+    if candidates:
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        _, x, y, bw, bh = candidates[0]
+        return _clip_box(x, y, bw, bh, w, h)
 
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    _, x, y, bw, bh = candidates[0]
+    # Fallback simple si aucun contour n'est assez bon
+    fx = int(w * 0.02)
+    fy = int(h * 0.08)
+    fw = int(w * 0.50)
+    fh = int(h * 0.84)
 
-    return _clip_box(x, y, bw, bh, w, h)
+    return _clip_box(fx, fy, fw, fh, w, h)
 
 
 def _find_special_white_panel_box(bottom_zone):
