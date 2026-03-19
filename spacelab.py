@@ -440,100 +440,161 @@ def _clip_box(x, y, w, h, max_w, max_h):
     return x, y, w, h
 
 
-
 def find_points_badge(bottom_zone):
-    
+    """
+    Cherche automatiquement le badge blanc des points
+    dans la zone du bas.
+
+    Nouvelle logique :
+    - on ne cherche plus dans tout le bottom sans méthode
+    - on prend une grande zone de recherche à gauche
+    - on détecte le blanc de 2 façons :
+        1) blanc en HSV
+        2) zone claire en niveaux de gris
+    - on garde un candidat plausible :
+        * compact
+        * plutôt carré
+        * pas collé au bord
+        * avec du blanc
+        * avec un peu de noir dedans (le chiffre)
+    """
     if bottom_zone is None or bottom_zone.size == 0:
         return None, None
 
-    gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    # Seuil un peu plus strict pour mieux isoler le badge blanc
-    _, mask = cv2.threshold(blur, 185, 255, cv2.THRESH_BINARY)
-
-    kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
+    h, w = bottom_zone.shape[:2]
+    if h == 0 or w == 0:
         return None, None
 
-    h, w = gray.shape[:2]
-    candidates = []
+    # On reste dans une grande zone à gauche.
+    # Ce n'est PAS un petit ROI fixe du chiffre.
+    search_x1 = 0
+    search_x2 = int(w * 0.58)
 
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
+    search_zone = bottom_zone[:, search_x1:search_x2]
+    if search_zone is None or search_zone.size == 0:
+        return None, None
 
-        # Trop petit = bruit
-        if area < (w * h) * 0.008:
-            continue
+    search_h, search_w = search_zone.shape[:2]
 
-        # Le badge est plutôt compact
-        if bw < w * 0.10 or bw > w * 0.38:
-            continue
+    def collect_candidates(mask):
+        candidates = []
 
-        if bh < h * 0.22 or bh > h * 0.75:
-            continue
-
-        # On veut quelque chose plutôt sur la gauche
-        if x > w * 0.35:
-            continue
-
-        # On ne veut pas une zone trop haute
-        if y < h * 0.20:
-            continue
-
-        ratio = bw / float(max(bh, 1))
-        if ratio < 0.65 or ratio > 1.35:
-            continue
-
-        # On mesure la quantité de blanc dans la bbox
-        box_mask = mask[y:y + bh, x:x + bw]
-        if box_mask is None or box_mask.size == 0:
-            continue
-
-        white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
-
-        # Le badge doit contenir une bonne quantité de blanc
-        if white_ratio < 0.20:
-            continue
-
-        # Centre du candidat
-        cx = x + (bw / 2.0)
-        cy = y + (bh / 2.0)
-
-        # Scores de préférence
-        # plus à gauche = mieux
-        left_score = 1.0 - min(cx / float(max(w * 0.40, 1)), 1.0)
-
-        # plus bas = mieux
-        low_score = min(cy / float(max(h, 1)), 1.0)
-
-        # plus proche du carré = mieux
-        square_score = 1.0 - min(abs(ratio - 1.0) / 0.35, 1.0)
-
-        # taille raisonnable = mieux
-        area_ratio = area / float(max(w * h, 1))
-        size_score = min(area_ratio / 0.08, 1.0)
-
-        # score final
-        score = (
-            left_score * 3.0 +
-            low_score * 3.0 +
-            square_score * 1.5 +
-            white_ratio * 1.5 +
-            size_score * 1.0
+        contours, _ = cv2.findContours(
+            mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
         )
 
-        candidates.append((score, x, y, bw, bh))
+        if not contours:
+            return candidates
+
+        gray_local = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
+
+        for c in contours:
+            x, y, bw, bh = cv2.boundingRect(c)
+            area = cv2.contourArea(c)
+
+            if area <= 0:
+                continue
+
+            area_ratio = area / float(max(search_w * search_h, 1))
+
+            # Trop petit = bruit
+            if area_ratio < 0.015:
+                continue
+
+            # Trop grand = gros morceau de décor / fond
+            if area_ratio > 0.28:
+                continue
+
+            # Taille plausible
+            if bw < search_w * 0.18 or bw > search_w * 0.85:
+                continue
+
+            if bh < search_h * 0.20 or bh > search_h * 0.80:
+                continue
+
+            # Le badge est plutôt compact / carré
+            ratio = bw / float(max(bh, 1))
+            if ratio < 0.65 or ratio > 1.35:
+                continue
+
+            # On rejette les blobs collés au bord du masque
+            if x <= 2 or y <= 2 or (x + bw) >= (search_w - 2) or (y + bh) >= (search_h - 2):
+                continue
+
+            box_mask = mask[y:y + bh, x:x + bw]
+            if box_mask is None or box_mask.size == 0:
+                continue
+
+            white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
+
+            # Il faut assez de blanc
+            if white_ratio < 0.22:
+                continue
+
+            crop_gray = gray_local[y:y + bh, x:x + bw]
+            if crop_gray is None or crop_gray.size == 0:
+                continue
+
+            # Il faut aussi un peu de noir à l'intérieur
+            # sinon on risque de prendre juste une zone claire du décor
+            dark_ratio = float(np.count_nonzero(crop_gray < 120)) / float(crop_gray.size)
+
+            if dark_ratio < 0.12:
+                continue
+
+            # Scores de préférence
+            cx = x + (bw / 2.0)
+
+            # plus à gauche = mieux
+            left_score = 1.0 - min(cx / float(max(search_w, 1)), 1.0)
+
+            # plus proche du carré = mieux
+            square_score = 1.0 - min(abs(ratio - 1.0) / 0.35, 1.0)
+
+            # on préfère une taille moyenne plausible
+            target_area = 0.18
+            area_score = 1.0 - min(abs(area_ratio - target_area) / 0.14, 1.0)
+
+            score = (
+                left_score * 3.0 +
+                square_score * 2.0 +
+                area_score * 2.0 +
+                white_ratio * 1.5 +
+                dark_ratio * 1.0
+            )
+
+            candidates.append((score, x, y, bw, bh))
+
+        return candidates
+
+    # -------------------------------------------------
+    # Masque 1 : blanc en HSV
+    # Très utile pour trouver le badge blanc
+    # sans trop confondre avec le décor coloré
+    # -------------------------------------------------
+    hsv = cv2.cvtColor(search_zone, cv2.COLOR_BGR2HSV)
+    white_mask = cv2.inRange(hsv, (0, 0, 145), (180, 95, 255))
+
+    kernel = np.ones((3, 3), np.uint8)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+
+    # -------------------------------------------------
+    # Masque 2 : zone claire en niveaux de gris
+    # Sert de secours si le HSV n'est pas assez bon
+    # -------------------------------------------------
+    gray = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, bright_mask = cv2.threshold(blur, 165, 255, cv2.THRESH_BINARY)
+
+    bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
+    bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_CLOSE, kernel)
+
+    candidates = []
+    candidates.extend(collect_candidates(white_mask))
+    candidates.extend(collect_candidates(bright_mask))
 
     if not candidates:
         return None, None
@@ -542,23 +603,28 @@ def find_points_badge(bottom_zone):
     _, x, y, bw, bh = candidates[0]
 
     # Petite marge autour du badge
-    pad_x = int(bw * 0.12)
-    pad_y = int(bh * 0.12)
+    pad_x = int(bw * 0.08)
+    pad_y = int(bh * 0.08)
 
     x = x - pad_x
     y = y - pad_y
     bw = bw + (2 * pad_x)
     bh = bh + (2 * pad_y)
 
-    x, y, bw, bh = _clip_box(x, y, bw, bh, w, h)
+    x, y, bw, bh = _clip_box(x, y, bw, bh, search_w, search_h)
 
-    crop = bottom_zone[y:y + bh, x:x + bw]
+    crop = search_zone[y:y + bh, x:x + bw]
     if crop is None or crop.size == 0:
         return None, None
 
-    return crop, (x, y, bw, bh)
+    # On convertit la bbox locale de search_zone
+    # vers la bbox locale de bottom_zone
+    final_x = search_x1 + x
+    final_y = y
+    final_w = bw
+    final_h = bh
 
-
+    return crop, (final_x, final_y, final_w, final_h)
 def compute_signature(img):
     rois = []
 
@@ -666,9 +732,9 @@ def compute_signature(img):
 
         # Validation stricte :
         # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-        if points_score < 0.45:
+        if points_score < 0.60:
             points_digit = None
-        elif points_gap < 0.02:
+        elif points_gap < 0.05:
             points_digit = None
 
         points_sig = {
