@@ -915,7 +915,6 @@ def _find_special_white_panel_box(bottom_zone):
     if not candidates:
         return None
 
-    # Le format spécial ne doit pas être trop sombre
     if dark_ratio > 0.22:
         return None
 
@@ -1120,18 +1119,136 @@ def _find_bottom_line_box(panel_zone):
     return (x + x1, y + y1, bw, bh)
 
 
+def _find_points_badge_in_black_panel(panel_zone):
+    """
+    Cherche le badge blanc du chiffre dans un panneau noir classique.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None, None
+
+    ph, pw = panel_zone.shape[:2]
+    if ph == 0 or pw == 0:
+        return None, None
+
+    x1 = 0
+    x2 = max(1, int(pw * 0.44))
+
+    zone = panel_zone[:, x1:x2]
+    if zone is None or zone.size == 0:
+        return None, None
+
+    mask, gray = _make_bottom_light_mask(zone)
+    if mask is None:
+        return None, None
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        return None, None
+
+    zh, zw = zone.shape[:2]
+    candidates = []
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(zw * zh, 1))
+
+        if area_ratio < 0.04:
+            continue
+
+        if area_ratio > 0.70:
+            continue
+
+        if bw < zw * 0.22 or bw > zw * 0.98:
+            continue
+
+        if bh < zh * 0.35 or bh > zh * 0.98:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.60 or ratio > 1.40:
+            continue
+
+        if x > zw * 0.18:
+            continue
+
+        box_mask = mask[y:y + bh, x:x + bw]
+        if box_mask is None or box_mask.size == 0:
+            continue
+
+        white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
+        if white_ratio < 0.22:
+            continue
+
+        crop_gray = gray[y:y + bh, x:x + bw]
+        if crop_gray is None or crop_gray.size == 0:
+            continue
+
+        dark_ratio = float(np.count_nonzero(crop_gray < 130)) / float(crop_gray.size)
+        if dark_ratio < 0.07:
+            continue
+
+        cx = x + (bw / 2.0)
+        cy = y + (bh / 2.0)
+
+        left_score = 1.0 - min(cx / float(max(zw * 0.60, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.40, 1)), 1.0)
+        square_score = 1.0 - min(abs(ratio - 1.0) / 0.40, 1.0)
+
+        target_area = 0.28
+        area_score = 1.0 - min(abs(area_ratio - target_area) / 0.25, 1.0)
+
+        score = (
+            left_score * 2.5 +
+            center_y_score * 1.5 +
+            square_score * 2.5 +
+            area_score * 2.0 +
+            white_ratio * 1.5 +
+            dark_ratio * 1.0
+        )
+
+        candidates.append((score, x, y, bw, bh))
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    _, x, y, bw, bh = candidates[0]
+
+    pad_x = int(bw * 0.06)
+    pad_y = int(bh * 0.06)
+
+    x = x - pad_x
+    y = y - pad_y
+    bw = bw + (2 * pad_x)
+    bh = bh + (2 * pad_y)
+
+    x, y, bw, bh = _clip_box(x, y, bw, bh, zw, zh)
+
+    crop = zone[y:y + bh, x:x + bw]
+    if crop is None or crop.size == 0:
+        return None, None
+
+    final_x = x1 + x
+    final_y = y
+    final_w = bw
+    final_h = bh
+
+    return crop, (final_x, final_y, final_w, final_h)
+
+
 def analyze_bottom_layout(bottom_zone):
     """
     Analyse le ROI complet du bas.
-
-    Cette fonction ne cherche plus seulement un petit ROI blanc.
-    Elle essaie de comprendre la structure :
-    - panneau noir classique
-    - format spécial jaune/blanc
-    - slash
-    - icône à droite
-    - ligne en bas
-    - points
     """
     result = {
         "layout": "UNKNOWN",
@@ -1154,7 +1271,6 @@ def analyze_bottom_layout(bottom_zone):
     if bottom_zone is None or bottom_zone.size == 0:
         return result
 
-    # 1) Cas spécial JAUNE_5
     special_box = _find_special_white_panel_box(bottom_zone)
     if special_box is not None:
         result["layout"] = "SPECIAL_WHITE_PANEL"
@@ -1162,7 +1278,6 @@ def analyze_bottom_layout(bottom_zone):
         result["special_box"] = special_box
         return result
 
-    # 2) Cas panneau noir classique
     panel_box = _find_black_panel_box(bottom_zone)
     if panel_box is None:
         return result
@@ -1174,12 +1289,7 @@ def analyze_bottom_layout(bottom_zone):
 
     result["panel_box"] = panel_box
 
-    # 3) Points : on garde l'ancien lecteur du chiffre,
-    # mais on l'applique seulement sur la partie gauche du panneau.
-    left_w = max(1, int(pw * 0.46))
-    left_zone = panel_zone[:, :left_w]
-
-    badge_crop, badge_box_local = find_points_badge(left_zone)
+    badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
 
     raw_points_digit = None
     points_digit = None
@@ -1199,7 +1309,6 @@ def analyze_bottom_layout(bottom_zone):
         bx, by, bw2, bh2 = badge_box_local
         result["points_box"] = (px + bx, py + by, bw2, bh2)
 
-    # 4) Slash / icône droite / ligne du bas
     slash_box_local = _find_slash_box(panel_zone)
     if slash_box_local is not None:
         result["has_slash"] = True
@@ -1215,7 +1324,6 @@ def analyze_bottom_layout(bottom_zone):
         result["has_bottom_line"] = True
         result["bottom_line_box"] = _offset_box(line_box_local, px, py)
 
-    # 5) Famille de layout
     if points_digit is not None and not result["has_slash"] and not result["has_right_icon"]:
         layout = "NUMBER_ONLY"
     elif points_digit is not None and result["has_slash"] and result["has_right_icon"] and result["has_bottom_line"]:
@@ -1232,7 +1340,6 @@ def analyze_bottom_layout(bottom_zone):
     result["points_gap"] = float(points_gap)
 
     return result
-
     
 def compute_signature(img):
     rois = []
