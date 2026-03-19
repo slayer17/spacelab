@@ -626,13 +626,13 @@ def compute_signature(img):
         raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
         points_digit = raw_points_digit
 
-        # Validation stricte :
+       
+
+       # Validation stricte :
         # on garde le brut pour debug, mais on valide seulement si c'est assez fiable
-
-
    if points_score < 0.60:
     points_digit = None
-elif points_gap < 0.05:
+   elif points_gap < 0.05:
     points_digit = None
 
         points_sig = {
