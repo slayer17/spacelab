@@ -440,13 +440,19 @@ def _clip_box(x, y, w, h, max_w, max_h):
     return x, y, w, h
 
 
-def find_points_badge(bottom_zone):
+def find_points_badge(bottom_zone):def find_points_badge(bottom_zone):
     """
     Cherche automatiquement le badge blanc du chiffre
-    dans la zone violette / noire du bas.
-    Retourne :
-      - crop du badge
-      - bbox locale dans bottom_zone : (x, y, w, h)
+    dans la zone du bas.
+
+    Nouvelle logique :
+    - on cherche des zones très claires
+    - on garde seulement des candidats plausibles
+    - on favorise fortement une zone :
+        * à gauche
+        * vers le bas
+        * assez carrée
+        * avec une bonne présence de blanc
     """
     if bottom_zone is None or bottom_zone.size == 0:
         return None, None
@@ -454,8 +460,8 @@ def find_points_badge(bottom_zone):
     gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # On cherche les zones très claires
-    _, mask = cv2.threshold(blur, 170, 255, cv2.THRESH_BINARY)
+    # Seuil un peu plus strict pour mieux isoler le badge blanc
+    _, mask = cv2.threshold(blur, 185, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
@@ -477,21 +483,67 @@ def find_points_badge(bottom_zone):
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
 
-        if area < (w * h) * 0.01:
+        # Trop petit = bruit
+        if area < (w * h) * 0.008:
             continue
 
-        if bw < w * 0.08 or bh < h * 0.30:
+        # Le badge est plutôt compact
+        if bw < w * 0.10 or bw > w * 0.38:
             continue
 
-        if x > w * 0.45:
+        if bh < h * 0.22 or bh > h * 0.75:
+            continue
+
+        # On veut quelque chose plutôt sur la gauche
+        if x > w * 0.35:
+            continue
+
+        # On ne veut pas une zone trop haute
+        if y < h * 0.20:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 0.60 or ratio > 1.40:
+        if ratio < 0.65 or ratio > 1.35:
             continue
 
-        # plus le contour est à gauche et grand, mieux c'est
-        score = area - (x * 2.0)
+        # On mesure la quantité de blanc dans la bbox
+        box_mask = mask[y:y + bh, x:x + bw]
+        if box_mask is None or box_mask.size == 0:
+            continue
+
+        white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
+
+        # Le badge doit contenir une bonne quantité de blanc
+        if white_ratio < 0.20:
+            continue
+
+        # Centre du candidat
+        cx = x + (bw / 2.0)
+        cy = y + (bh / 2.0)
+
+        # Scores de préférence
+        # plus à gauche = mieux
+        left_score = 1.0 - min(cx / float(max(w * 0.40, 1)), 1.0)
+
+        # plus bas = mieux
+        low_score = min(cy / float(max(h, 1)), 1.0)
+
+        # plus proche du carré = mieux
+        square_score = 1.0 - min(abs(ratio - 1.0) / 0.35, 1.0)
+
+        # taille raisonnable = mieux
+        area_ratio = area / float(max(w * h, 1))
+        size_score = min(area_ratio / 0.08, 1.0)
+
+        # score final
+        score = (
+            left_score * 3.0 +
+            low_score * 3.0 +
+            square_score * 1.5 +
+            white_ratio * 1.5 +
+            size_score * 1.0
+        )
+
         candidates.append((score, x, y, bw, bh))
 
     if not candidates:
@@ -500,9 +552,9 @@ def find_points_badge(bottom_zone):
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
 
-    # petite marge autour du badge
-    pad_x = int(bw * 0.10)
-    pad_y = int(bh * 0.10)
+    # Petite marge autour du badge
+    pad_x = int(bw * 0.12)
+    pad_y = int(bh * 0.12)
 
     x = x - pad_x
     y = y - pad_y
