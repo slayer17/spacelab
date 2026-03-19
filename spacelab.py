@@ -440,7 +440,8 @@ def _clip_box(x, y, w, h, max_w, max_h):
     return x, y, w, h
 
 
-def find_points_badge(bottom_zone):def find_points_badge(bottom_zone):
+# def find_points_badge(bottom_zone):def find_points_badge(bottom_zone):
+def find_points_badge(bottom_zone)
     """
     Cherche automatiquement le badge blanc du chiffre
     dans la zone du bas.
