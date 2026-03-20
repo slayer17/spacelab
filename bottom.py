@@ -115,12 +115,6 @@ def _normalize_badge(img_or_mask, target=96):
 def _extract_digit_mask(img_or_mask, target=64):
     """
     Extrait seulement la forme noire du chiffre.
-
-    Nouvelle version :
-    - on trouve le badge blanc
-    - on travaille seulement à l'intérieur
-    - on garde les traits sombres du chiffre
-    - on évite de remplir trop fort la forme
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -133,7 +127,6 @@ def _extract_digit_mask(img_or_mask, target=64):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    # 1) Détection du badge blanc
     _, white_mask = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -162,24 +155,24 @@ def _extract_digit_mask(img_or_mask, target=64):
     if crop_gray is None or crop_gray.size == 0:
         return None
 
-    # 2) On reste un peu à l'intérieur du badge
     inner_badge = cv2.erode(crop_badge, np.ones((2, 2), np.uint8), iterations=1)
 
     badge_pixels = crop_gray[inner_badge > 0]
     if badge_pixels.size == 0:
         return None
 
-    # 3) Seuil sombre pour garder le chiffre noir
     dark_threshold = np.percentile(badge_pixels, 35)
 
     digit_mask = np.zeros_like(crop_gray, dtype=np.uint8)
     digit_mask[crop_gray < dark_threshold] = 255
     digit_mask = cv2.bitwise_and(digit_mask, inner_badge)
 
-    # 4) Nettoyage léger seulement
-    digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    digit_mask = cv2.morphologyEx(
+        digit_mask,
+        cv2.MORPH_OPEN,
+        np.ones((2, 2), np.uint8)
+    )
 
-    # 5) On garde les composantes assez grandes
     contours, _ = cv2.findContours(
         digit_mask,
         cv2.RETR_EXTERNAL,
@@ -212,7 +205,6 @@ def _extract_digit_mask(img_or_mask, target=64):
     if crop is None or crop.size == 0:
         return None
 
-    # 6) Mise au format standard
     canvas = np.zeros((target, target), dtype=np.uint8)
 
     ch, cw = crop.shape[:2]
@@ -256,6 +248,7 @@ def _binary_mask_score(a, b):
 
     return float((iou * 0.65) + (xor_score * 0.35))
 
+
 def _contour_match_score(a, b):
     """
     Compare les contours principaux de deux masques binaires.
@@ -284,24 +277,12 @@ def _contour_match_score(a, b):
 
     raw = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
 
-    # Plus raw est petit, plus les contours se ressemblent.
-    # On le convertit en score 0..1.
     return float(1.0 / (1.0 + (raw * 8.0)))
-    
-    
-    
-    
+
+
 def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     """
     Score générique de comparaison entre deux digits.
-
-    On combine :
-    - un peu de badge complet
-    - la forme binaire
-    - les projections horizontales / verticales
-    - le rapport largeur / hauteur
-    - le nombre de trous
-    - le contour principal
     """
     if full_a is None or full_b is None:
         return 0.0
@@ -314,7 +295,6 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     diff2 = cv2.absdiff(blur_a, blur_b)
     structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
 
-    # Le badge complet compte peu
     full_score = float((diff_score * 0.06) + (structure_score * 0.06))
 
     if digit_a is None or digit_b is None:
@@ -323,10 +303,8 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     aa = (digit_a > 0).astype(np.uint8)
     bb = (digit_b > 0).astype(np.uint8)
 
-    # 1) Similarité binaire brute
     shape_score = _binary_mask_score(digit_a, digit_b)
 
-    # 2) Projections horizontales et verticales
     proj_x_a = aa.sum(axis=0).astype(np.float32)
     proj_x_b = bb.sum(axis=0).astype(np.float32)
     proj_y_a = aa.sum(axis=1).astype(np.float32)
@@ -345,7 +323,6 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     proj_y_score = 1.0 - float(np.mean(np.abs(proj_y_a - proj_y_b)))
     projection_score = float((proj_x_score * 0.5) + (proj_y_score * 0.5))
 
-    # 3) Rapport largeur / hauteur
     ys_a, xs_a = np.where(aa > 0)
     ys_b, xs_b = np.where(bb > 0)
 
@@ -361,7 +338,6 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
 
         bbox_score = 1.0 - min(abs(ra - rb) / 1.2, 1.0)
 
-    # 4) Nombre de trous intérieurs
     def count_holes(mask01):
         inv = (1 - mask01).astype(np.uint8) * 255
         h, w = inv.shape[:2]
@@ -378,7 +354,6 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     holes_b = count_holes(bb)
     hole_score = 1.0 if holes_a == holes_b else 0.0
 
-    # 5) Contour principal
     contour_score = _contour_match_score(digit_a, digit_b)
 
     return float(
@@ -389,6 +364,7 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
         (hole_score * 0.10) +
         (contour_score * 0.20)
     )
+
 
 def detect_digit(zone, digits_dir):
     if zone is None or zone.size == 0:
@@ -433,29 +409,6 @@ def detect_digit(zone, digits_dir):
             "gap": 0.0,
             "scores": []
         }
-
-    # -------------------------------------------------
-    # Petit bonus spécial pour le "1"
-    # si le masque du chiffre ressemble à une barre verticale
-    # -------------------------------------------------
-    if scan_digit is not None:
-        ys, xs = np.where(scan_digit > 0)
-        if len(xs) > 0 and len(ys) > 0:
-            x1, x2 = xs.min(), xs.max()
-            y1, y2 = ys.min(), ys.max()
-
-            mask_w = max(1, x2 - x1 + 1)
-            mask_h = max(1, y2 - y1 + 1)
-
-            vertical_ratio = mask_h / float(mask_w)
-
-            # Si c'est très vertical et étroit,
-            # on donne un bonus au digit 1
-            if vertical_ratio >= 2.2:
-                for item in scores:
-                    if item["digit"] == 1:
-                        item["score"] += 0.08
-                        break
 
     scores = sorted(scores, key=lambda x: x["score"], reverse=True)
 
@@ -574,7 +527,7 @@ def _find_special_white_panel_box(bottom_zone):
         if area <= 0:
             continue
 
-        area_ratio = area / float(max(w * h, 1))
+            area_ratio = area / float(max(w * h, 1))
         if area_ratio < 0.12:
             continue
         if x < w * 0.10:
@@ -611,11 +564,6 @@ def _find_special_white_panel_box(bottom_zone):
 def _find_points_badge_in_black_panel(panel_zone):
     """
     Cherche la zone du badge points dans un panneau noir classique.
-
-    Version plus large :
-    - on prend plus de largeur
-    - on prend presque toute la hauteur utile
-    - on veut capturer tout le badge blanc, pas juste une bande
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -624,7 +572,6 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    # Crop plus large que la version précédente
     x = int(pw * 0.00)
     y = int(ph * 0.04)
     w = int(pw * 0.46)
@@ -632,7 +579,7 @@ def _find_points_badge_in_black_panel(panel_zone):
 
     x, y, w, h = _clip_box(x, y, w, h, pw, ph)
 
-      crop = panel_zone[y:y + h, x:x + w]
+    crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
 
@@ -690,110 +637,9 @@ def _find_slash_box(panel_zone):
     return x + x1, y, bw, bh
 
 
-def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
-    """
-    Score générique de comparaison entre deux digits.
-
-    On combine :
-    - un peu de badge complet
-    - la forme binaire du chiffre
-    - les projections horizontales / verticales
-    - le nombre de trous intérieurs
-
-    Pas de règle spéciale par chiffre.
-    """
-    if full_a is None or full_b is None:
-        return 0.0
-
-    diff = cv2.absdiff(full_a, full_b)
-    diff_score = 1.0 - (float(np.mean(diff)) / 255.0)
-
-    blur_a = cv2.GaussianBlur(full_a, (3, 3), 0)
-    blur_b = cv2.GaussianBlur(full_b, (3, 3), 0)
-    diff2 = cv2.absdiff(blur_a, blur_b)
-    structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
-
-    # Le badge complet compte peu
-    full_score = float((diff_score * 0.08) + (structure_score * 0.08))
-
-    if digit_a is None or digit_b is None:
-        return full_score
-
-    aa = (digit_a > 0).astype(np.uint8)
-    bb = (digit_b > 0).astype(np.uint8)
-
-    # 1) Similarité binaire brute
-    shape_score = _binary_mask_score(digit_a, digit_b)
-
-    # 2) Projections horizontales et verticales
-    proj_x_a = aa.sum(axis=0).astype(np.float32)
-    proj_x_b = bb.sum(axis=0).astype(np.float32)
-    proj_y_a = aa.sum(axis=1).astype(np.float32)
-    proj_y_b = bb.sum(axis=1).astype(np.float32)
-
-    if proj_x_a.sum() > 0:
-        proj_x_a /= proj_x_a.sum()
-    if proj_x_b.sum() > 0:
-        proj_x_b /= proj_x_b.sum()
-    if proj_y_a.sum() > 0:
-        proj_y_a /= proj_y_a.sum()
-    if proj_y_b.sum() > 0:
-        proj_y_b /= proj_y_b.sum()
-
-    proj_x_score = 1.0 - float(np.mean(np.abs(proj_x_a - proj_x_b)))
-    proj_y_score = 1.0 - float(np.mean(np.abs(proj_y_a - proj_y_b)))
-    projection_score = float((proj_x_score * 0.5) + (proj_y_score * 0.5))
-
-    # 3) Rapport largeur / hauteur du masque utile
-    ys_a, xs_a = np.where(aa > 0)
-    ys_b, xs_b = np.where(bb > 0)
-
-    bbox_score = 0.0
-    if len(xs_a) > 0 and len(ys_a) > 0 and len(xs_b) > 0 and len(ys_b) > 0:
-        wa = max(1, xs_a.max() - xs_a.min() + 1)
-        ha = max(1, ys_a.max() - ys_a.min() + 1)
-        wb = max(1, xs_b.max() - xs_b.min() + 1)
-        hb = max(1, ys_b.max() - ys_b.min() + 1)
-
-        ra = wa / float(ha)
-        rb = wb / float(hb)
-
-        bbox_score = 1.0 - min(abs(ra - rb) / 1.2, 1.0)
-
-    # 4) Nombre de trous intérieurs
-    def count_holes(mask01):
-        inv = (1 - mask01).astype(np.uint8) * 255
-        h, w = inv.shape[:2]
-
-        flood = inv.copy()
-        tmp = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(flood, tmp, (0, 0), 128)
-
-        holes = np.logical_and(inv == 255, flood != 128).astype(np.uint8)
-
-        num_labels, _ = cv2.connectedComponents(holes)
-        # connectedComponents compte aussi le fond => -1
-        return max(0, num_labels - 1)
-
-    holes_a = count_holes(aa)
-    holes_b = count_holes(bb)
-    hole_score = 1.0 if holes_a == holes_b else 0.0
-
-    return float(
-        full_score +
-        (shape_score * 0.34) +
-        (projection_score * 0.34) +
-        (bbox_score * 0.14) +
-        (hole_score * 0.10)
-    )
 def _find_right_icon_box(panel_zone):
     """
     Cherche la grande icône blanche à droite.
-
-    Version plus stricte :
-    - zone plus à droite
-    - filtres plus stricts
-    - évite de prendre le bord décoratif
     """
     if panel_zone is None or panel_zone.size == 0:
         return None
@@ -828,13 +674,10 @@ def _find_right_icon_box(panel_zone):
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
         if area_ratio < 0.08:
             continue
-
         if bw < zw * 0.22:
             continue
-
         if bh < zh * 0.28:
             continue
 
@@ -842,7 +685,6 @@ def _find_right_icon_box(panel_zone):
         if ratio < 0.55 or ratio > 1.50:
             continue
 
-        # On évite les éléments trop collés au bord droit du décor
         if (x + bw) >= (zw - 1):
             continue
 
@@ -854,11 +696,12 @@ def _find_right_icon_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
-
     return (x + x1, y + y1, bw, bh)
+
+
 def _find_bottom_line_box(panel_zone):
     """
-    Plus strict pour éviter les faux positifs.
+    Cherche la ligne / double flèche en bas à droite.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None
@@ -970,10 +813,6 @@ def analyze_bottom(bottom_zone, digits_dir):
         result["has_slash"] = True
         result["slash_box"] = _offset_box(slash_box_local, px, py)
 
-       # Important :
-    # on ne cherche l'icône droite et la ligne du bas
-    # que si un slash a été trouvé.
-    # Ça évite les faux positifs sur les cartes simples comme BLEU_1.
     if result["has_slash"]:
         right_box_local = _find_right_icon_box(panel_zone)
         if right_box_local is not None:
