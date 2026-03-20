@@ -233,6 +233,10 @@ def _extract_digit_mask(img_or_mask, target=64):
 
 
 def _binary_mask_score(a, b):
+    """
+    Compare deux masques binaires.
+    Plus proche de 1 = meilleur.
+    """
     if a is None or b is None:
         return 0.0
 
@@ -241,12 +245,15 @@ def _binary_mask_score(a, b):
 
     inter = np.logical_and(aa, bb).sum()
     union = np.logical_or(aa, bb).sum()
+
     if union == 0:
         return 0.0
 
     iou = float(inter) / float(union)
+
     xor_pixels = np.logical_xor(aa, bb).sum()
     xor_score = 1.0 - (float(xor_pixels) / float(union))
+
     return float((iou * 0.65) + (xor_score * 0.35))
 
 
@@ -577,60 +584,102 @@ def _find_slash_box(panel_zone):
     return x + x1, y, bw, bh
 
 
-def _find_right_icon_box(panel_zone):
+def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     """
-    Plus strict pour éviter les faux positifs.
+    Score générique de comparaison entre deux digits.
+
+    On combine :
+    - un peu de badge complet
+    - la forme binaire du chiffre
+    - les projections horizontales / verticales
+    - le nombre de trous intérieurs
+
+    Pas de règle spéciale par chiffre.
     """
-    if panel_zone is None or panel_zone.size == 0:
-        return None
+    if full_a is None or full_b is None:
+        return 0.0
 
-    ph, pw = panel_zone.shape[:2]
-    x1 = int(pw * 0.64)
-    x2 = pw
-    y1 = int(ph * 0.08)
-    y2 = int(ph * 0.72)
-    zone = panel_zone[y1:y2, x1:x2]
-    if zone is None or zone.size == 0:
-        return None
+    diff = cv2.absdiff(full_a, full_b)
+    diff_score = 1.0 - (float(np.mean(diff)) / 255.0)
 
-    mask, _ = _make_bottom_light_mask(zone)
-    if mask is None:
-        return None
+    blur_a = cv2.GaussianBlur(full_a, (3, 3), 0)
+    blur_b = cv2.GaussianBlur(full_b, (3, 3), 0)
+    diff2 = cv2.absdiff(blur_a, blur_b)
+    structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates = []
-    zh, zw = zone.shape[:2]
+    # Le badge complet compte peu
+    full_score = float((diff_score * 0.08) + (structure_score * 0.08))
 
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-        if area <= 0:
-            continue
+    if digit_a is None or digit_b is None:
+        return full_score
 
-        area_ratio = area / float(max(zw * zh, 1))
-        if area_ratio < 0.08:
-            continue
-        if bw < zw * 0.22:
-            continue
-        if bh < zh * 0.28:
-            continue
+    aa = (digit_a > 0).astype(np.uint8)
+    bb = (digit_b > 0).astype(np.uint8)
 
-        ratio = bw / float(max(bh, 1))
-        if ratio < 0.55 or ratio > 1.50:
-            continue
-        if (x + bw) >= (zw - 1):
-            continue
+    # 1) Similarité binaire brute
+    shape_score = _binary_mask_score(digit_a, digit_b)
 
-        score = (area_ratio * 4.0) + (bh / float(max(zh, 1)))
-        candidates.append((score, x, y, bw, bh))
+    # 2) Projections horizontales et verticales
+    proj_x_a = aa.sum(axis=0).astype(np.float32)
+    proj_x_b = bb.sum(axis=0).astype(np.float32)
+    proj_y_a = aa.sum(axis=1).astype(np.float32)
+    proj_y_b = bb.sum(axis=1).astype(np.float32)
 
-    if not candidates:
-        return None
+    if proj_x_a.sum() > 0:
+        proj_x_a /= proj_x_a.sum()
+    if proj_x_b.sum() > 0:
+        proj_x_b /= proj_x_b.sum()
+    if proj_y_a.sum() > 0:
+        proj_y_a /= proj_y_a.sum()
+    if proj_y_b.sum() > 0:
+        proj_y_b /= proj_y_b.sum()
 
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    _, x, y, bw, bh = candidates[0]
-    return x + x1, y + y1, bw, bh
+    proj_x_score = 1.0 - float(np.mean(np.abs(proj_x_a - proj_x_b)))
+    proj_y_score = 1.0 - float(np.mean(np.abs(proj_y_a - proj_y_b)))
+    projection_score = float((proj_x_score * 0.5) + (proj_y_score * 0.5))
 
+    # 3) Rapport largeur / hauteur du masque utile
+    ys_a, xs_a = np.where(aa > 0)
+    ys_b, xs_b = np.where(bb > 0)
+
+    bbox_score = 0.0
+    if len(xs_a) > 0 and len(ys_a) > 0 and len(xs_b) > 0 and len(ys_b) > 0:
+        wa = max(1, xs_a.max() - xs_a.min() + 1)
+        ha = max(1, ys_a.max() - ys_a.min() + 1)
+        wb = max(1, xs_b.max() - xs_b.min() + 1)
+        hb = max(1, ys_b.max() - ys_b.min() + 1)
+
+        ra = wa / float(ha)
+        rb = wb / float(hb)
+
+        bbox_score = 1.0 - min(abs(ra - rb) / 1.2, 1.0)
+
+    # 4) Nombre de trous intérieurs
+    def count_holes(mask01):
+        inv = (1 - mask01).astype(np.uint8) * 255
+        h, w = inv.shape[:2]
+
+        flood = inv.copy()
+        tmp = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(flood, tmp, (0, 0), 128)
+
+        holes = np.logical_and(inv == 255, flood != 128).astype(np.uint8)
+
+        num_labels, _ = cv2.connectedComponents(holes)
+        # connectedComponents compte aussi le fond => -1
+        return max(0, num_labels - 1)
+
+    holes_a = count_holes(aa)
+    holes_b = count_holes(bb)
+    hole_score = 1.0 if holes_a == holes_b else 0.0
+
+    return float(
+        full_score +
+        (shape_score * 0.34) +
+        (projection_score * 0.34) +
+        (bbox_score * 0.14) +
+        (hole_score * 0.10)
+    )
 
 def _find_bottom_line_box(panel_zone):
     """
