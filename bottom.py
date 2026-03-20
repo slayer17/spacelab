@@ -417,7 +417,12 @@ def _find_special_white_panel_box(bottom_zone):
 
 def _find_points_badge_in_black_panel(panel_zone):
     """
-    Crop fixe large sur la zone gauche du panneau noir.
+    Cherche la zone du badge points dans un panneau noir classique.
+
+    Version ajustée :
+    - on coupe un peu moins à gauche qu'avant
+    - on évite de prendre trop de décor à droite
+    - on garde un crop centré sur le badge blanc
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -426,12 +431,13 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    x = int(pw * 0.00)
-    y = int(ph * 0.04)
-    w = int(pw * 0.46)
-    h = int(ph * 0.92)
+    x = int(pw * 0.04)
+    y = int(ph * 0.08)
+    w = int(pw * 0.34)
+    h = int(ph * 0.84)
 
     x, y, w, h = _clip_box(x, y, w, h, pw, ph)
+
     crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
@@ -659,15 +665,20 @@ def analyze_bottom(bottom_zone, digits_dir):
         result["has_slash"] = True
         result["slash_box"] = _offset_box(slash_box_local, px, py)
 
-    right_box_local = _find_right_icon_box(panel_zone)
-    if right_box_local is not None:
-        result["has_right_icon"] = True
-        result["right_icon_box"] = _offset_box(right_box_local, px, py)
+       # Important :
+    # on ne cherche l'icône droite et la ligne du bas
+    # que si un slash a été trouvé.
+    # Ça évite les faux positifs sur les cartes simples comme BLEU_1.
+    if result["has_slash"]:
+        right_box_local = _find_right_icon_box(panel_zone)
+        if right_box_local is not None:
+            result["has_right_icon"] = True
+            result["right_icon_box"] = _offset_box(right_box_local, px, py)
 
-    line_box_local = _find_bottom_line_box(panel_zone)
-    if line_box_local is not None:
-        result["has_bottom_line"] = True
-        result["bottom_line_box"] = _offset_box(line_box_local, px, py)
+        line_box_local = _find_bottom_line_box(panel_zone)
+        if line_box_local is not None:
+            result["has_bottom_line"] = True
+            result["bottom_line_box"] = _offset_box(line_box_local, px, py)
 
     if result["points"] is not None and not result["has_slash"] and not result["has_right_icon"]:
         result["layout"] = "NUMBER_ONLY"
