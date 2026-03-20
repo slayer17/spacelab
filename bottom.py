@@ -469,32 +469,35 @@ def _find_black_panel_box(bottom_zone):
     candidates = []
 
     if contours:
-       for c in contours:
+   for c in contours:
     x, y, bw, bh = cv2.boundingRect(c)
     area = cv2.contourArea(c)
     if area <= 0:
         continue
 
     area_ratio = area / float(max(w * h, 1))
-
     if area_ratio < 0.12:
         continue
-            if bw < w * 0.45:
-                continue
-            if bh < h * 0.45:
-                continue
-            if x > w * 0.20:
-                continue
+    if x < w * 0.10:
+        continue
+    if bw < w * 0.35:
+        continue
+    if bh < h * 0.42:
+        continue
+    if y > h * 0.35:
+        continue
 
-            ratio = bw / float(max(bh, 1))
-            if ratio < 1.2 or ratio > 4.8:
-                continue
+    ratio = bw / float(max(bh, 1))
+    if ratio < 0.6 or ratio > 1.8:
+        continue
 
-            cx = x + (bw / 2.0)
-            left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
-            size_score = min(area_ratio / 0.45, 1.0)
-            score = (size_score * 3.0) + (left_score * 1.0)
-            candidates.append((score, x, y, bw, bh))
+    cx = x + (bw / 2.0)
+    cy = y + (bh / 2.0)
+    center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
+    center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
+    size_score = min(area_ratio / 0.28, 1.0)
+    score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
+    candidates.append((score, x, y, bw, bh))
 
     if candidates:
         candidates.sort(key=lambda t: t[0], reverse=True)
@@ -522,23 +525,24 @@ def _find_special_white_panel_box(bottom_zone):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
 
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-        if area <= 0:
-            continue
+   for c in contours:
+    x, y, bw, bh = cv2.boundingRect(c)
+    area = cv2.contourArea(c)
+    if area <= 0:
+        continue
 
-            area_ratio = area / float(max(w * h, 1))
-        if area_ratio < 0.12:
-            continue
-        if x < w * 0.10:
-            continue
-        if bw < w * 0.35:
-            continue
-        if bh < h * 0.42:
-            continue
-        if y > h * 0.35:
-            continue
+    area_ratio = area / float(max(w * h, 1))
+
+    if area_ratio < 0.12:
+        continue
+    if x < w * 0.10:
+        continue
+    if bw < w * 0.35:
+        continue
+    if bh < h * 0.42:
+        continue
+    if y > h * 0.35:
+        continue
 
         ratio = bw / float(max(bh, 1))
         if ratio < 0.6 or ratio > 1.8:
