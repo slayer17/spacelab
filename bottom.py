@@ -469,15 +469,16 @@ def _find_black_panel_box(bottom_zone):
     candidates = []
 
     if contours:
-        for c in contours:
-            x, y, bw, bh = cv2.boundingRect(c)
-            area = cv2.contourArea(c)
-            if area <= 0:
-                continue
+       for c in contours:
+    x, y, bw, bh = cv2.boundingRect(c)
+    area = cv2.contourArea(c)
+    if area <= 0:
+        continue
 
-            area_ratio = area / image_area
-            if area_ratio < 0.18:
-                continue
+    area_ratio = area / float(max(w * h, 1))
+
+    if area_ratio < 0.12:
+        continue
             if bw < w * 0.45:
                 continue
             if bh < h * 0.45:
