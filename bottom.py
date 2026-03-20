@@ -256,8 +256,53 @@ def _binary_mask_score(a, b):
 
     return float((iou * 0.65) + (xor_score * 0.35))
 
+def _contour_match_score(a, b):
+    """
+    Compare les contours principaux de deux masques binaires.
+    Retourne un score entre 0 et 1.
+    """
+    if a is None or b is None:
+        return 0.0
 
+    aa = ((a > 0).astype(np.uint8)) * 255
+    bb = ((b > 0).astype(np.uint8)) * 255
+
+    contours_a, _ = cv2.findContours(aa, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_b, _ = cv2.findContours(bb, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours_a or not contours_b:
+        return 0.0
+
+    ca = max(contours_a, key=cv2.contourArea)
+    cb = max(contours_b, key=cv2.contourArea)
+
+    area_a = cv2.contourArea(ca)
+    area_b = cv2.contourArea(cb)
+
+    if area_a <= 0 or area_b <= 0:
+        return 0.0
+
+    raw = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
+
+    # Plus raw est petit, plus les contours se ressemblent.
+    # On le convertit en score 0..1.
+    return float(1.0 / (1.0 + (raw * 8.0)))
+    
+    
+    
+    
 def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
+    """
+    Score générique de comparaison entre deux digits.
+
+    On combine :
+    - un peu de badge complet
+    - la forme binaire
+    - les projections horizontales / verticales
+    - le rapport largeur / hauteur
+    - le nombre de trous
+    - le contour principal
+    """
     if full_a is None or full_b is None:
         return 0.0
 
@@ -269,14 +314,81 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     diff2 = cv2.absdiff(blur_a, blur_b)
     structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
 
-    full_score = float((diff_score * 0.30) + (structure_score * 0.20))
+    # Le badge complet compte peu
+    full_score = float((diff_score * 0.06) + (structure_score * 0.06))
 
     if digit_a is None or digit_b is None:
         return full_score
 
-    digit_score = _binary_mask_score(digit_a, digit_b)
-    return float(full_score + (digit_score * 0.50))
+    aa = (digit_a > 0).astype(np.uint8)
+    bb = (digit_b > 0).astype(np.uint8)
 
+    # 1) Similarité binaire brute
+    shape_score = _binary_mask_score(digit_a, digit_b)
+
+    # 2) Projections horizontales et verticales
+    proj_x_a = aa.sum(axis=0).astype(np.float32)
+    proj_x_b = bb.sum(axis=0).astype(np.float32)
+    proj_y_a = aa.sum(axis=1).astype(np.float32)
+    proj_y_b = bb.sum(axis=1).astype(np.float32)
+
+    if proj_x_a.sum() > 0:
+        proj_x_a /= proj_x_a.sum()
+    if proj_x_b.sum() > 0:
+        proj_x_b /= proj_x_b.sum()
+    if proj_y_a.sum() > 0:
+        proj_y_a /= proj_y_a.sum()
+    if proj_y_b.sum() > 0:
+        proj_y_b /= proj_y_b.sum()
+
+    proj_x_score = 1.0 - float(np.mean(np.abs(proj_x_a - proj_x_b)))
+    proj_y_score = 1.0 - float(np.mean(np.abs(proj_y_a - proj_y_b)))
+    projection_score = float((proj_x_score * 0.5) + (proj_y_score * 0.5))
+
+    # 3) Rapport largeur / hauteur
+    ys_a, xs_a = np.where(aa > 0)
+    ys_b, xs_b = np.where(bb > 0)
+
+    bbox_score = 0.0
+    if len(xs_a) > 0 and len(ys_a) > 0 and len(xs_b) > 0 and len(ys_b) > 0:
+        wa = max(1, xs_a.max() - xs_a.min() + 1)
+        ha = max(1, ys_a.max() - ys_a.min() + 1)
+        wb = max(1, xs_b.max() - xs_b.min() + 1)
+        hb = max(1, ys_b.max() - ys_b.min() + 1)
+
+        ra = wa / float(ha)
+        rb = wb / float(hb)
+
+        bbox_score = 1.0 - min(abs(ra - rb) / 1.2, 1.0)
+
+    # 4) Nombre de trous intérieurs
+    def count_holes(mask01):
+        inv = (1 - mask01).astype(np.uint8) * 255
+        h, w = inv.shape[:2]
+
+        flood = inv.copy()
+        tmp = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(flood, tmp, (0, 0), 128)
+
+        holes = np.logical_and(inv == 255, flood != 128).astype(np.uint8)
+        num_labels, _ = cv2.connectedComponents(holes)
+        return max(0, num_labels - 1)
+
+    holes_a = count_holes(aa)
+    holes_b = count_holes(bb)
+    hole_score = 1.0 if holes_a == holes_b else 0.0
+
+    # 5) Contour principal
+    contour_score = _contour_match_score(digit_a, digit_b)
+
+    return float(
+        full_score +
+        (shape_score * 0.24) +
+        (projection_score * 0.24) +
+        (bbox_score * 0.10) +
+        (hole_score * 0.10) +
+        (contour_score * 0.20)
+    )
 
 def detect_digit(zone, digits_dir):
     if zone is None or zone.size == 0:
