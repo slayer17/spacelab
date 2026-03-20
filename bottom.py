@@ -239,11 +239,21 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
 
 def detect_digit(zone, digits_dir):
     if zone is None or zone.size == 0:
-        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
+        return {
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
+        }
 
     scan_badge = _normalize_badge(zone)
     if scan_badge is None:
-        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
+        return {
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
+        }
 
     scan_digit = _extract_digit_mask(zone)
     scores = []
@@ -259,13 +269,43 @@ def detect_digit(zone, digits_dir):
             continue
 
         tpl_digit = _extract_digit_mask(tpl)
+
         score = _digit_score(scan_badge, tpl_badge, scan_digit, tpl_digit)
         scores.append({"digit": n, "score": float(score)})
 
     if not scores:
-        return {"digit": None, "score": 0.0, "gap": 0.0, "scores": []}
+        return {
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
+        }
+
+    # -------------------------------------------------
+    # Petit bonus spécial pour le "1"
+    # si le masque du chiffre ressemble à une barre verticale
+    # -------------------------------------------------
+    if scan_digit is not None:
+        ys, xs = np.where(scan_digit > 0)
+        if len(xs) > 0 and len(ys) > 0:
+            x1, x2 = xs.min(), xs.max()
+            y1, y2 = ys.min(), ys.max()
+
+            mask_w = max(1, x2 - x1 + 1)
+            mask_h = max(1, y2 - y1 + 1)
+
+            vertical_ratio = mask_h / float(mask_w)
+
+            # Si c'est très vertical et étroit,
+            # on donne un bonus au digit 1
+            if vertical_ratio >= 2.2:
+                for item in scores:
+                    if item["digit"] == 1:
+                        item["score"] += 0.08
+                        break
 
     scores = sorted(scores, key=lambda x: x["score"], reverse=True)
+
     best = scores[0]
     second = scores[1] if len(scores) > 1 else {"score": 0.0}
 
@@ -273,7 +313,7 @@ def detect_digit(zone, digits_dir):
         "digit": int(best["digit"]),
         "score": float(best["score"]),
         "gap": float(best["score"] - second["score"]),
-        "scores": scores,
+        "scores": scores
     }
 
 
