@@ -632,13 +632,7 @@ def _find_points_badge_in_black_panel(panel_zone):
 
     x, y, w, h = _clip_box(x, y, w, h, pw, ph)
 
-    crop = panel_zone[y:y + h, x:x + w]
-    if crop is None or crop.size == 0:
-        return None, None
-
-    return crop, (x, y, w, h)
-
-    crop = panel_zone[y:y + h, x:x + w]
+      crop = panel_zone[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None, None
 
