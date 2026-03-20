@@ -468,7 +468,7 @@ def _find_black_panel_box(bottom_zone):
     image_area = float(max(w * h, 1))
     candidates = []
 
-   if contours:
+  if contours:
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
@@ -525,7 +525,7 @@ def _find_special_white_panel_box(bottom_zone):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
 
-   for c in contours:
+ for c in contours:
     x, y, bw, bh = cv2.boundingRect(c)
     area = cv2.contourArea(c)
     if area <= 0:
@@ -544,17 +544,17 @@ def _find_special_white_panel_box(bottom_zone):
     if y > h * 0.35:
         continue
 
-        ratio = bw / float(max(bh, 1))
-        if ratio < 0.6 or ratio > 1.8:
-            continue
+    ratio = bw / float(max(bh, 1))
+    if ratio < 0.6 or ratio > 1.8:
+        continue
 
-        cx = x + (bw / 2.0)
-        cy = y + (bh / 2.0)
-        center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
-        size_score = min(area_ratio / 0.28, 1.0)
-        score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
-        candidates.append((score, x, y, bw, bh))
+    cx = x + (bw / 2.0)
+    cy = y + (bh / 2.0)
+    center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
+    center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
+    size_score = min(area_ratio / 0.28, 1.0)
+    score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
+    candidates.append((score, x, y, bw, bh))
 
     if not candidates:
         return None
