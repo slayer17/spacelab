@@ -1326,10 +1326,13 @@ def analyze_bottom_layout(bottom_zone):
 def compute_signature(img):
     rois = []
 
+    # On garde une base unique : image redressée normalisée en 200x300.
     img = cv2.resize(img, (200, 300))
     h, w = img.shape[:2]
 
+    # -------------------------------------------------
     # COLOR
+    # -------------------------------------------------
     x1 = int(w * 0.00)
     x2 = int(w * 0.38)
     y1 = int(h * 0.00)
@@ -1356,7 +1359,9 @@ def compute_signature(img):
         "debug": color_debug
     }
 
+    # -------------------------------------------------
     # SYMBOL
+    # -------------------------------------------------
     x1 = int(w * 0.05)
     x2 = int(w * 0.20)
     y1 = int(h * 0.20)
@@ -1386,24 +1391,25 @@ def compute_signature(img):
         "gap": float(symbol_gap)
     }
 
+    # -------------------------------------------------
     # BOTTOM
-    bottom_x1 = int(w * 0.00)
-    bottom_x2 = int(w * 0.55)
-    bottom_y1 = int(h * 0.82)
-    bottom_y2 = int(h * 1.00)
-
-    bottom_zone = img[bottom_y1:bottom_y2, bottom_x1:bottom_x2]
+    # -------------------------------------------------
+    # IMPORTANT :
+    # La signature principale doit utiliser exactement le même pipeline
+    # que /bottom-test, sinon on débugue un moteur A et la prod tourne sur B.
+    full_img, bottom_zone, bottom_box = extract_bottom_roi_from_full_card(img)
+    bottom_x1, bottom_y1, bottom_w, bottom_h = bottom_box
 
     rois.append({
         "type": "BOTTOM",
         "x": bottom_x1,
         "y": bottom_y1,
-        "w": bottom_x2 - bottom_x1,
-        "h": bottom_y2 - bottom_y1
+        "w": bottom_w,
+        "h": bottom_h
     })
 
     bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
-    bottom_layout = analyze_bottom_layout(bottom_zone)
+    bottom_layout = analyze_bottom(bottom_zone, DIGITS_DIR)
 
     panel_box = bottom_layout.get("panel_box")
     if panel_box is not None:
@@ -1474,27 +1480,30 @@ def compute_signature(img):
     if points_box is not None:
         px, py, pw2, ph2 = points_box
         badge_crop = bottom_zone[py:py + ph2, px:px + pw2]
-        gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
 
-        points_sig = {
-            "mean": float(np.mean(gray_badge)),
-            "std": float(np.std(gray_badge)),
-            "digit": bottom_layout.get("points"),
-            "raw_digit": bottom_layout.get("raw_points"),
-            "score": float(bottom_layout.get("points_score", 0.0)),
-            "gap": float(bottom_layout.get("points_gap", 0.0)),
-            "found": True
-        }
+        if badge_crop is not None and badge_crop.size > 0:
+            gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
+            points_mean = float(np.mean(gray_badge))
+            points_std = float(np.std(gray_badge))
+            points_found = True
+        else:
+            points_mean = 0.0
+            points_std = 0.0
+            points_found = False
     else:
-        points_sig = {
-            "mean": 0.0,
-            "std": 0.0,
-            "digit": None,
-            "raw_digit": None,
-            "score": 0.0,
-            "gap": 0.0,
-            "found": False
-        }
+        points_mean = 0.0
+        points_std = 0.0
+        points_found = False
+
+    points_sig = {
+        "mean": points_mean,
+        "std": points_std,
+        "digit": bottom_layout.get("points"),
+        "raw_digit": bottom_layout.get("raw_points"),
+        "score": float(bottom_layout.get("points_score", 0.0)),
+        "gap": float(bottom_layout.get("points_gap", 0.0)),
+        "found": bool(points_found)
+    }
 
     bottom_layout_sig = {
         "layout": bottom_layout.get("layout"),
@@ -1508,7 +1517,9 @@ def compute_signature(img):
         "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False))
     }
 
+    # -------------------------------------------------
     # GLOBAL
+    # -------------------------------------------------
     rois.append({
         "type": "GLOBAL",
         "x": 0,
@@ -1527,7 +1538,6 @@ def compute_signature(img):
         "bottom_layout": bottom_layout_sig,
         "global": global_sig
     }, rois
-
 
 def compute_signature_safe(img):
     if img is None or img.size == 0:
