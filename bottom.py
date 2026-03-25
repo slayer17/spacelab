@@ -566,99 +566,104 @@ def _find_special_white_panel_box(bottom_zone):
 
 def _find_points_badge_in_black_panel(panel_zone):
     """
-    Cherche le badge points blanc dans la partie gauche du panneau noir.
-    On privilégie une vraie détection par contour clair, avec fallback fixe.
+    Cherche le badge blanc des points dans la partie gauche du panneau noir.
+    L'objectif est d'obtenir un crop centré sur le badge, pas un gros rectangle fixe.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
 
     ph, pw = panel_zone.shape[:2]
-    if ph == 0 or pw == 0:
+    if ph <= 0 or pw <= 0:
         return None, None
 
-    # Zone de recherche : moitié gauche du panneau,
-    # un peu resserrée verticalement pour éviter trop de décor.
+    # Zone de recherche plus serrée : seulement la partie gauche utile.
     sx1 = int(pw * 0.00)
-    sx2 = int(pw * 0.58)
-    sy1 = int(ph * 0.02)
-    sy2 = int(ph * 0.98)
+    sx2 = int(pw * 0.44)
+    sy1 = int(ph * 0.06)
+    sy2 = int(ph * 0.96)
 
-    sx1, sy1, sw, sh = _clip_box(sx1, sy1, sx2 - sx1, sy2 - sy1, pw, ph)
-    search = panel_zone[sy1:sy1 + sh, sx1:sx1 + sw]
+    sx, sy, sw, sh = _clip_box(sx1, sy1, sx2 - sx1, sy2 - sy1, pw, ph)
+    search = panel_zone[sy:sy + sh, sx:sx + sw]
     if search is None or search.size == 0:
         return None, None
 
-    mask, _ = _make_bottom_light_mask(search)
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    if mask is not None:
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask_hsv = cv2.inRange(hsv, (0, 0, 125), (180, 110, 255))
+    _, mask_gray = cv2.threshold(blur, 145, 255, cv2.THRESH_BINARY)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    mask = cv2.bitwise_or(mask_hsv, mask_gray)
 
-        candidates = []
-        zh, zw = search.shape[:2]
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-        for c in contours:
-            x, y, bw, bh = cv2.boundingRect(c)
-            area = cv2.contourArea(c)
-            if area <= 0:
-                continue
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            area_ratio = area / float(max(zw * zh, 1))
-            if area_ratio < 0.06:
-                continue
-            if bw < zw * 0.20:
-                continue
-            if bh < zh * 0.38:
-                continue
+    candidates = []
+    zh, zw = search.shape[:2]
 
-            ratio = bw / float(max(bh, 1))
-            if ratio < 0.45 or ratio > 1.35:
-                continue
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+        if area <= 0:
+            continue
 
-            # On veut un élément à gauche, assez centré verticalement
-            # et d'une taille suffisante.
-            left_score = 1.0 - min(x / float(max(zw * 0.35, 1)), 1.0)
+        area_ratio = area / float(max(zw * zh, 1))
 
-            cy = y + (bh / 2.0)
-            center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.38, 1)), 1.0)
+        if area_ratio < 0.035 or area_ratio > 0.38:
+            continue
+        if x > zw * 0.30:
+            continue
+        if bw < zw * 0.18 or bw > zw * 0.72:
+            continue
+        if bh < zh * 0.28 or bh > zh * 0.95:
+            continue
 
-            size_score = min(area_ratio / 0.18, 1.0)
-            ratio_score = 1.0 - min(abs(ratio - 0.80) / 0.60, 1.0)
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.45 or ratio > 1.25:
+            continue
 
-            score = (
-                (left_score * 2.6) +
-                (center_y_score * 1.8) +
-                (size_score * 2.2) +
-                (ratio_score * 1.0)
-            )
+        cx = x + (bw / 2.0)
+        cy = y + (bh / 2.0)
 
-            candidates.append((score, x, y, bw, bh))
+        left_score = 1.0 - min(cx / float(max(zw * 0.45, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.35, 1)), 1.0)
+        size_score = 1.0 - min(abs(area_ratio - 0.15) / 0.15, 1.0)
+        ratio_score = 1.0 - min(abs(ratio - 0.78) / 0.50, 1.0)
 
-        if candidates:
-            candidates.sort(key=lambda t: t[0], reverse=True)
-            _, x, y, bw, bh = candidates[0]
+        score = (
+            (left_score * 3.0) +
+            (center_y_score * 2.0) +
+            (size_score * 2.0) +
+            (ratio_score * 1.5)
+        )
 
-            # Petite marge pour éviter de couper le badge
-            pad_x = max(2, int(bw * 0.08))
-            pad_y = max(2, int(bh * 0.08))
+        candidates.append((score, x, y, bw, bh))
 
-            x = max(0, x - pad_x)
-            y = max(0, y - pad_y)
-            bw = min(zw - x, bw + (2 * pad_x))
-            bh = min(zh - y, bh + (2 * pad_y))
+    if candidates:
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        _, x, y, bw, bh = candidates[0]
 
-            crop = search[y:y + bh, x:x + bw]
-            if crop is not None and crop.size > 0:
-                return crop, (x + sx1, y + sy1, bw, bh)
+        pad_x = max(2, int(bw * 0.10))
+        pad_y = max(2, int(bh * 0.10))
 
-    # Fallback fixe plus large que l'ancienne version
+        x = max(0, x - pad_x)
+        y = max(0, y - pad_y)
+        bw = min(zw - x, bw + (2 * pad_x))
+        bh = min(zh - y, bh + (2 * pad_y))
+
+        crop = search[y:y + bh, x:x + bw]
+        if crop is not None and crop.size > 0:
+            return crop, (x + sx, y + sy, bw, bh)
+
+    # Fallback plus petit et plus propre que le rectangle large actuel.
     fx = int(pw * 0.00)
-    fy = int(ph * 0.04)
-    fw = int(pw * 0.56)
-    fh = int(ph * 0.90)
+    fy = int(ph * 0.10)
+    fw = int(pw * 0.40)
+    fh = int(ph * 0.82)
 
     fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
     crop = panel_zone[fy:fy + fh, fx:fx + fw]
