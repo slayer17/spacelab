@@ -153,7 +153,10 @@ function sendToPython() {
             const json = await res.json();
 
             console.log("SERVER SIG", json.signature);
-
+console.log("BOTTOM =", json.signature?.bottom);
+console.log("BOTTOM_LAYOUT =", json.signature?.bottom_layout);
+console.log("POINTS =", json.signature?.points);
+console.log("SYMBOL =", json.signature?.symbol);
             drawRects(json.rects || []);
 
             if (json.rois && json.rects && json.rects.length > 0) {
