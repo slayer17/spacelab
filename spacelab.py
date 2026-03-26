@@ -1,281 +1,71 @@
-import os
+import argparse
 import json
+from pathlib import Path
+
 import cv2
 import numpy as np
 
-from flask import Flask, request, jsonify, send_from_directory
-import base64
 
-from bottom import (
-    extract_bottom_roi_from_full_card,
-    analyze_bottom,
-    _normalize_badge,
-    _extract_digit_mask,
-    build_overlay,
-)
-app = Flask(__name__)
-def _img_to_base64(img):
-    if img is None or img.size == 0:
+# =====================================================
+# OUTILS DE BASE
+# =====================================================
+
+def _clip_box(x, y, w, h, max_w, max_h):
+    x = max(0, int(x))
+    y = max(0, int(y))
+    w = max(1, int(w))
+    h = max(1, int(h))
+
+    if x + w > max_w:
+        w = max_w - x
+    if y + h > max_h:
+        h = max_h - y
+
+    w = max(1, w)
+    h = max(1, h)
+    return x, y, w, h
+
+
+def _offset_box(box, dx, dy):
+    if box is None:
         return None
-
-    ok, buffer = cv2.imencode(".png", img)
-    if not ok:
-        return None
-
-    return base64.b64encode(buffer.tobytes()).decode("utf-8")
+    x, y, w, h = box
+    return int(x + dx), int(y + dy), int(w), int(h)
 
 
-def _html_img_block(title, img_b64):
-    if not img_b64:
-        return f"<h3>{title}</h3><p>Image absente</p>"
-
-    return f"""
-    <div style="margin-bottom:20px;">
-      <h3 style="margin:0 0 8px 0;">{title}</h3>
-      <img src="data:image/png;base64,{img_b64}" style="max-width:100%; border:1px solid #ccc;" />
-    </div>
-    """
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CARDS_DIR = os.path.join(BASE_DIR, "cards")
-SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
-DIGITS_DIR = os.path.join(BASE_DIR, "digits")
-CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
-WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
+def _save_image(path, img):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), img)
 
 
 # =====================================================
-# SYMBOL DETECTION
+# EXTRACTION ROI BAS
 # =====================================================
 
-def _keep_largest_component(bin_img):
+def extract_bottom_roi_from_full_card(img):
     """
-    Garde uniquement le plus gros composant blanc.
-    Ça évite que du bruit parasite casse la reconnaissance.
+    Reprend la même logique de base que le projet principal :
+    - resize en 200x300
+    - ROI du bas à gauche
     """
-    if bin_img is None or bin_img.size == 0:
-        return bin_img
+    img = cv2.resize(img, (200, 300))
+    h, w = img.shape[:2]
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
+    x1 = int(w * 0.00)
+    x2 = int(w * 0.55)
+    y1 = int(h * 0.82)
+    y2 = int(h * 1.00)
 
-    if num_labels <= 1:
-        return bin_img
+    roi = img[y1:y2, x1:x2]
+    return img, roi, (x1, y1, x2 - x1, y2 - y1)
 
-    largest_label = 1
-    largest_area = stats[1, cv2.CC_STAT_AREA]
-
-    for i in range(2, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > largest_area:
-            largest_area = area
-            largest_label = i
-
-    out = np.zeros_like(bin_img)
-    out[labels == largest_label] = 255
-    return out
-
-
-def _normalize_symbol_mask(img_or_mask, is_template=False):
-    """
-    Transforme une image de symbole en masque binaire propre,
-    centré et redimensionné de manière stable.
-    """
-    if img_or_mask is None or img_or_mask.size == 0:
-        return None
-
-    # Si l'image est en couleur, on passe en gris
-    if len(img_or_mask.shape) == 3:
-        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img_or_mask.copy()
-
-    # Lissage léger
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    gray = cv2.equalizeHist(gray)
-
-    # Binarisation
-    _, bin_img = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
-
-    # Nettoyage
-    kernel = np.ones((3, 3), np.uint8)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
-
-    # On garde seulement le plus gros objet
-    bin_img = _keep_largest_component(bin_img)
-
-    ys, xs = np.where(bin_img > 0)
-    if len(xs) == 0 or len(ys) == 0:
-        return None
-
-    x1, x2 = xs.min(), xs.max()
-    y1, y2 = ys.min(), ys.max()
-
-    crop = bin_img[y1:y2 + 1, x1:x2 + 1]
-    if crop is None or crop.size == 0:
-        return None
-
-    # On place la forme dans un canvas carré
-    target = 96
-    canvas = np.zeros((target, target), dtype=np.uint8)
-
-    h, w = crop.shape[:2]
-    if h == 0 or w == 0:
-        return None
-
-    scale = min((target - 16) / w, (target - 16) / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
-
-    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-    x = (target - new_w) // 2
-    y = (target - new_h) // 2
-    canvas[y:y + new_h, x:x + new_w] = resized
-
-    return canvas
-
-
-def _symbol_iou(a, b):
-    """
-    Compare deux masques binaires par recouvrement.
-    """
-    if a is None or b is None:
-        return 0.0
-
-    a_bool = a > 0
-    b_bool = b > 0
-
-    inter = np.logical_and(a_bool, b_bool).sum()
-    union = np.logical_or(a_bool, b_bool).sum()
-
-    if union == 0:
-        return 0.0
-
-    return float(inter / union)
-
-
-def _symbol_xor_score(a, b):
-    """
-    Mesure simple de différence de forme.
-    Plus c'est proche de 1, mieux c'est.
-    """
-    if a is None or b is None:
-        return 0.0
-
-    diff = cv2.bitwise_xor(a, b)
-    ratio = np.count_nonzero(diff) / float(diff.size)
-
-    return float(max(0.0, 1.0 - ratio))
-
-
-def _hu_score(a, b):
-    """
-    Compare les moments de Hu.
-    Sert de sécurité supplémentaire sur la forme.
-    """
-    if a is None or b is None:
-        return 0.0
-
-    ma = cv2.moments(a)
-    mb = cv2.moments(b)
-
-    hua = cv2.HuMoments(ma).flatten()
-    hub = cv2.HuMoments(mb).flatten()
-
-    # Passage log pour stabiliser
-    eps = 1e-10
-    hua = -np.sign(hua) * np.log10(np.abs(hua) + eps)
-    hub = -np.sign(hub) * np.log10(np.abs(hub) + eps)
-
-    dist = np.mean(np.abs(hua - hub))
-    score = 1.0 / (1.0 + dist)
-
-    return float(score)
-
-
-def detect_symbol(zone):
-    """
-    Détection symbole plus robuste :
-    - crop un peu plus large
-    - nettoyage fort
-    - recentrage du symbole
-    - comparaison de forme
-    - retour du meilleur score + écart avec le 2e
-    """
-    templates = {
-        "SCIENTIFIQUE": cv2.imread(os.path.join(SYMBOLS_DIR, "scientifique.png"), 0),
-        "ASTRONAUTE": cv2.imread(os.path.join(SYMBOLS_DIR, "astronaute.png"), 0),
-        "MECANICIEN": cv2.imread(os.path.join(SYMBOLS_DIR, "mecanicien.png"), 0),
-        "MEDECIN": cv2.imread(os.path.join(SYMBOLS_DIR, "medecin.png"), 0),
-    }
-
-    if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
-
-    h, w = zone.shape[:2]
-
-    # Crop un peu plus large que la version précédente
-    x1 = int(w * 0.10)
-    x2 = int(w * 0.90)
-    y1 = int(h * 0.10)
-    y2 = int(h * 0.90)
-
-    zone = zone[y1:y2, x1:x2]
-
-    if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
-
-    scan_mask = _normalize_symbol_mask(zone, is_template=False)
-
-    if scan_mask is None:
-        return None, 0.0, 0.0
-
-    scores = []
-
-    for name, tpl in templates.items():
-        if tpl is None or tpl.size == 0:
-            continue
-
-        tpl_mask = _normalize_symbol_mask(tpl, is_template=True)
-        if tpl_mask is None:
-            continue
-
-        # 3 scores complémentaires
-        iou = _symbol_iou(scan_mask, tpl_mask)
-        xor_score = _symbol_xor_score(scan_mask, tpl_mask)
-        hu = _hu_score(scan_mask, tpl_mask)
-
-        # Score combiné : priorité à la forme réelle
-        score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
-
-        scores.append((name, float(score)))
-
-    if not scores:
-        return None, 0.0, 0.0
-
-    scores.sort(key=lambda x: x[1], reverse=True)
-
-    best_name, best_score = scores[0]
-
-    if len(scores) >= 2:
-        second_score = scores[1][1]
-        gap = float(best_score - second_score)
-    else:
-        gap = float(best_score)
-
-    return best_name, float(best_score), gap
 
 # =====================================================
-# DIGIT DETECTION
+# LECTURE DES CHIFFRES
 # =====================================================
 
-def _normalize_digit_mask(img_or_mask):
-    """
-    Normalise le badge complet des points.
-    On garde ici le contexte global du badge.
-    """
+def _normalize_badge(img_or_mask, target=96):
     if img_or_mask is None or img_or_mask.size == 0:
         return None
 
@@ -287,52 +77,44 @@ def _normalize_digit_mask(img_or_mask):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    _, white_mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    _, white_mask = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
     white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
     white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
 
-    ys, xs = np.where(white_mask > 0)
-    if len(xs) == 0 or len(ys) == 0:
+    contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
         return None
 
-    x1, x2 = xs.min(), xs.max()
-    y1, y2 = ys.min(), ys.max()
+    best = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(best) < 20:
+        return None
 
-    crop = gray[y1:y2 + 1, x1:x2 + 1]
+    x, y, w, h = cv2.boundingRect(best)
+    crop = gray[y:y + h, x:x + w]
     if crop is None or crop.size == 0:
         return None
 
-    target = 96
     canvas = np.zeros((target, target), dtype=np.uint8)
-
-    h, w = crop.shape[:2]
-    if h == 0 or w == 0:
+    ch, cw = crop.shape[:2]
+    if ch == 0 or cw == 0:
         return None
 
-    scale = min((target - 12) / w, (target - 12) / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
+    scale = min((target - 12) / cw, (target - 12) / ch)
+    nw = max(1, int(cw * scale))
+    nh = max(1, int(ch * scale))
 
-    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    x = (target - new_w) // 2
-    y = (target - new_h) // 2
-    canvas[y:y + new_h, x:x + new_w] = resized
-
+    resized = cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_AREA)
+    ox = (target - nw) // 2
+    oy = (target - nh) // 2
+    canvas[oy:oy + nh, ox:ox + nw] = resized
     return canvas
 
 
-def _extract_digit_only_mask(img_or_mask):
+def _extract_digit_mask(img_or_mask, target=64):
     """
-    Extrait seulement la forme noire du chiffre
-    à l'intérieur du badge blanc.
-
-    Nouvelle logique :
-    - on trouve le vrai badge blanc
-    - on remplit sa forme
-    - puis on cherche les zones sombres à l'intérieur
+    Extrait seulement la forme noire du chiffre.
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
@@ -345,7 +127,6 @@ def _extract_digit_only_mask(img_or_mask):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    # 1) Trouver les zones blanches du badge
     _, white_mask = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -357,101 +138,88 @@ def _extract_digit_only_mask(img_or_mask):
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
-
     if not contours:
         return None
 
-    # On prend le plus gros contour blanc = le badge
     best = max(contours, key=cv2.contourArea)
-
-    if cv2.contourArea(best) < max(20, white_mask.shape[0] * white_mask.shape[1] * 0.05):
+    if cv2.contourArea(best) < 20:
         return None
 
     badge_fill = np.zeros_like(white_mask)
     cv2.drawContours(badge_fill, [best], -1, 255, thickness=-1)
 
     x, y, w, h = cv2.boundingRect(best)
-
     crop_gray = gray[y:y + h, x:x + w]
     crop_badge = badge_fill[y:y + h, x:x + w]
 
     if crop_gray is None or crop_gray.size == 0:
         return None
 
-    # Petite érosion pour rester un peu à l'intérieur du badge
-    inner_badge = cv2.erode(
-        crop_badge,
-        np.ones((3, 3), np.uint8),
-        iterations=1
-    )
+    inner_badge = cv2.erode(crop_badge, np.ones((2, 2), np.uint8), iterations=1)
 
     badge_pixels = crop_gray[inner_badge > 0]
     if badge_pixels.size == 0:
         return None
 
-    # On cherche les pixels sombres du chiffre
-    # avec un seuil relatif au contenu du badge
-    dark_threshold = np.percentile(badge_pixels, 45)
+    dark_threshold = np.percentile(badge_pixels, 35)
 
-    dark_mask = (crop_gray < dark_threshold).astype(np.uint8) * 255
-    digit_mask = cv2.bitwise_and(dark_mask, inner_badge)
+    digit_mask = np.zeros_like(crop_gray, dtype=np.uint8)
+    digit_mask[crop_gray < dark_threshold] = 255
+    digit_mask = cv2.bitwise_and(digit_mask, inner_badge)
 
-    digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_OPEN, kernel)
-    digit_mask = cv2.morphologyEx(digit_mask, cv2.MORPH_CLOSE, kernel)
+    digit_mask = cv2.morphologyEx(
+        digit_mask,
+        cv2.MORPH_OPEN,
+        np.ones((2, 2), np.uint8)
+    )
 
     contours, _ = cv2.findContours(
         digit_mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
-
     if not contours:
         return None
 
-    min_area = max(6, digit_mask.shape[0] * digit_mask.shape[1] * 0.01)
+    min_area = max(4, int(digit_mask.shape[0] * digit_mask.shape[1] * 0.008))
 
-    kept = []
+    clean = np.zeros_like(digit_mask)
+    kept = 0
+
     for c in contours:
         if cv2.contourArea(c) >= min_area:
-            kept.append(c)
+            cv2.drawContours(clean, [c], -1, 255, thickness=-1)
+            kept += 1
 
-    if not kept:
+    if kept == 0:
         return None
 
-    clean_mask = np.zeros_like(digit_mask)
-    cv2.drawContours(clean_mask, kept, -1, 255, thickness=-1)
-
-    ys, xs = np.where(clean_mask > 0)
+    ys, xs = np.where(clean > 0)
     if len(xs) == 0 or len(ys) == 0:
         return None
 
     x1, x2 = xs.min(), xs.max()
     y1, y2 = ys.min(), ys.max()
 
-    crop_digit = clean_mask[y1:y2 + 1, x1:x2 + 1]
-    if crop_digit is None or crop_digit.size == 0:
+    crop = clean[y1:y2 + 1, x1:x2 + 1]
+    if crop is None or crop.size == 0:
         return None
 
-    target = 64
     canvas = np.zeros((target, target), dtype=np.uint8)
 
-    h, w = crop_digit.shape[:2]
-    if h == 0 or w == 0:
+    ch, cw = crop.shape[:2]
+    if ch == 0 or cw == 0:
         return None
 
-    scale = min((target - 10) / w, (target - 10) / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
+    scale = min((target - 10) / cw, (target - 10) / ch)
+    nw = max(1, int(cw * scale))
+    nh = max(1, int(ch * scale))
 
-    resized = cv2.resize(
-        crop_digit,
-        (new_w, new_h),
-        interpolation=cv2.INTER_NEAREST
-    )
+    resized = cv2.resize(crop, (nw, nh), interpolation=cv2.INTER_NEAREST)
 
-    x = (target - new_w) // 2
-    y = (target - new_h) // 2
-    canvas[y:y + new_h, x:x + new_w] = resized
+    ox = (target - nw) // 2
+    oy = (target - nh) // 2
+    canvas[oy:oy + nh, ox:ox + nw] = resized
 
     return canvas
 
@@ -481,11 +249,40 @@ def _binary_mask_score(a, b):
     return float((iou * 0.65) + (xor_score * 0.35))
 
 
+def _contour_match_score(a, b):
+    """
+    Compare les contours principaux de deux masques binaires.
+    Retourne un score entre 0 et 1.
+    """
+    if a is None or b is None:
+        return 0.0
+
+    aa = ((a > 0).astype(np.uint8)) * 255
+    bb = ((b > 0).astype(np.uint8)) * 255
+
+    contours_a, _ = cv2.findContours(aa, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours_b, _ = cv2.findContours(bb, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours_a or not contours_b:
+        return 0.0
+
+    ca = max(contours_a, key=cv2.contourArea)
+    cb = max(contours_b, key=cv2.contourArea)
+
+    area_a = cv2.contourArea(ca)
+    area_b = cv2.contourArea(cb)
+
+    if area_a <= 0 or area_b <= 0:
+        return 0.0
+
+    raw = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
+
+    return float(1.0 / (1.0 + (raw * 8.0)))
+
+
 def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     """
-    Score final :
-    - un peu de badge complet
-    - surtout la forme du chiffre
+    Score générique de comparaison entre deux digits.
     """
     if full_a is None or full_b is None:
         return 0.0
@@ -495,347 +292,166 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
 
     blur_a = cv2.GaussianBlur(full_a, (3, 3), 0)
     blur_b = cv2.GaussianBlur(full_b, (3, 3), 0)
-
     diff2 = cv2.absdiff(blur_a, blur_b)
     structure_score = 1.0 - (float(np.mean(diff2)) / 255.0)
 
-    full_score = float((diff_score * 0.60) + (structure_score * 0.40))
+    full_score = float((diff_score * 0.06) + (structure_score * 0.06))
 
     if digit_a is None or digit_b is None:
         return full_score
 
-    digit_score = _binary_mask_score(digit_a, digit_b)
+    aa = (digit_a > 0).astype(np.uint8)
+    bb = (digit_b > 0).astype(np.uint8)
 
-    return float((full_score * 0.30) + (digit_score * 0.70))
+    shape_score = _binary_mask_score(digit_a, digit_b)
+
+    # Petit réalignement par translations courtes pour compenser les crops imparfaits.
+    best_shift_score = shape_score
+    for dy in range(-3, 4):
+        for dx in range(-3, 4):
+            shifted = np.roll(bb, shift=(dy, dx), axis=(0, 1))
+            if dy > 0:
+                shifted[:dy, :] = 0
+            elif dy < 0:
+                shifted[dy:, :] = 0
+            if dx > 0:
+                shifted[:, :dx] = 0
+            elif dx < 0:
+                shifted[:, dx:] = 0
+            shifted_score = _binary_mask_score(aa * 255, shifted * 255)
+            if shifted_score > best_shift_score:
+                best_shift_score = shifted_score
+
+    proj_x_a = aa.sum(axis=0).astype(np.float32)
+    proj_x_b = bb.sum(axis=0).astype(np.float32)
+    proj_y_a = aa.sum(axis=1).astype(np.float32)
+    proj_y_b = bb.sum(axis=1).astype(np.float32)
+
+    if proj_x_a.sum() > 0:
+        proj_x_a /= proj_x_a.sum()
+    if proj_x_b.sum() > 0:
+        proj_x_b /= proj_x_b.sum()
+    if proj_y_a.sum() > 0:
+        proj_y_a /= proj_y_a.sum()
+    if proj_y_b.sum() > 0:
+        proj_y_b /= proj_y_b.sum()
+
+    proj_x_score = 1.0 - float(np.mean(np.abs(proj_x_a - proj_x_b)))
+    proj_y_score = 1.0 - float(np.mean(np.abs(proj_y_a - proj_y_b)))
+    projection_score = float((proj_x_score * 0.5) + (proj_y_score * 0.5))
+
+    ys_a, xs_a = np.where(aa > 0)
+    ys_b, xs_b = np.where(bb > 0)
+
+    bbox_score = 0.0
+    density_score = 0.0
+    if len(xs_a) > 0 and len(ys_a) > 0 and len(xs_b) > 0 and len(ys_b) > 0:
+        wa = max(1, xs_a.max() - xs_a.min() + 1)
+        ha = max(1, ys_a.max() - ys_a.min() + 1)
+        wb = max(1, xs_b.max() - xs_b.min() + 1)
+        hb = max(1, ys_b.max() - ys_b.min() + 1)
+
+        ra = wa / float(ha)
+        rb = wb / float(hb)
+
+        bbox_score = 1.0 - min(abs(ra - rb) / 1.2, 1.0)
+
+        fill_a = float(aa.sum()) / float(max(wa * ha, 1))
+        fill_b = float(bb.sum()) / float(max(wb * hb, 1))
+        density_score = 1.0 - min(abs(fill_a - fill_b) / 0.45, 1.0)
+
+    def count_holes(mask01):
+        inv = (1 - mask01).astype(np.uint8) * 255
+        h, w = inv.shape[:2]
+
+        flood = inv.copy()
+        tmp = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(flood, tmp, (0, 0), 128)
+
+        holes = np.logical_and(inv == 255, flood != 128).astype(np.uint8)
+        num_labels, _ = cv2.connectedComponents(holes)
+        return max(0, num_labels - 1)
+
+    holes_a = count_holes(aa)
+    holes_b = count_holes(bb)
+    hole_score = 1.0 if holes_a == holes_b else 0.0
+
+    contour_score = _contour_match_score(digit_a, digit_b)
+
+    return float(
+        full_score +
+        (best_shift_score * 0.28) +
+        (projection_score * 0.22) +
+        (bbox_score * 0.10) +
+        (density_score * 0.08) +
+        (hole_score * 0.12) +
+        (contour_score * 0.14)
+    )
 
 
-def detect_digit(zone):
-    """
-    Détecte le badge points de 1 à 10
-    en comparant :
-    - le badge complet
-    - et la forme du chiffre lui-même
-    """
+
+def detect_digit(zone, digits_dir):
     if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
+        return {
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
+        }
 
-    scan_badge = _normalize_digit_mask(zone)
+    scan_badge = _normalize_badge(zone)
     if scan_badge is None:
-        return None, 0.0, 0.0
+        return {
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
+        }
 
-    scan_digit = _extract_digit_only_mask(zone)
-
+    scan_digit = _extract_digit_mask(zone)
     scores = []
 
     for n in range(1, 11):
-        path = os.path.join(DIGITS_DIR, f"{n}.png")
-        tpl = cv2.imread(path)
-
+        path = Path(digits_dir) / f"{n}.png"
+        tpl = cv2.imread(str(path))
         if tpl is None or tpl.size == 0:
             continue
 
-        tpl_badge = _normalize_digit_mask(tpl)
+        tpl_badge = _normalize_badge(tpl)
         if tpl_badge is None:
             continue
 
-        tpl_digit = _extract_digit_only_mask(tpl)
+        tpl_digit = _extract_digit_mask(tpl)
 
         score = _digit_score(scan_badge, tpl_badge, scan_digit, tpl_digit)
-        scores.append((n, float(score)))
+        scores.append({"digit": n, "score": float(score)})
 
     if not scores:
-        return None, 0.0, 0.0
-
-    scores.sort(key=lambda x: x[1], reverse=True)
-
-    best_digit, best_score = scores[0]
-
-    if len(scores) >= 2:
-        second_score = scores[1][1]
-        gap = float(best_score - second_score)
-    else:
-        gap = float(best_score)
-
-    return int(best_digit), float(best_score), gap
-
-
-    
-# =====================================================
-# COLOR DETECTION
-# =====================================================
-
-def detect_card_color(zone):
-    """
-    Détection robuste de couleur à partir des pixels saturés.
-    Retourne :
-      - couleur détectée
-      - debug counts
-      - moyenne BGR brute
-    """
-    if zone is None or zone.size == 0:
-        return "ROUGE", {"reason": "empty"}, [0.0, 0.0, 0.0]
-
-    mean_bgr = zone.mean(axis=(0, 1)).tolist()
-
-    hsv = cv2.cvtColor(zone, cv2.COLOR_BGR2HSV)
-
-    h = hsv[:, :, 0]
-    s = hsv[:, :, 1]
-    v = hsv[:, :, 2]
-
-    # Garde les pixels assez colorés et assez visibles
-    mask = (s > 60) & (v > 50)
-
-    hues = h[mask]
-
-    if len(hues) == 0:
-        return "ROUGE", {"reason": "no_saturated_pixels"}, mean_bgr
-
-    counts = {
-        "ROUGE": int(np.sum((hues <= 10) | (hues >= 170))),
-        "JAUNE": int(np.sum((hues >= 15) & (hues <= 35))),
-        "VERT": int(np.sum((hues >= 40) & (hues <= 85))),
-        "BLEU": int(np.sum((hues >= 90) & (hues <= 130))),
-    }
-
-    detected = max(counts, key=counts.get)
-
-    return detected, counts, mean_bgr
-
-
-# =====================================================
-# SMALL PATCH SIGNATURE
-# =====================================================
-
-def compute_patch_signature(zone, size=(16, 16)):
-    if zone is None or zone.size == 0:
         return {
-            "mean": 0.0,
-            "std": 0.0,
-            "vector": []
+            "digit": None,
+            "score": 0.0,
+            "gap": 0.0,
+            "scores": []
         }
 
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    small = cv2.resize(gray, size, interpolation=cv2.INTER_AREA)
+    scores = sorted(scores, key=lambda x: x["score"], reverse=True)
+
+    best = scores[0]
+    second = scores[1] if len(scores) > 1 else {"score": 0.0}
 
     return {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "vector": small.flatten().astype(float).tolist()
+        "digit": int(best["digit"]),
+        "score": float(best["score"]),
+        "gap": float(best["score"] - second["score"]),
+        "scores": scores
     }
 
 
 # =====================================================
-# POINTS BADGE DETECTION
+# ANALYSE DU BAS
 # =====================================================
 
-def _clip_box(x, y, w, h, max_w, max_h):
-    x = max(0, min(int(x), max_w - 1))
-    y = max(0, min(int(y), max_h - 1))
-    w = max(1, min(int(w), max_w - x))
-    h = max(1, min(int(h), max_h - y))
-    return x, y, w, h
-
-
-def find_points_badge(bottom_zone):
-    """
-    Cherche automatiquement le badge blanc des points
-    dans la zone du bas.
-
-    Nouvelle logique :
-    - on ne cherche plus dans tout le bottom sans méthode
-    - on prend une grande zone de recherche à gauche
-    - on détecte le blanc de 2 façons :
-        1) blanc en HSV
-        2) zone claire en niveaux de gris
-    - on garde un candidat plausible :
-        * compact
-        * plutôt carré
-        * pas collé au bord
-        * avec du blanc
-        * avec un peu de noir dedans (le chiffre)
-    """
-    if bottom_zone is None or bottom_zone.size == 0:
-        return None, None
-
-    h, w = bottom_zone.shape[:2]
-    if h == 0 or w == 0:
-        return None, None
-
-    # On reste dans une grande zone à gauche.
-    # Ce n'est PAS un petit ROI fixe du chiffre.
-    search_x1 = 0
-    search_x2 = int(w * 0.58)
-
-    search_zone = bottom_zone[:, search_x1:search_x2]
-    if search_zone is None or search_zone.size == 0:
-        return None, None
-
-    search_h, search_w = search_zone.shape[:2]
-
-    def collect_candidates(mask):
-        candidates = []
-
-        contours, _ = cv2.findContours(
-            mask,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        if not contours:
-            return candidates
-
-        gray_local = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
-
-        for c in contours:
-            x, y, bw, bh = cv2.boundingRect(c)
-            area = cv2.contourArea(c)
-
-            if area <= 0:
-                continue
-
-            area_ratio = area / float(max(search_w * search_h, 1))
-
-            # Trop petit = bruit
-            if area_ratio < 0.015:
-                continue
-
-            # Trop grand = gros morceau de décor / fond
-            if area_ratio > 0.28:
-                continue
-
-            # Taille plausible
-            if bw < search_w * 0.18 or bw > search_w * 0.85:
-                continue
-
-            if bh < search_h * 0.20 or bh > search_h * 0.80:
-                continue
-
-            # Le badge est plutôt compact / carré
-            ratio = bw / float(max(bh, 1))
-            if ratio < 0.65 or ratio > 1.35:
-                continue
-
-            # On rejette les blobs collés au bord du masque
-            if x <= 2 or y <= 2 or (x + bw) >= (search_w - 2) or (y + bh) >= (search_h - 2):
-                continue
-
-            box_mask = mask[y:y + bh, x:x + bw]
-            if box_mask is None or box_mask.size == 0:
-                continue
-
-            white_ratio = float(np.count_nonzero(box_mask)) / float(box_mask.size)
-
-            # Il faut assez de blanc
-            if white_ratio < 0.22:
-                continue
-
-            crop_gray = gray_local[y:y + bh, x:x + bw]
-            if crop_gray is None or crop_gray.size == 0:
-                continue
-
-            # Il faut aussi un peu de noir à l'intérieur
-            # sinon on risque de prendre juste une zone claire du décor
-            dark_ratio = float(np.count_nonzero(crop_gray < 120)) / float(crop_gray.size)
-
-            if dark_ratio < 0.12:
-                continue
-
-            # Scores de préférence
-            cx = x + (bw / 2.0)
-
-            # plus à gauche = mieux
-            left_score = 1.0 - min(cx / float(max(search_w, 1)), 1.0)
-
-            # plus proche du carré = mieux
-            square_score = 1.0 - min(abs(ratio - 1.0) / 0.35, 1.0)
-
-            # on préfère une taille moyenne plausible
-            target_area = 0.18
-            area_score = 1.0 - min(abs(area_ratio - target_area) / 0.14, 1.0)
-
-            score = (
-                left_score * 3.0 +
-                square_score * 2.0 +
-                area_score * 2.0 +
-                white_ratio * 1.5 +
-                dark_ratio * 1.0
-            )
-
-            candidates.append((score, x, y, bw, bh))
-
-        return candidates
-
-    # -------------------------------------------------
-    # Masque 1 : blanc en HSV
-    # Très utile pour trouver le badge blanc
-    # sans trop confondre avec le décor coloré
-    # -------------------------------------------------
-    hsv = cv2.cvtColor(search_zone, cv2.COLOR_BGR2HSV)
-    white_mask = cv2.inRange(hsv, (0, 0, 145), (180, 95, 255))
-
-    kernel = np.ones((3, 3), np.uint8)
-    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
-    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-
-    # -------------------------------------------------
-    # Masque 2 : zone claire en niveaux de gris
-    # Sert de secours si le HSV n'est pas assez bon
-    # -------------------------------------------------
-    gray = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, bright_mask = cv2.threshold(blur, 165, 255, cv2.THRESH_BINARY)
-
-    bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_OPEN, kernel)
-    bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_CLOSE, kernel)
-
-    candidates = []
-    candidates.extend(collect_candidates(white_mask))
-    candidates.extend(collect_candidates(bright_mask))
-
-    if not candidates:
-        return None, None
-
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    _, x, y, bw, bh = candidates[0]
-
-    # Petite marge autour du badge
-    pad_x = int(bw * 0.08)
-    pad_y = int(bh * 0.08)
-
-    x = x - pad_x
-    y = y - pad_y
-    bw = bw + (2 * pad_x)
-    bh = bh + (2 * pad_y)
-
-    x, y, bw, bh = _clip_box(x, y, bw, bh, search_w, search_h)
-
-    crop = search_zone[y:y + bh, x:x + bw]
-    if crop is None or crop.size == 0:
-        return None, None
-
-    # On convertit la bbox locale de search_zone
-    # vers la bbox locale de bottom_zone
-    final_x = search_x1 + x
-    final_y = y
-    final_w = bw
-    final_h = bh
-
-    return crop, (final_x, final_y, final_w, final_h)
-
-def _offset_box(box, dx, dy):
-    if box is None:
-        return None
-    x, y, w, h = box
-    return (int(x + dx), int(y + dy), int(w), int(h))
-
-
 def _make_bottom_light_mask(zone):
-    """
-    Construit un masque des zones claires / blanches
-    dans le ROI du bas.
-    """
     if zone is None or zone.size == 0:
         return None, None
 
@@ -857,30 +473,20 @@ def _make_bottom_light_mask(zone):
 
 def _find_black_panel_box(bottom_zone):
     """
-    Cherche le grand panneau noir du bas
-    pour les cartes classiques.
-
-    Important :
-    si la détection par contours échoue,
-    on renvoie un fallback fixe raisonnable
-    pour ne pas perdre les cas simples comme BLEU_1.
+    Cherche le grand panneau noir du bas.
+    Si ça échoue, on renvoie un fallback fixe.
     """
     if bottom_zone is None or bottom_zone.size == 0:
         return None
 
     gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
     _, dark_mask = cv2.threshold(blur, 95, 255, cv2.THRESH_BINARY_INV)
 
     kernel = np.ones((5, 5), np.uint8)
     dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(
-        dark_mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
+    contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     h, w = gray.shape[:2]
     image_area = float(max(w * h, 1))
@@ -890,21 +496,16 @@ def _find_black_panel_box(bottom_zone):
         for c in contours:
             x, y, bw, bh = cv2.boundingRect(c)
             area = cv2.contourArea(c)
-
             if area <= 0:
                 continue
 
             area_ratio = area / image_area
-
             if area_ratio < 0.18:
                 continue
-
             if bw < w * 0.45:
                 continue
-
             if bh < h * 0.45:
                 continue
-
             if x > w * 0.20:
                 continue
 
@@ -915,7 +516,6 @@ def _find_black_panel_box(bottom_zone):
             cx = x + (bw / 2.0)
             left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
             size_score = min(area_ratio / 0.45, 1.0)
-
             score = (size_score * 3.0) + (left_score * 1.0)
             candidates.append((score, x, y, bw, bh))
 
@@ -924,20 +524,14 @@ def _find_black_panel_box(bottom_zone):
         _, x, y, bw, bh = candidates[0]
         return _clip_box(x, y, bw, bh, w, h)
 
-    # Fallback simple si aucun contour n'est assez bon
     fx = int(w * 0.02)
     fy = int(h * 0.08)
     fw = int(w * 0.50)
     fh = int(h * 0.84)
-
     return _clip_box(fx, fy, fw, fh, w, h)
 
 
 def _find_special_white_panel_box(bottom_zone):
-    """
-    Cherche le format spécial jaune/blanc
-    comme JAUNE_5.
-    """
     if bottom_zone is None or bottom_zone.size == 0:
         return None
 
@@ -948,35 +542,24 @@ def _find_special_white_panel_box(bottom_zone):
     h, w = gray.shape[:2]
     dark_ratio = float(np.count_nonzero(gray < 90)) / float(max(gray.size, 1))
 
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
 
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
-
         if area <= 0:
             continue
 
         area_ratio = area / float(max(w * h, 1))
-
         if area_ratio < 0.12:
             continue
-
         if x < w * 0.10:
             continue
-
         if bw < w * 0.35:
             continue
-
         if bh < h * 0.42:
             continue
-
         if y > h * 0.35:
             continue
 
@@ -986,37 +569,137 @@ def _find_special_white_panel_box(bottom_zone):
 
         cx = x + (bw / 2.0)
         cy = y + (bh / 2.0)
-
         center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
         center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
         size_score = min(area_ratio / 0.28, 1.0)
-
         score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
         candidates.append((score, x, y, bw, bh))
 
     if not candidates:
         return None
-
     if dark_ratio > 0.22:
         return None
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
-
     return _clip_box(x, y, bw, bh, w, h)
 
 
+
+def _find_points_badge_in_black_panel(panel_zone):
+    """
+    Cherche le badge blanc des points dans la partie gauche du panneau noir.
+    On tente d'abord une détection du vrai badge, puis on garde un fallback serré.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None, None
+
+    ph, pw = panel_zone.shape[:2]
+    if ph == 0 or pw == 0:
+        return None, None
+
+    sx = int(pw * 0.00)
+    sy = int(ph * 0.04)
+    sw = int(pw * 0.48)
+    sh = int(ph * 0.92)
+    sx, sy, sw, sh = _clip_box(sx, sy, sw, sh, pw, ph)
+
+    search = panel_zone[sy:sy + sh, sx:sx + sw]
+    if search is None or search.size == 0:
+        return None, None
+
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    mask_hsv = cv2.inRange(hsv, (0, 0, 120), (180, 115, 255))
+    _, mask_gray = cv2.threshold(blur, 142, 255, cv2.THRESH_BINARY)
+    mask = cv2.bitwise_or(mask_hsv, mask_gray)
+
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates = []
+    zh, zw = search.shape[:2]
+
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+        if area <= 0:
+            continue
+
+        area_ratio = area / float(max(zw * zh, 1))
+        if area_ratio < 0.05 or area_ratio > 0.50:
+            continue
+        if x > zw * 0.34:
+            continue
+        if bw < zw * 0.16 or bw > zw * 0.72:
+            continue
+        if bh < zh * 0.30 or bh > zh * 0.95:
+            continue
+
+        ratio = bw / float(max(bh, 1))
+        if ratio < 0.38 or ratio > 1.30:
+            continue
+
+        cx = x + (bw / 2.0)
+        cy = y + (bh / 2.0)
+        left_score = 1.0 - min(cx / float(max(zw * 0.50, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.38, 1)), 1.0)
+        size_score = 1.0 - min(abs(area_ratio - 0.18) / 0.18, 1.0)
+        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.55, 1.0)
+        edge_penalty = 0.0
+        if x <= 1:
+            edge_penalty += 0.5
+        if (x + bw) >= (zw - 1):
+            edge_penalty += 0.35
+
+        score = (
+            (left_score * 2.8) +
+            (center_y_score * 2.0) +
+            (size_score * 2.2) +
+            (ratio_score * 1.3) -
+            edge_penalty
+        )
+        candidates.append((score, x, y, bw, bh))
+
+    if candidates:
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        _, x, y, bw, bh = candidates[0]
+
+        pad_x = max(2, int(bw * 0.10))
+        pad_y = max(2, int(bh * 0.10))
+        x = max(0, x - pad_x)
+        y = max(0, y - pad_y)
+        bw = min(zw - x, bw + (2 * pad_x))
+        bh = min(zh - y, bh + (2 * pad_y))
+
+        crop = search[y:y + bh, x:x + bw]
+        if crop is not None and crop.size > 0:
+            return crop, (x + sx, y + sy, bw, bh)
+
+    fx = int(pw * 0.02)
+    fy = int(ph * 0.08)
+    fw = int(pw * 0.40)
+    fh = int(ph * 0.82)
+    fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
+    crop = panel_zone[fy:fy + fh, fx:fx + fw]
+    if crop is None or crop.size == 0:
+        return None, None
+
+    return crop, (fx, fy, fw, fh)
+
+
+
 def _find_slash_box(panel_zone):
-    """
-    Cherche le slash blanc au centre du panneau noir.
-    """
     if panel_zone is None or panel_zone.size == 0:
         return None
 
     ph, pw = panel_zone.shape[:2]
     x1 = int(pw * 0.35)
     x2 = int(pw * 0.60)
-
     zone = panel_zone[:, x1:x2]
     if zone is None or zone.size == 0:
         return None
@@ -1025,30 +708,21 @@ def _find_slash_box(panel_zone):
     if mask is None:
         return None
 
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
     zh, zw = zone.shape[:2]
 
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
-
         if area <= 0:
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
         if area_ratio < 0.01:
             continue
-
         if bh < zh * 0.28:
             continue
-
         if bw > zw * 0.45:
             continue
 
@@ -1059,7 +733,6 @@ def _find_slash_box(panel_zone):
         cx = x + (bw / 2.0)
         center_score = 1.0 - min(abs(cx - (zw * 0.50)) / float(max(zw * 0.35, 1)), 1.0)
         tall_score = min(bh / float(max(zh * 0.65, 1)), 1.0)
-
         score = (center_score * 2.0) + (tall_score * 2.0) + (area_ratio * 3.0)
         candidates.append((score, x, y, bw, bh))
 
@@ -1068,9 +741,7 @@ def _find_slash_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
-
-    x += x1
-    return (x, y, bw, bh)
+    return x + x1, y, bw, bh
 
 
 def _find_right_icon_box(panel_zone):
@@ -1081,10 +752,10 @@ def _find_right_icon_box(panel_zone):
         return None
 
     ph, pw = panel_zone.shape[:2]
-    x1 = int(pw * 0.56)
+    x1 = int(pw * 0.64)
     x2 = pw
-    y1 = int(ph * 0.05)
-    y2 = int(ph * 0.78)
+    y1 = int(ph * 0.08)
+    y2 = int(ph * 0.72)
 
     zone = panel_zone[y1:y2, x1:x2]
     if zone is None or zone.size == 0:
@@ -1106,23 +777,22 @@ def _find_right_icon_box(panel_zone):
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
-
         if area <= 0:
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
-        if area_ratio < 0.05:
+        if area_ratio < 0.08:
             continue
-
-        if bw < zw * 0.20:
+        if bw < zw * 0.22:
             continue
-
-        if bh < zh * 0.25:
+        if bh < zh * 0.28:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 0.45 or ratio > 1.65:
+        if ratio < 0.55 or ratio > 1.50:
+            continue
+
+        if (x + bw) >= (zw - 1):
             continue
 
         score = (area_ratio * 4.0) + (bh / float(max(zh, 1)))
@@ -1133,7 +803,6 @@ def _find_right_icon_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
-
     return (x + x1, y + y1, bw, bh)
 
 
@@ -1145,11 +814,10 @@ def _find_bottom_line_box(panel_zone):
         return None
 
     ph, pw = panel_zone.shape[:2]
-    x1 = int(pw * 0.46)
+    x1 = int(pw * 0.52)
     x2 = pw
-    y1 = int(ph * 0.56)
+    y1 = int(ph * 0.68)
     y2 = ph
-
     zone = panel_zone[y1:y2, x1:x2]
     if zone is None or zone.size == 0:
         return None
@@ -1158,38 +826,31 @@ def _find_bottom_line_box(panel_zone):
     if mask is None:
         return None
 
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
     zh, zw = zone.shape[:2]
 
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
         area = cv2.contourArea(c)
-
         if area <= 0:
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
-        if area_ratio < 0.01:
+        if area_ratio < 0.015:
             continue
-
-        if bw < zw * 0.18:
+        if bw < zw * 0.24:
             continue
-
-        if bh > zh * 0.38:
+        if bh > zh * 0.32:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 1.8:
+        if ratio < 2.4:
+            continue
+        if (y + bh) >= (zh - 1):
             continue
 
-        score = (ratio * 1.0) + (area_ratio * 6.0)
+        score = (ratio * 1.5) + (area_ratio * 6.0)
         candidates.append((score, x, y, bw, bh))
 
     if not candidates:
@@ -1197,40 +858,10 @@ def _find_bottom_line_box(panel_zone):
 
     candidates.sort(key=lambda t: t[0], reverse=True)
     _, x, y, bw, bh = candidates[0]
-
-    return (x + x1, y + y1, bw, bh)
-
-
-def _find_points_badge_in_black_panel(panel_zone):
-    """
-    Version simple et robuste :
-    on prend directement la zone gauche du panneau noir.
-    """
-    if panel_zone is None or panel_zone.size == 0:
-        return None, None
-
-    ph, pw = panel_zone.shape[:2]
-    if ph == 0 or pw == 0:
-        return None, None
-
-    x = int(pw * 0.02)
-    y = int(ph * 0.10)
-    w = int(pw * 0.36)
-    h = int(ph * 0.78)
-
-    x, y, w, h = _clip_box(x, y, w, h, pw, ph)
-
-    crop = panel_zone[y:y + h, x:x + w]
-    if crop is None or crop.size == 0:
-        return None, None
-
-    return crop, (x, y, w, h)
+    return x + x1, y + y1, bw, bh
 
 
-def analyze_bottom_layout(bottom_zone):
-    """
-    Analyse le ROI complet du bas.
-    """
+def analyze_bottom(bottom_zone, digits_dir):
     result = {
         "layout": "UNKNOWN",
         "points": None,
@@ -1246,7 +877,7 @@ def analyze_bottom_layout(bottom_zone):
         "slash_box": None,
         "right_icon_box": None,
         "bottom_line_box": None,
-        "special_box": None
+        "special_box": None,
     }
 
     if bottom_zone is None or bottom_zone.size == 0:
@@ -1271,683 +902,160 @@ def analyze_bottom_layout(bottom_zone):
     result["panel_box"] = panel_box
 
     badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
-
-    raw_points_digit = None
-    points_digit = None
-    points_score = 0.0
-    points_gap = 0.0
-
     if badge_crop is not None and badge_box_local is not None:
-        raw_points_digit, points_score, points_gap = detect_digit(badge_crop)
+        digit_res = detect_digit(badge_crop, digits_dir)
+        result["raw_points"] = digit_res["digit"]
+        result["points_score"] = float(digit_res["score"])
+        result["points_gap"] = float(digit_res["gap"])
 
-        if points_score >= 0.72:
-            points_digit = raw_points_digit
-        elif points_score >= 0.60 and points_gap >= 0.02:
-            points_digit = raw_points_digit
-        else:
-            points_digit = None
+        if digit_res["score"] >= 0.72 or (digit_res["score"] >= 0.60 and digit_res["gap"] >= 0.02):
+            result["points"] = digit_res["digit"]
 
-        bx, by, bw2, bh2 = badge_box_local
-        result["points_box"] = (px + bx, py + by, bw2, bh2)
+        bx, by, bw, bh = badge_box_local
+        result["points_box"] = _offset_box((bx, by, bw, bh), px, py)
+        result["digit_scores"] = digit_res["scores"]
 
     slash_box_local = _find_slash_box(panel_zone)
     if slash_box_local is not None:
         result["has_slash"] = True
         result["slash_box"] = _offset_box(slash_box_local, px, py)
 
-    right_box_local = _find_right_icon_box(panel_zone)
-    if right_box_local is not None:
-        result["has_right_icon"] = True
-        result["right_icon_box"] = _offset_box(right_box_local, px, py)
+    if result["has_slash"]:
+        right_box_local = _find_right_icon_box(panel_zone)
+        if right_box_local is not None:
+            result["has_right_icon"] = True
+            result["right_icon_box"] = _offset_box(right_box_local, px, py)
 
-    line_box_local = _find_bottom_line_box(panel_zone)
-    if line_box_local is not None:
-        result["has_bottom_line"] = True
-        result["bottom_line_box"] = _offset_box(line_box_local, px, py)
+        line_box_local = _find_bottom_line_box(panel_zone)
+        if line_box_local is not None:
+            result["has_bottom_line"] = True
+            result["bottom_line_box"] = _offset_box(line_box_local, px, py)
 
-    if points_digit is not None and not result["has_slash"] and not result["has_right_icon"]:
-        layout = "NUMBER_ONLY"
-    elif points_digit is not None and result["has_slash"] and result["has_right_icon"] and result["has_bottom_line"]:
-        layout = "NUMBER_ICON_LINE"
-    elif points_digit is not None and result["has_slash"] and result["has_right_icon"]:
-        layout = "NUMBER_ICON"
+    if result["points"] is not None and not result["has_slash"] and not result["has_right_icon"]:
+        result["layout"] = "NUMBER_ONLY"
+    elif result["points"] is not None and result["has_slash"] and result["has_right_icon"] and result["has_bottom_line"]:
+        result["layout"] = "NUMBER_ICON_LINE"
+    elif result["points"] is not None and result["has_slash"] and result["has_right_icon"]:
+        result["layout"] = "NUMBER_ICON"
     else:
-        layout = "BLACK_PANEL"
-
-    result["layout"] = layout
-    result["points"] = points_digit
-    result["raw_points"] = raw_points_digit
-    result["points_score"] = float(points_score)
-    result["points_gap"] = float(points_gap)
+        result["layout"] = "BLACK_PANEL"
 
     return result
 
 
-def compute_signature(img):
-    rois = []
+# =====================================================
+# DEBUG VISUEL
+# =====================================================
 
-    # On garde une base unique : image redressée normalisée en 200x300.
-    img = cv2.resize(img, (200, 300))
-    h, w = img.shape[:2]
+def draw_box(img, box, color, label):
+    if box is None:
+        return
+    x, y, w, h = box
+    cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+    cv2.putText(img, label, (x, max(15, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
-    # -------------------------------------------------
-    # COLOR
-    # -------------------------------------------------
-    x1 = int(w * 0.00)
-    x2 = int(w * 0.38)
-    y1 = int(h * 0.00)
-    y2 = int(h * 0.18)
 
-    zone = img[y1:y2, x1:x2]
+def build_overlay(full_img, bottom_box, result):
+    overlay = full_img.copy()
 
-    rois.append({
-        "type": "COLOR",
-        "x": x1,
-        "y": y1,
-        "w": x2 - x1,
-        "h": y2 - y1
-    })
+    draw_box(overlay, bottom_box, (255, 0, 255), "BOTTOM")
+    bx, by, _, _ = bottom_box
 
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    detected_color, color_debug, mean_bgr = detect_card_color(zone)
+    if result.get("panel_box") is not None:
+        draw_box(overlay, _offset_box(result["panel_box"], bx, by), (255, 255, 255), "PANEL")
+    if result.get("special_box") is not None:
+        draw_box(overlay, _offset_box(result["special_box"], bx, by), (0, 255, 255), "SPECIAL")
+    if result.get("points_box") is not None:
+        draw_box(overlay, _offset_box(result["points_box"], bx, by), (255, 255, 255), "POINTS")
+    if result.get("slash_box") is not None:
+        draw_box(overlay, _offset_box(result["slash_box"], bx, by), (220, 220, 220), "SLASH")
+    if result.get("right_icon_box") is not None:
+        draw_box(overlay, _offset_box(result["right_icon_box"], bx, by), (0, 255, 255), "ICON")
+    if result.get("bottom_line_box") is not None:
+        draw_box(overlay, _offset_box(result["bottom_line_box"], bx, by), (0, 255, 0), "LINE")
 
-    color_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "color": mean_bgr,
-        "detected": detected_color,
-        "debug": color_debug
-    }
-
-    # -------------------------------------------------
-    # SYMBOL
-    # -------------------------------------------------
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.20)
-    y1 = int(h * 0.20)
-    y2 = int(h * 0.31)
-
-    zone = img[y1:y2, x1:x2]
-
-    rois.append({
-        "type": "SYMBOL",
-        "x": x1,
-        "y": y1,
-        "w": x2 - x1,
-        "h": y2 - y1
-    })
-
-    gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
-
-    if symbol_score < 0.50 or symbol_gap < 0.06:
-        symbol_name = None
-
-    symbol_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "name": symbol_name,
-        "score": float(symbol_score),
-        "gap": float(symbol_gap)
-    }
-
-    # -------------------------------------------------
-    # BOTTOM
-    # -------------------------------------------------
-    # IMPORTANT :
-    # La signature principale doit utiliser exactement le même pipeline
-    # que /bottom-test, sinon on débugue un moteur A et la prod tourne sur B.
-    full_img, bottom_zone, bottom_box = extract_bottom_roi_from_full_card(img)
-    bottom_x1, bottom_y1, bottom_w, bottom_h = bottom_box
-
-    rois.append({
-        "type": "BOTTOM",
-        "x": bottom_x1,
-        "y": bottom_y1,
-        "w": bottom_w,
-        "h": bottom_h
-    })
-
-    bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
-    bottom_layout = analyze_bottom(bottom_zone, DIGITS_DIR)
-
-    panel_box = bottom_layout.get("panel_box")
-    if panel_box is not None:
-        x, y, bw2, bh2 = panel_box
-        rois.append({
-            "type": "BOTTOM_PANEL",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    special_box = bottom_layout.get("special_box")
-    if special_box is not None:
-        x, y, bw2, bh2 = special_box
-        rois.append({
-            "type": "BOTTOM_SPECIAL",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    points_box = bottom_layout.get("points_box")
-    if points_box is not None:
-        x, y, bw2, bh2 = points_box
-        rois.append({
-            "type": "POINTS_BADGE",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    slash_box = bottom_layout.get("slash_box")
-    if slash_box is not None:
-        x, y, bw2, bh2 = slash_box
-        rois.append({
-            "type": "BOTTOM_SLASH",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    right_box = bottom_layout.get("right_icon_box")
-    if right_box is not None:
-        x, y, bw2, bh2 = right_box
-        rois.append({
-            "type": "BOTTOM_RIGHT_ICON",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    line_box = bottom_layout.get("bottom_line_box")
-    if line_box is not None:
-        x, y, bw2, bh2 = line_box
-        rois.append({
-            "type": "BOTTOM_LINE",
-            "x": bottom_x1 + x,
-            "y": bottom_y1 + y,
-            "w": bw2,
-            "h": bh2
-        })
-
-    if points_box is not None:
-        px, py, pw2, ph2 = points_box
-        badge_crop = bottom_zone[py:py + ph2, px:px + pw2]
-
-        if badge_crop is not None and badge_crop.size > 0:
-            gray_badge = cv2.cvtColor(badge_crop, cv2.COLOR_BGR2GRAY)
-            points_mean = float(np.mean(gray_badge))
-            points_std = float(np.std(gray_badge))
-            points_found = True
-        else:
-            points_mean = 0.0
-            points_std = 0.0
-            points_found = False
-    else:
-        points_mean = 0.0
-        points_std = 0.0
-        points_found = False
-
-    points_sig = {
-        "mean": points_mean,
-        "std": points_std,
-        "digit": bottom_layout.get("points"),
-        "raw_digit": bottom_layout.get("raw_points"),
-        "score": float(bottom_layout.get("points_score", 0.0)),
-        "gap": float(bottom_layout.get("points_gap", 0.0)),
-        "found": bool(points_found)
-    }
-
-    bottom_layout_sig = {
-        "layout": bottom_layout.get("layout"),
-        "points": bottom_layout.get("points"),
-        "raw_points": bottom_layout.get("raw_points"),
-        "points_score": float(bottom_layout.get("points_score", 0.0)),
-        "points_gap": float(bottom_layout.get("points_gap", 0.0)),
-        "has_slash": bool(bottom_layout.get("has_slash", False)),
-        "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
-        "has_bottom_line": bool(bottom_layout.get("has_bottom_line", False)),
-        "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False))
-    }
-
-    # -------------------------------------------------
-    # GLOBAL
-    # -------------------------------------------------
-    rois.append({
-        "type": "GLOBAL",
-        "x": 0,
-        "y": 0,
-        "w": w,
-        "h": h
-    })
-
-    global_sig = compute_patch_signature(img, size=(16, 16))
-
-    return {
-        "color": color_sig,
-        "symbol": symbol_sig,
-        "points": points_sig,
-        "bottom": bottom_sig,
-        "bottom_layout": bottom_layout_sig,
-        "global": global_sig
-    }, rois
-
-def compute_signature_safe(img):
-    if img is None or img.size == 0:
-        return None, []
-    return compute_signature(img)
-
+    return overlay
 
 
 # =====================================================
-# GEOMETRY
+# MAIN
 # =====================================================
 
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-
-    return rect
-
-
-def warp_quad(img, pts):
-    rect = order_points(pts)
-    (tl, tr, br, bl) = rect
-
-    wA = np.linalg.norm(br - bl)
-    wB = np.linalg.norm(tr - tl)
-
-    hA = np.linalg.norm(tr - br)
-    hB = np.linalg.norm(tl - bl)
-
-    maxW = int(max(wA, wB))
-    maxH = int(max(hA, hB))
-
-    if maxW < 10 or maxH < 10:
-        return None
-
-    dst = np.array([
-        [0, 0],
-        [maxW - 1, 0],
-        [maxW - 1, maxH - 1],
-        [0, maxH - 1]
-    ], dtype="float32")
-
-    M = cv2.getPerspectiveTransform(rect, dst)
-    warp = cv2.warpPerspective(img, M, (maxW, maxH))
-
-    return warp
-
-
-def crop_percent(img, x1, y1, x2, y2):
-    h, w = img.shape[:2]
-
-    xa = max(0, min(w, int(w * x1)))
-    xb = max(0, min(w, int(w * x2)))
-    ya = max(0, min(h, int(h * y1)))
-    yb = max(0, min(h, int(h * y2)))
-
-    if xb <= xa or yb <= ya:
-        return None
-
-    return img[ya:yb, xa:xb]
-
-
-
-# =====================================================
-# CARDS.JS HELPERS
-# =====================================================
-
-def load_cards_js():
-    with open(CARDS_JS_PATH, "r", encoding="utf-8") as f:
-        txt = f.read()
-
-    txt = txt.replace("window.CARDS =", "", 1).strip()
-
-    if txt.endswith(";"):
-        txt = txt[:-1]
-
-    return json.loads(txt)
-
-
-def save_cards_js(cards):
-    with open(CARDS_JS_PATH, "w", encoding="utf-8") as f:
-        f.write("window.CARDS = ")
-        json.dump(cards, f, indent=2, ensure_ascii=False)
-
-
-def find_card_image(card_id):
-    base = card_id.lower()
-    for ext in [".jpeg", ".jpg", ".png"]:
-        path = os.path.join(CARDS_DIR, base + ext)
-        if os.path.exists(path):
-            return path
-    return None
-
-
-# =====================================================
-# DETECT MAIN CARD
-# =====================================================
-
-def detect_main_card(img):
-    if img is None or img.size == 0:
-        return None
-
-    max_dim = 1400
-
-    h, w = img.shape[:2]
-    scale = 1.0
-
-    if max(h, w) > max_dim:
-        scale = max_dim / float(max(h, w))
-        img = cv2.resize(img, (int(w * scale), int(h * scale)))
-
-    h, w = img.shape[:2]
-    image_area = h * w
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    edges = cv2.Canny(blur, 60, 150)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    edges = cv2.dilate(edges, kernel, iterations=1)
-    edges = cv2.erode(edges, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(
-        edges,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
-        return None
-
-    candidates = []
-
-    for c in contours:
-        area = cv2.contourArea(c)
-
-        if area < image_area * 0.15:
-            continue
-
-        if area > image_area * 0.98:
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4:
-            quad = approx.reshape(4, 2).astype("float32")
-        else:
-            rect = cv2.minAreaRect(c)
-            quad = cv2.boxPoints(rect).astype("float32")
-
-        warp = warp_quad(img, quad)
-        if warp is None:
-            continue
-
-        wh, ww = warp.shape[:2]
-        if ww == 0 or wh == 0:
-            continue
-
-        ratio = wh / float(ww)
-
-        if ratio < 1.2 or ratio > 1.8:
-            continue
-
-        candidates.append((area, quad))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    quad = candidates[0][1]
-
-    if scale != 1.0:
-        quad = quad / scale
-
-    quad = order_points(quad)
-
-    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
-
-    return {
-        "x": int(x),
-        "y": int(y),
-        "w": int(bw),
-        "h": int(bh),
-        "quad": quad.astype(int).tolist()
-    }
-
-
-# =====================================================
-# ROUTES
-# =====================================================
-
-@app.route("/test")
-def test():
-    return "OK TEST"
-
-
-@app.route("/")
-def index():
-    return send_from_directory(BASE_DIR, "index.html")
-
-
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory(BASE_DIR, path)
-
-
-# =====================================================
-# UPLOAD
-# =====================================================
-
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        if "image" not in request.files:
-            return jsonify({"rects": [], "signature": None, "rois": []})
-
-        file = request.files["image"]
-
-        data = np.frombuffer(file.read(), np.uint8)
-        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-
-        if img is None:
-            return jsonify({"rects": [], "signature": None, "rois": []})
-
-        rect = detect_main_card(img)
-
-        if rect is None:
-            return jsonify({"rects": [], "signature": None, "rois": []})
-
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
-        sig = None
-        rois = []
-
-        if warped is not None:
-            cv2.imwrite(WARP_PATH, warped)
-            sig, rois = compute_signature(warped)
-
-        return jsonify({
-            "rects": [rect],
-            "signature": sig,
-            "rois": rois
-        })
-
-    except Exception as e:
-        print("UPLOAD ERROR:", e)
-        return jsonify({
-            "rects": [],
-            "signature": None,
-            "rois": []
-        })
-
-
-@app.route("/warp")
-def warp():
-    if not os.path.exists(WARP_PATH):
-        return "warp not found", 404
-    return send_from_directory(BASE_DIR, "warp.jpg")
-
-
-# =====================================================
-# BUILD SIGNATURES
-# =====================================================
-
-@app.route("/build_signatures")
-def build_signatures():
-    try:
-        cards = load_cards_js()
-
-        for c in cards:
-            card_id = c.get("id")
-            if not card_id:
-                continue
-
-            path = find_card_image(card_id)
-            if path is None:
-                continue
-
-            img = cv2.imread(path)
-            if img is None:
-                continue
-
-            h, w = img.shape[:2]
-
-            quad = np.array([
-                [0, 0],
-                [w - 1, 0],
-                [w - 1, h - 1],
-                [0, h - 1]
-            ], dtype="float32")
-
-            warped = warp_quad(img, quad)
-            if warped is None:
-                continue
-
-            sig, _ = compute_signature(warped)
-
-            c["signature"] = {
-                "scan": sig
-            }
-
-        save_cards_js(cards)
-        return "OK"
-
-    except Exception as e:
-        print("BUILD SIGNATURES ERROR:", e)
-        return "ERROR", 500
-
-
-# =====================================================
-# BOTTOM TEST
-# =====================================================
-
-@app.route("/bottom-test", methods=["GET", "POST"])
-def bottom_test():
-    if request.method == "GET":
-        return """
-        <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Bottom Test</title>
-        </head>
-        <body style="font-family:Arial,sans-serif; padding:20px;">
-          <h1>Test du bas de carte</h1>
-          <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
-
-          <form method="post" enctype="multipart/form-data">
-            <input type="file" name="image" accept="image/*" required />
-            <button type="submit">Analyser</button>
-          </form>
-        </body>
-        </html>
-        """
-
-    if "image" not in request.files:
-        return "Aucun fichier envoyé", 400
-
-    file = request.files["image"]
-    if not file or file.filename == "":
-        return "Fichier vide", 400
-
-    data = file.read()
-    if not data:
-        return "Impossible de lire le fichier", 400
-
-    np_arr = np.frombuffer(data, np.uint8)
-    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+def main():
+    parser = argparse.ArgumentParser(description="Debug du ROI bottom de Space Lab")
+    parser.add_argument("--image", required=True, help="image d'une carte complète, ou d'un crop du bas")
+    parser.add_argument("--mode", choices=["full", "bottom"], default="full", help="full = carte complète, bottom = crop du bas")
+    parser.add_argument("--digits-dir", default=None, help="dossier digits contenant 1.png à 10.png")
+    parser.add_argument("--out-dir", default="bottom_debug_out", help="dossier de sortie pour les images debug")
+    args = parser.parse_args()
+
+    image_path = Path(args.image)
+    if not image_path.exists():
+        raise FileNotFoundError(f"Image introuvable : {image_path}")
+
+    digits_dir = Path(args.digits_dir) if args.digits_dir else (Path(__file__).resolve().parent / "digits")
+    if not digits_dir.exists():
+        raise FileNotFoundError(
+            f"Dossier digits introuvable : {digits_dir}\n"
+            f"Ajoute --digits-dir /chemin/vers/digits"
+        )
+
+    img = cv2.imread(str(image_path))
     if img is None:
-        return "Image invalide", 400
+        raise RuntimeError(f"Impossible de lire l'image : {image_path}")
 
-    full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
-    result = analyze_bottom(bottom_roi, DIGITS_DIR)
-    overlay = build_overlay(full_img, bottom_box, result)
+    if args.mode == "full":
+        full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
+    else:
+        full_img = img.copy()
+        bottom_roi = img.copy()
+        h, w = img.shape[:2]
+        bottom_box = (0, 0, w, h)
 
-    points_crop = None
-    badge_norm = None
-    digit_mask = None
+    result = analyze_bottom(bottom_roi, digits_dir)
 
-    points_box = result.get("points_box")
-    if points_box is not None:
-        x, y, w, h = points_box
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    _save_image(out_dir / "01_full_or_input.png", full_img)
+    _save_image(out_dir / "02_bottom_roi.png", bottom_roi)
+
+    if result.get("panel_box") is not None:
+        x, y, w, h = result["panel_box"]
+        _save_image(out_dir / "03_panel.png", bottom_roi[y:y + h, x:x + w])
+
+    if result.get("points_box") is not None:
+        x, y, w, h = result["points_box"]
         points_crop = bottom_roi[y:y + h, x:x + w]
-        if points_crop is not None and points_crop.size != 0:
-            badge_norm = _normalize_badge(points_crop)
-            digit_mask = _extract_digit_mask(points_crop)
+        _save_image(out_dir / "04_points_crop.png", points_crop)
 
-    full_b64 = _img_to_base64(full_img)
-    bottom_b64 = _img_to_base64(bottom_roi)
-    overlay_b64 = _img_to_base64(overlay)
-    points_b64 = _img_to_base64(points_crop) if points_crop is not None else None
-    badge_b64 = _img_to_base64(badge_norm) if badge_norm is not None else None
-    digit_b64 = _img_to_base64(digit_mask) if digit_mask is not None else None
+        badge_norm = _normalize_badge(points_crop)
+        if badge_norm is not None:
+            _save_image(out_dir / "05_points_badge_norm.png", badge_norm)
 
-    pretty_json = json.dumps(result, indent=2, ensure_ascii=False)
+        digit_mask = _extract_digit_mask(points_crop)
+        if digit_mask is not None:
+            _save_image(out_dir / "06_points_digit_mask.png", digit_mask)
 
-    return f"""
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>Bottom Test</title>
-    </head>
-    <body style="font-family:Arial,sans-serif; padding:20px;">
-      <h1>Résultat du test du bas</h1>
-      <p><a href="/bottom-test">← Revenir au formulaire</a></p>
-      <h2>Résultat JSON</h2>
-      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
-      {_html_img_block("Image complète", full_b64)}
-      {_html_img_block("ROI du bas", bottom_b64)}
-      {_html_img_block("Overlay debug", overlay_b64)}
-      {_html_img_block("Crop points", points_b64)}
-      {_html_img_block("Badge normalisé", badge_b64)}
-      {_html_img_block("Masque du chiffre", digit_b64)}
-    </body>
-    </html>
-    """
+    overlay = build_overlay(full_img, bottom_box, result)
+    _save_image(out_dir / "99_overlay.png", overlay)
 
+    json_result = {
+        "image": str(image_path),
+        "mode": args.mode,
+        "digits_dir": str(digits_dir),
+        "bottom_box": bottom_box,
+        "result": result,
+    }
 
-# =====================================================
-# RUN
-# =====================================================
+    with open(out_dir / "result.json", "w", encoding="utf-8") as f:
+        json.dump(json_result, f, indent=2, ensure_ascii=False)
+
+    print(json.dumps(json_result, indent=2, ensure_ascii=False))
+    print()
+    print(f"Images debug écrites dans : {out_dir}")
+    print(f"Overlay principal : {out_dir / '99_overlay.png'}")
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    main()
