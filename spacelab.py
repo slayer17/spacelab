@@ -14,7 +14,7 @@ from bottom import (
     build_overlay,
 )
 
-app = Flask(__name__) Flask(__name__)
+app = Flask(__name__)
 def _img_to_base64(img):
     if img is None or img.size == 0:
         return None
