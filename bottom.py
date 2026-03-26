@@ -136,7 +136,7 @@ def _extract_digit_mask(img_or_mask, target=64):
     contours, _ = cv2.findContours(
         white_mask,
         cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
+        cv2.CHAIN_APPROX_SIMPLE,
     )
     if not contours:
         return None
@@ -170,13 +170,13 @@ def _extract_digit_mask(img_or_mask, target=64):
     digit_mask = cv2.morphologyEx(
         digit_mask,
         cv2.MORPH_OPEN,
-        np.ones((2, 2), np.uint8)
+        np.ones((2, 2), np.uint8),
     )
 
     contours, _ = cv2.findContours(
         digit_mask,
         cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
+        cv2.CHAIN_APPROX_SIMPLE,
     )
     if not contours:
         return None
@@ -357,12 +357,12 @@ def _digit_score(full_a, full_b, digit_a=None, digit_b=None):
     contour_score = _contour_match_score(digit_a, digit_b)
 
     return float(
-        full_score +
-        (shape_score * 0.24) +
-        (projection_score * 0.24) +
-        (bbox_score * 0.10) +
-        (hole_score * 0.10) +
-        (contour_score * 0.20)
+        full_score
+        + (shape_score * 0.24)
+        + (projection_score * 0.24)
+        + (bbox_score * 0.10)
+        + (hole_score * 0.10)
+        + (contour_score * 0.20)
     )
 
 
@@ -372,7 +372,7 @@ def detect_digit(zone, digits_dir):
             "digit": None,
             "score": 0.0,
             "gap": 0.0,
-            "scores": []
+            "scores": [],
         }
 
     scan_badge = _normalize_badge(zone)
@@ -381,7 +381,7 @@ def detect_digit(zone, digits_dir):
             "digit": None,
             "score": 0.0,
             "gap": 0.0,
-            "scores": []
+            "scores": [],
         }
 
     scan_digit = _extract_digit_mask(zone)
@@ -407,7 +407,7 @@ def detect_digit(zone, digits_dir):
             "digit": None,
             "score": 0.0,
             "gap": 0.0,
-            "scores": []
+            "scores": [],
         }
 
     scores = sorted(scores, key=lambda x: x["score"], reverse=True)
@@ -419,7 +419,7 @@ def detect_digit(zone, digits_dir):
         "digit": int(best["digit"]),
         "score": float(best["score"]),
         "gap": float(best["score"] - second["score"]),
-        "scores": scores
+        "scores": scores,
     }
 
 
@@ -567,22 +567,23 @@ def _find_special_white_panel_box(bottom_zone):
 def _find_points_badge_in_black_panel(panel_zone):
     """
     Cherche le badge blanc des points dans la partie gauche du panneau noir.
-    L'objectif est d'obtenir un crop centré sur le badge, pas un gros rectangle fixe.
+    On évite les faux blobs collés au bord et on garde un fallback fixe propre.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
 
     ph, pw = panel_zone.shape[:2]
-    if ph <= 0 or pw <= 0:
+    if ph == 0 or pw == 0:
         return None, None
 
-    # Zone de recherche plus serrée : seulement la partie gauche utile.
-    sx1 = int(pw * 0.00)
-    sx2 = int(pw * 0.44)
-    sy1 = int(ph * 0.06)
-    sy2 = int(ph * 0.96)
+    # Zone de recherche : légèrement plus large que l'actuelle,
+    # mais sans partir trop loin vers le slash.
+    sx = int(pw * 0.00)
+    sy = int(ph * 0.06)
+    sw = int(pw * 0.52)
+    sh = int(ph * 0.88)
+    sx, sy, sw, sh = _clip_box(sx, sy, sw, sh, pw, ph)
 
-    sx, sy, sw, sh = _clip_box(sx1, sy1, sx2 - sx1, sy2 - sy1, pw, ph)
     search = panel_zone[sy:sy + sh, sx:sx + sw]
     if search is None or search.size == 0:
         return None, None
@@ -591,9 +592,8 @@ def _find_points_badge_in_black_panel(panel_zone):
     gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    mask_hsv = cv2.inRange(hsv, (0, 0, 125), (180, 110, 255))
-    _, mask_gray = cv2.threshold(blur, 145, 255, cv2.THRESH_BINARY)
-
+    mask_hsv = cv2.inRange(hsv, (0, 0, 125), (180, 105, 255))
+    _, mask_gray = cv2.threshold(blur, 148, 255, cv2.THRESH_BINARY)
     mask = cv2.bitwise_or(mask_hsv, mask_gray)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -601,7 +601,6 @@ def _find_points_badge_in_black_panel(panel_zone):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     candidates = []
     zh, zw = search.shape[:2]
 
@@ -613,32 +612,42 @@ def _find_points_badge_in_black_panel(panel_zone):
 
         area_ratio = area / float(max(zw * zh, 1))
 
-        if area_ratio < 0.035 or area_ratio > 0.38:
+        # Taille plausible du badge
+        if area_ratio < 0.03 or area_ratio > 0.28:
             continue
-        if x > zw * 0.30:
+
+        # On veut un badge vraiment dans la partie gauche
+        if x > zw * 0.24:
             continue
-        if bw < zw * 0.18 or bw > zw * 0.72:
+
+        # On évite les blobs collés aux bords du crop de recherche
+        if x <= 1:
             continue
-        if bh < zh * 0.28 or bh > zh * 0.95:
+        if (x + bw) >= (zw - 1):
+            continue
+
+        if bw < zw * 0.16 or bw > zw * 0.48:
+            continue
+        if bh < zh * 0.28 or bh > zh * 0.82:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 0.45 or ratio > 1.25:
+        if ratio < 0.40 or ratio > 1.10:
             continue
 
         cx = x + (bw / 2.0)
         cy = y + (bh / 2.0)
 
-        left_score = 1.0 - min(cx / float(max(zw * 0.45, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.35, 1)), 1.0)
-        size_score = 1.0 - min(abs(area_ratio - 0.15) / 0.15, 1.0)
-        ratio_score = 1.0 - min(abs(ratio - 0.78) / 0.50, 1.0)
+        left_score = 1.0 - min(cx / float(max(zw * 0.38, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.32, 1)), 1.0)
+        size_score = 1.0 - min(abs(area_ratio - 0.12) / 0.12, 1.0)
+        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.40, 1.0)
 
         score = (
-            (left_score * 3.0) +
-            (center_y_score * 2.0) +
-            (size_score * 2.0) +
-            (ratio_score * 1.5)
+            (left_score * 2.5)
+            + (center_y_score * 1.8)
+            + (size_score * 2.2)
+            + (ratio_score * 1.2)
         )
 
         candidates.append((score, x, y, bw, bh))
@@ -647,6 +656,7 @@ def _find_points_badge_in_black_panel(panel_zone):
         candidates.sort(key=lambda t: t[0], reverse=True)
         _, x, y, bw, bh = candidates[0]
 
+        # Petite marge pour ne pas couper le badge
         pad_x = max(2, int(bw * 0.10))
         pad_y = max(2, int(bh * 0.10))
 
@@ -659,18 +669,20 @@ def _find_points_badge_in_black_panel(panel_zone):
         if crop is not None and crop.size > 0:
             return crop, (x + sx, y + sy, bw, bh)
 
-    # Fallback plus petit et plus propre que le rectangle large actuel.
-    fx = int(pw * 0.00)
+    # Fallback fixe : un peu plus large que le crop actuel (22 px),
+    # mais plus propre que les anciens crops trop larges.
+    fx = int(pw * 0.04)
     fy = int(ph * 0.10)
-    fw = int(pw * 0.40)
-    fh = int(ph * 0.82)
-
+    fw = int(pw * 0.46)
+    fh = int(ph * 0.78)
     fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
+
     crop = panel_zone[fy:fy + fh, fx:fx + fw]
     if crop is None or crop.size == 0:
         return None, None
 
     return crop, (fx, fy, fw, fh)
+
 
 def _find_slash_box(panel_zone):
     if panel_zone is None or panel_zone.size == 0:
@@ -747,7 +759,7 @@ def _find_right_icon_box(panel_zone):
     contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
+        cv2.CHAIN_APPROX_SIMPLE,
     )
 
     candidates = []
@@ -964,7 +976,12 @@ def build_overlay(full_img, bottom_box, result):
 def main():
     parser = argparse.ArgumentParser(description="Debug du ROI bottom de Space Lab")
     parser.add_argument("--image", required=True, help="image d'une carte complète, ou d'un crop du bas")
-    parser.add_argument("--mode", choices=["full", "bottom"], default="full", help="full = carte complète, bottom = crop du bas")
+    parser.add_argument(
+        "--mode",
+        choices=["full", "bottom"],
+        default="full",
+        help="full = carte complète, bottom = crop du bas",
+    )
     parser.add_argument("--digits-dir", default=None, help="dossier digits contenant 1.png à 10.png")
     parser.add_argument("--out-dir", default="bottom_debug_out", help="dossier de sortie pour les images debug")
     args = parser.parse_args()
