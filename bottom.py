@@ -567,7 +567,7 @@ def _find_special_white_panel_box(bottom_zone):
 def _find_points_badge_in_black_panel(panel_zone):
     """
     Cherche le badge blanc des points dans la partie gauche du panneau noir.
-    Version plus tolérante : moins de rejets durs, plus de scoring.
+    On évite les faux blobs collés au bord et on garde un fallback fixe propre.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -576,11 +576,12 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    # Zone de recherche plus large
+    # Zone de recherche : légèrement plus large que l'actuelle,
+    # mais sans partir trop loin vers le slash.
     sx = int(pw * 0.00)
-    sy = int(ph * 0.04)
-    sw = int(pw * 0.56)
-    sh = int(ph * 0.90)
+    sy = int(ph * 0.06)
+    sw = int(pw * 0.52)
+    sh = int(ph * 0.88)
     sx, sy, sw, sh = _clip_box(sx, sy, sw, sh, pw, ph)
 
     search = panel_zone[sy:sy + sh, sx:sx + sw]
@@ -591,8 +592,8 @@ def _find_points_badge_in_black_panel(panel_zone):
     gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    mask_hsv = cv2.inRange(hsv, (0, 0, 120), (180, 120, 255))
-    _, mask_gray = cv2.threshold(blur, 142, 255, cv2.THRESH_BINARY)
+    mask_hsv = cv2.inRange(hsv, (0, 0, 125), (180, 105, 255))
+    _, mask_gray = cv2.threshold(blur, 148, 255, cv2.THRESH_BINARY)
     mask = cv2.bitwise_or(mask_hsv, mask_gray)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -600,7 +601,6 @@ def _find_points_badge_in_black_panel(panel_zone):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     candidates = []
     zh, zw = search.shape[:2]
 
@@ -611,140 +611,78 @@ def _find_points_badge_in_black_panel(panel_zone):
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-        if area_ratio < 0.02 or area_ratio > 0.45:
+
+        # Taille plausible du badge
+        if area_ratio < 0.03 or area_ratio > 0.28:
             continue
-        if bw < zw * 0.12 or bh < zh * 0.22:
+
+        # On veut un badge vraiment dans la partie gauche
+        if x > zw * 0.24:
+            continue
+
+        # On évite les blobs collés aux bords du crop de recherche
+        if x <= 1:
+            continue
+        if (x + bw) >= (zw - 1):
+            continue
+
+        if bw < zw * 0.16 or bw > zw * 0.48:
+            continue
+        if bh < zh * 0.28 or bh > zh * 0.82:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 0.30 or ratio > 1.35:
+        if ratio < 0.40 or ratio > 1.10:
             continue
 
         cx = x + (bw / 2.0)
         cy = y + (bh / 2.0)
 
-        left_score = 1.0 - min(cx / float(max(zw * 0.55, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.36, 1)), 1.0)
-        size_score = 1.0 - min(abs(area_ratio - 0.12) / 0.16, 1.0)
-        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.55, 1.0)
-
-        edge_penalty = 0.0
-        if x <= 1:
-            edge_penalty += 0.25
-        if (x + bw) >= (zw - 1):
-            edge_penalty += 0.20
-        if x > zw * 0.32:
-def _find_points_badge_in_black_panel(panel_zone):
-    """
-    Cherche le badge blanc des points dans la partie gauche du panneau noir.
-    Version plus tolérante : moins de rejets durs, plus de scoring.
-    """
-    if panel_zone is None or panel_zone.size == 0:
-        return None, None
-
-    ph, pw = panel_zone.shape[:2]
-    if ph == 0 or pw == 0:
-        return None, None
-
-    # Zone de recherche plus large
-    sx = int(pw * 0.00)
-    sy = int(ph * 0.04)
-    sw = int(pw * 0.56)
-    sh = int(ph * 0.90)
-    sx, sy, sw, sh = _clip_box(sx, sy, sw, sh, pw, ph)
-
-    search = panel_zone[sy:sy + sh, sx:sx + sw]
-    if search is None or search.size == 0:
-        return None, None
-
-    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (3, 3), 0)
-
-    mask_hsv = cv2.inRange(hsv, (0, 0, 120), (180, 120, 255))
-    _, mask_gray = cv2.threshold(blur, 142, 255, cv2.THRESH_BINARY)
-    mask = cv2.bitwise_or(mask_hsv, mask_gray)
-
-    kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    candidates = []
-    zh, zw = search.shape[:2]
-
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-        if area <= 0:
-            continue
-
-        area_ratio = area / float(max(zw * zh, 1))
-        # Filtres de base très larges
-        if area_ratio < 0.02 or area_ratio > 0.45:
-            continue
-        if bw < zw * 0.12 or bh < zh * 0.22:
-            continue
-
-        ratio = bw / float(max(bh, 1))
-        if ratio < 0.30 or ratio > 1.35:
-            continue
-
-        cx = x + (bw / 2.0)
-        cy = y + (bh / 2.0)
-
-        # Calcul des scores de confiance
-        left_score = 1.0 - min(cx / float(max(zw * 0.55, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.36, 1)), 1.0)
-        size_score = 1.0 - min(abs(area_ratio - 0.12) / 0.16, 1.0)
-        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.55, 1.0)
-
-        # Application des pénalités
-        edge_penalty = 0.0
-        if x <= 1:
-            edge_penalty += 0.25
-        if (x + bw) >= (zw - 1):
-            edge_penalty += 0.20
-        if x > zw * 0.32:
-            edge_penalty += 0.40
+        left_score = 1.0 - min(cx / float(max(zw * 0.38, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.32, 1)), 1.0)
+        size_score = 1.0 - min(abs(area_ratio - 0.12) / 0.12, 1.0)
+        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.40, 1.0)
 
         score = (
-            (left_score * 2.5) + 
-            (center_y_score * 1.5) + 
-            (size_score * 2.0) + 
-            (ratio_score * 1.0)
-        ) - edge_penalty
+            (left_score * 2.5)
+            + (center_y_score * 1.8)
+            + (size_score * 2.2)
+            + (ratio_score * 1.2)
+        )
 
         candidates.append((score, x, y, bw, bh))
 
     if candidates:
         candidates.sort(key=lambda t: t[0], reverse=True)
-        best_score, x, y, bw, bh = candidates[0]
+        _, x, y, bw, bh = candidates[0]
 
-        # Seuil minimal de confiance pour accepter la détection dynamique
-        if best_score > 1.5:
-            pad_x = max(2, int(bw * 0.08))
-            pad_y = max(2, int(bh * 0.08))
-            
-            rx = max(0, x - pad_x)
-            ry = max(0, y - pad_y)
-            rw = min(zw - rx, bw + (2 * pad_x))
-            rh = min(zh - ry, bh + (2 * pad_y))
+        # Petite marge pour ne pas couper le badge
+        pad_x = max(2, int(bw * 0.10))
+        pad_y = max(2, int(bh * 0.10))
 
-            crop = search[ry:ry + rh, rx:rx + rw]
-            if crop is not None and crop.size > 0:
-                return crop, (rx + sx, ry + sy, rw, rh)
+        x = max(0, x - pad_x)
+        y = max(0, y - pad_y)
+        bw = min(zw - x, bw + (2 * pad_x))
+        bh = min(zh - y, bh + (2 * pad_y))
 
-    # Fallback fixe si aucune détection n'est convaincante
+        crop = search[y:y + bh, x:x + bw]
+        if crop is not None and crop.size > 0:
+            return crop, (x + sx, y + sy, bw, bh)
+
+    # Fallback fixe : un peu plus large que le crop actuel (22 px),
+    # mais plus propre que les anciens crops trop larges.
     fx = int(pw * 0.04)
-    fy = int(ph * 0.08)
-    fw = int(pw * 0.48)
-    fh = int(ph * 0.82)
+    fy = int(ph * 0.10)
+    fw = int(pw * 0.46)
+    fh = int(ph * 0.78)
     fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
-    
+
     crop = panel_zone[fy:fy + fh, fx:fx + fw]
+    if crop is None or crop.size == 0:
+        return None, None
+
     return crop, (fx, fy, fw, fh)
+
 
 def _find_slash_box(panel_zone):
     if panel_zone is None or panel_zone.size == 0:
