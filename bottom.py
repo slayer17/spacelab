@@ -114,20 +114,27 @@ def _normalize_badge(img_or_mask, target=96):
 
 def _extract_digit_mask(img_or_mask, target=64):
     """
-    Extrait seulement la forme noire du chiffre.
+    Extrait la forme noire du chiffre à l'intérieur du badge blanc.
+    Version plus robuste :
+    - enlève les composants collés au bord
+    - garde les composants centraux plausibles
+    - réduit le bruit qui fait confondre 1 / 5 / 6 / 7
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
 
+    # Conversion en niveaux de gris si nécessaire
     if len(img_or_mask.shape) == 3:
         gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
     else:
         gray = img_or_mask.copy()
 
+    # Prétraitement pour lisser le bruit et améliorer le contraste
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    _, white_mask = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)
+    # Détection du badge blanc (le fond du chiffre)
+    _, white_mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
     white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
@@ -136,11 +143,13 @@ def _extract_digit_mask(img_or_mask, target=64):
     contours, _ = cv2.findContours(
         white_mask,
         cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE,
+        cv2.CHAIN_APPROX_SIMPLE
     )
+    
     if not contours:
         return None
 
+    # Sélection du plus grand contour (le badge)
     best = max(contours, key=cv2.contourArea)
     if cv2.contourArea(best) < 20:
         return None
@@ -148,6 +157,7 @@ def _extract_digit_mask(img_or_mask, target=64):
     badge_fill = np.zeros_like(white_mask)
     cv2.drawContours(badge_fill, [best], -1, 255, thickness=-1)
 
+    # Découpe autour du badge
     x, y, w, h = cv2.boundingRect(best)
     crop_gray = gray[y:y + h, x:x + w]
     crop_badge = badge_fill[y:y + h, x:x + w]
@@ -155,13 +165,15 @@ def _extract_digit_mask(img_or_mask, target=64):
     if crop_gray is None or crop_gray.size == 0:
         return None
 
+    # Érosion pour éviter les artefacts de bordure du badge
     inner_badge = cv2.erode(crop_badge, np.ones((2, 2), np.uint8), iterations=1)
 
     badge_pixels = crop_gray[inner_badge > 0]
     if badge_pixels.size == 0:
         return None
 
-    dark_threshold = np.percentile(badge_pixels, 35)
+    # Seuil adaptatif basé sur les percentiles pour isoler le chiffre sombre
+    dark_threshold = np.percentile(badge_pixels, 42)
 
     digit_mask = np.zeros_like(crop_gray, dtype=np.uint8)
     digit_mask[crop_gray < dark_threshold] = 255
@@ -170,41 +182,96 @@ def _extract_digit_mask(img_or_mask, target=64):
     digit_mask = cv2.morphologyEx(
         digit_mask,
         cv2.MORPH_OPEN,
-        np.ones((2, 2), np.uint8),
+        np.ones((2, 2), np.uint8)
     )
 
-    contours, _ = cv2.findContours(
+    # Analyse des composants connectés pour isoler le chiffre des bruits
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         digit_mask,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE,
+        connectivity=8
     )
-    if not contours:
+
+    if num_labels <= 1:
         return None
 
-    min_area = max(4, int(digit_mask.shape[0] * digit_mask.shape[1] * 0.008))
+    h0, w0 = digit_mask.shape[:2]
+    badge_cx = w0 / 2.0
+    badge_cy = h0 / 2.0
+    min_area = max(4, int(h0 * w0 * 0.006))
 
-    clean = np.zeros_like(digit_mask)
-    kept = 0
+    keep = np.zeros_like(digit_mask)
+    scored = []
 
-    for c in contours:
-        if cv2.contourArea(c) >= min_area:
-            cv2.drawContours(clean, [c], -1, 255, thickness=-1)
-            kept += 1
+    for label in range(1, num_labels):
+        x0 = stats[label, cv2.CC_STAT_LEFT]
+        y0 = stats[label, cv2.CC_STAT_TOP]
+        w1 = stats[label, cv2.CC_STAT_WIDTH]
+        h1 = stats[label, cv2.CC_STAT_HEIGHT]
+        area = stats[label, cv2.CC_STAT_AREA]
 
-    if kept == 0:
+        if area < min_area:
+            continue
+
+        # Vérification si le composant touche les bords du crop
+        touches_border = (
+            x0 <= 0 or
+            y0 <= 0 or
+            (x0 + w1) >= (w0 - 1) or
+            (y0 + h1) >= (h0 - 1)
+        )
+
+        # Calcul du score basé sur la position centrale et la densité (fill ratio)
+        cx, cy = centroids[label]
+        center_x_score = 1.0 - min(abs(cx - badge_cx) / float(max(w0 * 0.45, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - badge_cy) / float(max(h0 * 0.45, 1)), 1.0)
+
+        fill_ratio = area / float(max(w1 * h1, 1))
+        fill_score = 1.0 - min(abs(fill_ratio - 0.40) / 0.40, 1.0)
+
+        score = (
+            (center_x_score * 1.6) +
+            (center_y_score * 1.6) +
+            (fill_score * 1.0)
+        )
+
+        # Pénalité si le composant est collé au bord (souvent du bruit)
+        if touches_border:
+            score -= 1.2
+
+        scored.append((score, label))
+
+    if not scored:
         return None
 
-    ys, xs = np.where(clean > 0)
+    # Tri par score décroissant
+    scored.sort(reverse=True, key=lambda t: t[0])
+
+    best_score = scored[0][0]
+    for score, label in scored:
+        # On garde le meilleur et ceux qui ont un score approchant
+        if score < max(0.25, best_score * 0.45):
+            continue
+        keep[labels == label] = 255
+
+    keep = cv2.morphologyEx(
+        keep,
+        cv2.MORPH_CLOSE,
+        np.ones((2, 2), np.uint8)
+    )
+
+    # Recadrage final sur le chiffre isolé
+    ys, xs = np.where(keep > 0)
     if len(xs) == 0 or len(ys) == 0:
         return None
 
     x1, x2 = xs.min(), xs.max()
     y1, y2 = ys.min(), ys.max()
 
-    crop = clean[y1:y2 + 1, x1:x2 + 1]
+    crop = keep[y1:y2 + 1, x1:x2 + 1]
     if crop is None or crop.size == 0:
         return None
 
+    # Centrage dans un canvas carré de taille 'target'
     canvas = np.zeros((target, target), dtype=np.uint8)
 
     ch, cw = crop.shape[:2]
