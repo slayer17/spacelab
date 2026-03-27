@@ -564,20 +564,21 @@ def _find_special_white_panel_box(bottom_zone):
     return _clip_box(x, y, bw, bh, w, h)
 
 
-def _find_points_badge_in_black_panel(panel_zone):
+
+def _score_points_badge_candidates(panel_zone):
     """
-    Cherche le badge blanc des points dans la partie gauche du panneau noir.
-    Version volontairement simple : on prend le meilleur contour clair trouvé,
-    sans seuil final trop dur, pour éviter de retomber sans cesse sur le fallback.
+    Retourne les meilleurs candidats pour le badge points.
+    Chaque entrée contient:
+      - box: (x, y, w, h) en coordonnées locales du panel
+      - score
     """
     if panel_zone is None or panel_zone.size == 0:
-        return None, None
+        return []
 
     ph, pw = panel_zone.shape[:2]
     if ph == 0 or pw == 0:
-        return None, None
+        return []
 
-    # Zone de recherche large sur la moitié gauche
     sx = int(pw * 0.00)
     sy = int(ph * 0.04)
     sw = int(pw * 0.58)
@@ -586,7 +587,7 @@ def _find_points_badge_in_black_panel(panel_zone):
 
     search = panel_zone[sy:sy + sh, sx:sx + sw]
     if search is None or search.size == 0:
-        return None, None
+        return []
 
     hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
@@ -643,12 +644,6 @@ def _find_points_badge_in_black_panel(panel_zone):
             edge_penalty
         )
 
-        candidates.append((score, x, y, bw, bh))
-
-    if candidates:
-        candidates.sort(key=lambda t: t[0], reverse=True)
-        _, x, y, bw, bh = candidates[0]
-
         pad_x = max(2, int(bw * 0.12))
         pad_y = max(2, int(bh * 0.12))
 
@@ -657,11 +652,34 @@ def _find_points_badge_in_black_panel(panel_zone):
         rw = min(zw - rx, bw + (2 * pad_x))
         rh = min(zh - ry, bh + (2 * pad_y))
 
-        crop = search[ry:ry + rh, rx:rx + rw]
-        if crop is not None and crop.size > 0:
-            return crop, (rx + sx, ry + sy, rw, rh)
+        candidates.append({
+            "score": float(score),
+            "box": (int(rx + sx), int(ry + sy), int(rw), int(rh)),
+            "raw_box": (int(x + sx), int(y + sy), int(bw), int(bh)),
+            "area_ratio": float(area_ratio),
+            "ratio": float(ratio),
+        })
 
-    # Fallback seulement si aucun contour exploitable n'a été trouvé
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates[:5]
+
+
+def _find_points_badge_in_black_panel(panel_zone):
+    """
+    Cherche le badge blanc des points dans la partie gauche du panneau noir.
+    Retourne le meilleur candidat trouvé, sinon un fallback fixe.
+    """
+    if panel_zone is None or panel_zone.size == 0:
+        return None, None
+
+    candidates = _score_points_badge_candidates(panel_zone)
+    if candidates:
+        x, y, w, h = candidates[0]["box"]
+        crop = panel_zone[y:y + h, x:x + w]
+        if crop is not None and crop.size > 0:
+            return crop, (x, y, w, h)
+
+    ph, pw = panel_zone.shape[:2]
     fx = int(pw * 0.03)
     fy = int(ph * 0.08)
     fw = int(pw * 0.50)
@@ -673,8 +691,8 @@ def _find_points_badge_in_black_panel(panel_zone):
         return None, None
 
     return crop, (fx, fy, fw, fh)
-    
-    
+
+
 def _find_slash_box(panel_zone):
     if panel_zone is None or panel_zone.size == 0:
         return None
@@ -861,6 +879,7 @@ def analyze_bottom(bottom_zone, digits_dir):
         "bottom_line_box": None,
         "special_box": None,
         "digit_scores": [],
+        "points_candidates": [],
     }
 
     if bottom_zone is None or bottom_zone.size == 0:
@@ -883,6 +902,19 @@ def analyze_bottom(bottom_zone, digits_dir):
         return result
 
     result["panel_box"] = panel_box
+
+    local_points_candidates = _score_points_badge_candidates(panel_zone)
+    if local_points_candidates:
+        result["points_candidates"] = [
+            {
+                "score": float(c["score"]),
+                "box": _offset_box(c["box"], px, py),
+                "raw_box": _offset_box(c["raw_box"], px, py),
+                "area_ratio": float(c["area_ratio"]),
+                "ratio": float(c["ratio"]),
+            }
+            for c in local_points_candidates
+        ]
 
     badge_crop, badge_box_local = _find_points_badge_in_black_panel(panel_zone)
     if badge_crop is not None and badge_box_local is not None:
@@ -1024,6 +1056,12 @@ def main():
         digit_mask = _extract_digit_mask(points_crop)
         if digit_mask is not None:
             _save_image(out_dir / "06_points_digit_mask.png", digit_mask)
+
+    for idx, cand in enumerate(result.get("points_candidates", [])[:5], start=1):
+        cx, cy, cw, ch = cand["box"]
+        cand_crop = bottom_roi[cy:cy + ch, cx:cx + cw]
+        if cand_crop is not None and cand_crop.size > 0:
+            _save_image(out_dir / f"07_candidate_{idx}.png", cand_crop)
 
     overlay = build_overlay(full_img, bottom_box, result)
     _save_image(out_dir / "99_overlay.png", overlay)
