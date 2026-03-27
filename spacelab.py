@@ -1944,7 +1944,52 @@ def bottom_test():
     </body>
     </html>
     """
+def verify_cards_integrity():
+    """
+    Vérifie que chaque entrée dans cards.js contient les champs obligatoires.
+    """
+    try:
+        # On utilise ta fonction de chargement existante
+        cards = load_cards_js()
+        
+        required_fields = ["symbol", "points", "bottom_layout"]
+        report = {
+            "valid": 0,
+            "missing_fields": [],
+            "total": len(cards)
+        }
 
+        for card in cards:
+            card_id = card.get("id", "Unknown ID")
+            missing = [field for field in required_fields if field not in card]
+            
+            if missing:
+                report["missing_fields"].append({
+                    "id": card_id,
+                    "missing": missing
+                })
+            else:
+                report["valid"] += 1
+
+        # Affichage du résultat
+        print(f"--- Rapport de vérification ---")
+        print(f"Total cartes : {report['total']}")
+        print(f"Cartes conformes : {report['valid']}")
+        
+        if report["missing_fields"]:
+            print(f"⚠️ Erreurs détectées ({len(report['missing_fields'])} cartes) :")
+            for error in report["missing_fields"]:
+                print(f" - Carte [{error['id']}] : Manque {error['missing']}")
+        else:
+            print("✅ Toutes les cartes sont complètes.")
+            
+        return report
+
+    except Exception as e:
+        print(f"Erreur lors de la vérification : {e}")
+
+if __name__ == "__main__":
+    verify_cards_integrity()
 
 # =====================================================
 # RUN
