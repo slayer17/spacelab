@@ -565,38 +565,6 @@ def _find_black_panel_box(bottom_zone):
             score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
             candidates.append((score, x, y, bw, bh))
 
-if candidates:
-    candidates.sort(key=lambda t: t[0], reverse=True)
-    _, x, y, bw, bh = candidates[0]
-
-    # Rejet des faux badges trop fins / trop collés au bord gauche
-    ratio = bw / float(max(bh, 1))
-    if not (x <= 2 and ratio < 0.45 and bw < int(zw * 0.22)):
-        pad_x = max(2, int(bw * 0.12))
-        pad_y = max(2, int(bh * 0.12))
-
-        rx = max(0, x - pad_x)
-        ry = max(0, y - pad_y)
-        rw = min(zw - rx, bw + (2 * pad_x))
-        rh = min(zh - ry, bh + (2 * pad_y))
-
-        crop = search[ry:ry + rh, rx:rx + rw]
-        if crop is not None and crop.size > 0:
-            return crop, (rx + sx, ry + sy, rw, rh)
-
-# Fallback seulement si aucun contour exploitable n'a été trouvé
-fx = int(pw * 0.03)
-fy = int(ph * 0.08)
-fw = int(pw * 0.50)
-fh = int(ph * 0.82)
-fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
-
-crop = panel_zone[fy:fy + fh, fx:fx + fw]
-if crop is None or crop.size == 0:
-    return None, None
-
-return crop, (fx, fy, fw, fh)
-
 
 def _find_special_white_panel_box(bottom_zone):
     if bottom_zone is None or bottom_zone.size == 0:
