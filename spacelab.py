@@ -1383,7 +1383,7 @@ def compute_signature(img):
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
 
-    if symbol_score < 0.50 or symbol_gap < 0.06:
+    if symbol_score < 0.43 or symbol_gap < 0.02:
         symbol_name = None
 
     symbol_sig = {
