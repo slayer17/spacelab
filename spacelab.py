@@ -4,6 +4,8 @@ import cv2
 import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 import base64
+import shutil
+from datetime import datetime
 
 
 from bottom import (
@@ -1818,20 +1820,47 @@ def build_signatures():
     try:
         cards = load_cards_js()
 
+        # Sauvegarde de sécurité avant réécriture
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = f"{CARDS_JS_PATH}.bak_{timestamp}"
+        shutil.copyfile(CARDS_JS_PATH, backup_path)
+
+        updated = 0
+        skipped = []
+        errors = []
+
         for c in cards:
             card_id = c.get("id")
             if not card_id:
+                skipped.append({
+                    "id": None,
+                    "reason": "missing_id"
+                })
                 continue
 
             path = find_card_image(card_id)
             if path is None:
+                skipped.append({
+                    "id": card_id,
+                    "reason": "image_not_found"
+                })
                 continue
 
             img = cv2.imread(path)
-            if img is None:
+            if img is None or img.size == 0:
+                skipped.append({
+                    "id": card_id,
+                    "reason": "image_unreadable"
+                })
                 continue
 
             h, w = img.shape[:2]
+            if h <= 0 or w <= 0:
+                skipped.append({
+                    "id": card_id,
+                    "reason": "invalid_image_shape"
+                })
+                continue
 
             quad = np.array([
                 [0, 0],
@@ -1841,22 +1870,53 @@ def build_signatures():
             ], dtype="float32")
 
             warped = warp_quad(img, quad)
-            if warped is None:
+            if warped is None or warped.size == 0:
+                skipped.append({
+                    "id": card_id,
+                    "reason": "warp_failed"
+                })
                 continue
 
-            sig, _ = compute_signature(warped)
+            try:
+                sig, _ = compute_signature(warped)
+            except Exception as e:
+                errors.append({
+                    "id": card_id,
+                    "reason": f"compute_signature_failed: {str(e)}"
+                })
+                continue
+
+            if sig is None:
+                errors.append({
+                    "id": card_id,
+                    "reason": "signature_none"
+                })
+                continue
 
             c["signature"] = {
                 "scan": sig
             }
+            updated += 1
 
         save_cards_js(cards)
-        return "OK"
+
+        return jsonify({
+            "ok": True,
+            "updated": updated,
+            "total": len(cards),
+            "skipped_count": len(skipped),
+            "errors_count": len(errors),
+            "backup": os.path.basename(backup_path),
+            "skipped": skipped[:20],
+            "errors": errors[:20]
+        })
 
     except Exception as e:
         print("BUILD SIGNATURES ERROR:", e)
-        return "ERROR", 500
-
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 # =====================================================
 # BOTTOM TEST
@@ -1946,13 +2006,11 @@ def bottom_test():
     """
 def verify_cards_integrity():
     """
-    Vérifie que chaque entrée dans cards.js contient les champs obligatoires.
+    Vérifie que chaque carte a bien une signature enrichie.
     """
     try:
-        # On utilise ta fonction de chargement existante
         cards = load_cards_js()
-        
-        required_fields = ["symbol", "points", "bottom_layout"]
+
         report = {
             "valid": 0,
             "missing_fields": [],
@@ -1961,8 +2019,14 @@ def verify_cards_integrity():
 
         for card in cards:
             card_id = card.get("id", "Unknown ID")
-            missing = [field for field in required_fields if field not in card]
-            
+
+            scan = card.get("signature", {}).get("scan", {})
+            missing = []
+
+            for field in ["symbol", "points", "bottom_layout"]:
+                if field not in scan:
+                    missing.append(field)
+
             if missing:
                 report["missing_fields"].append({
                     "id": card_id,
@@ -1971,25 +2035,25 @@ def verify_cards_integrity():
             else:
                 report["valid"] += 1
 
-        # Affichage du résultat
-        print(f"--- Rapport de vérification ---")
+        print("--- Rapport de vérification ---")
         print(f"Total cartes : {report['total']}")
         print(f"Cartes conformes : {report['valid']}")
-        
+
         if report["missing_fields"]:
             print(f"⚠️ Erreurs détectées ({len(report['missing_fields'])} cartes) :")
             for error in report["missing_fields"]:
                 print(f" - Carte [{error['id']}] : Manque {error['missing']}")
         else:
-            print("✅ Toutes les cartes sont complètes.")
-            
+            print("✅ Toutes les cartes ont une signature enrichie.")
+
         return report
 
     except Exception as e:
         print(f"Erreur lors de la vérification : {e}")
+        
+      
+        
 
-if __name__ == "__main__":
-    verify_cards_integrity()
 
 # =====================================================
 # RUN
