@@ -565,6 +565,17 @@ def _find_black_panel_box(bottom_zone):
             score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
             candidates.append((score, x, y, bw, bh))
 
+    if candidates:
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        _, x, y, bw, bh = candidates[0]
+        return _clip_box(x, y, bw, bh, w, h)
+
+    fx = int(w * 0.02)
+    fy = int(h * 0.08)
+    fw = int(w * 0.50)
+    fh = int(h * 0.84)
+    return _clip_box(fx, fy, fw, fh, w, h)
+
 
 def _find_special_white_panel_box(bottom_zone):
     if bottom_zone is None or bottom_zone.size == 0:
