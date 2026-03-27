@@ -567,7 +567,8 @@ def _find_special_white_panel_box(bottom_zone):
 def _find_points_badge_in_black_panel(panel_zone):
     """
     Cherche le badge blanc des points dans la partie gauche du panneau noir.
-    On évite les faux blobs collés au bord et on garde un fallback fixe propre.
+    Version volontairement simple : on prend le meilleur contour clair trouvé,
+    sans seuil final trop dur, pour éviter de retomber sans cesse sur le fallback.
     """
     if panel_zone is None or panel_zone.size == 0:
         return None, None
@@ -576,12 +577,11 @@ def _find_points_badge_in_black_panel(panel_zone):
     if ph == 0 or pw == 0:
         return None, None
 
-    # Zone de recherche : légèrement plus large que l'actuelle,
-    # mais sans partir trop loin vers le slash.
+    # Zone de recherche large sur la moitié gauche
     sx = int(pw * 0.00)
-    sy = int(ph * 0.06)
-    sw = int(pw * 0.52)
-    sh = int(ph * 0.88)
+    sy = int(ph * 0.04)
+    sw = int(pw * 0.58)
+    sh = int(ph * 0.90)
     sx, sy, sw, sh = _clip_box(sx, sy, sw, sh, pw, ph)
 
     search = panel_zone[sy:sy + sh, sx:sx + sw]
@@ -592,8 +592,8 @@ def _find_points_badge_in_black_panel(panel_zone):
     gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    mask_hsv = cv2.inRange(hsv, (0, 0, 125), (180, 105, 255))
-    _, mask_gray = cv2.threshold(blur, 148, 255, cv2.THRESH_BINARY)
+    mask_hsv = cv2.inRange(hsv, (0, 0, 115), (180, 130, 255))
+    _, mask_gray = cv2.threshold(blur, 138, 255, cv2.THRESH_BINARY)
     mask = cv2.bitwise_or(mask_hsv, mask_gray)
 
     kernel = np.ones((3, 3), np.uint8)
@@ -601,6 +601,7 @@ def _find_points_badge_in_black_panel(panel_zone):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     candidates = []
     zh, zw = search.shape[:2]
 
@@ -611,43 +612,35 @@ def _find_points_badge_in_black_panel(panel_zone):
             continue
 
         area_ratio = area / float(max(zw * zh, 1))
-
-        # Taille plausible du badge
-        if area_ratio < 0.03 or area_ratio > 0.28:
+        if area_ratio < 0.01:
             continue
-
-        # On veut un badge vraiment dans la partie gauche
-        if x > zw * 0.24:
-            continue
-
-        # On évite les blobs collés aux bords du crop de recherche
-        if x <= 1:
-            continue
-        if (x + bw) >= (zw - 1):
-            continue
-
-        if bw < zw * 0.16 or bw > zw * 0.48:
-            continue
-        if bh < zh * 0.28 or bh > zh * 0.82:
+        if bw < 6 or bh < 10:
             continue
 
         ratio = bw / float(max(bh, 1))
-        if ratio < 0.40 or ratio > 1.10:
+        if ratio < 0.20 or ratio > 1.60:
             continue
 
         cx = x + (bw / 2.0)
         cy = y + (bh / 2.0)
 
-        left_score = 1.0 - min(cx / float(max(zw * 0.38, 1)), 1.0)
-        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.32, 1)), 1.0)
-        size_score = 1.0 - min(abs(area_ratio - 0.12) / 0.12, 1.0)
-        ratio_score = 1.0 - min(abs(ratio - 0.72) / 0.40, 1.0)
+        left_score = 1.0 - min(cx / float(max(zw * 0.60, 1)), 1.0)
+        center_y_score = 1.0 - min(abs(cy - (zh * 0.52)) / float(max(zh * 0.40, 1)), 1.0)
+        size_score = min(area_ratio / 0.12, 1.0)
+
+        edge_penalty = 0.0
+        if x <= 1:
+            edge_penalty += 0.15
+        if (x + bw) >= (zw - 1):
+            edge_penalty += 0.10
+        if x > zw * 0.38:
+            edge_penalty += 0.35
 
         score = (
-            (left_score * 2.5)
-            + (center_y_score * 1.8)
-            + (size_score * 2.2)
-            + (ratio_score * 1.2)
+            (left_score * 2.4) +
+            (center_y_score * 1.7) +
+            (size_score * 1.8) -
+            edge_penalty
         )
 
         candidates.append((score, x, y, bw, bh))
@@ -656,25 +649,23 @@ def _find_points_badge_in_black_panel(panel_zone):
         candidates.sort(key=lambda t: t[0], reverse=True)
         _, x, y, bw, bh = candidates[0]
 
-        # Petite marge pour ne pas couper le badge
-        pad_x = max(2, int(bw * 0.10))
-        pad_y = max(2, int(bh * 0.10))
+        pad_x = max(2, int(bw * 0.12))
+        pad_y = max(2, int(bh * 0.12))
 
-        x = max(0, x - pad_x)
-        y = max(0, y - pad_y)
-        bw = min(zw - x, bw + (2 * pad_x))
-        bh = min(zh - y, bh + (2 * pad_y))
+        rx = max(0, x - pad_x)
+        ry = max(0, y - pad_y)
+        rw = min(zw - rx, bw + (2 * pad_x))
+        rh = min(zh - ry, bh + (2 * pad_y))
 
-        crop = search[y:y + bh, x:x + bw]
+        crop = search[ry:ry + rh, rx:rx + rw]
         if crop is not None and crop.size > 0:
-            return crop, (x + sx, y + sy, bw, bh)
+            return crop, (rx + sx, ry + sy, rw, rh)
 
-    # Fallback fixe : un peu plus large que le crop actuel (22 px),
-    # mais plus propre que les anciens crops trop larges.
-    fx = int(pw * 0.04)
-    fy = int(ph * 0.10)
-    fw = int(pw * 0.46)
-    fh = int(ph * 0.78)
+    # Fallback seulement si aucun contour exploitable n'a été trouvé
+    fx = int(pw * 0.03)
+    fy = int(ph * 0.08)
+    fw = int(pw * 0.50)
+    fh = int(ph * 0.82)
     fx, fy, fw, fh = _clip_box(fx, fy, fw, fh, pw, ph)
 
     crop = panel_zone[fy:fy + fh, fx:fx + fw]
@@ -682,8 +673,8 @@ def _find_points_badge_in_black_panel(panel_zone):
         return None, None
 
     return crop, (fx, fy, fw, fh)
-
-
+    
+    
 def _find_slash_box(panel_zone):
     if panel_zone is None or panel_zone.size == 0:
         return None
