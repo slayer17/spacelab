@@ -45,10 +45,29 @@ DIGITS_DIR = os.path.join(BASE_DIR, "digits")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
+_SYMBOL_PROTOTYPES_CACHE = None
+
 
 # =====================================================
 # SYMBOL DETECTION
 # =====================================================
+
+def extract_symbol_roi_from_full_card(img):
+    """
+    Extrait la même ROI symbole partout dans le projet.
+    On garde exactement la zone utilisée par la signature principale.
+    """
+    img = cv2.resize(img, (200, 300))
+    h, w = img.shape[:2]
+
+    x1 = int(w * 0.05)
+    x2 = int(w * 0.20)
+    y1 = int(h * 0.20)
+    y2 = int(h * 0.31)
+
+    roi = img[y1:y2, x1:x2]
+    return img, roi, (x1, y1, x2 - x1, y2 - y1)
+
 
 def _keep_largest_component(bin_img):
     """
@@ -85,27 +104,22 @@ def _normalize_symbol_mask(img_or_mask, is_template=False):
     if img_or_mask is None or img_or_mask.size == 0:
         return None
 
-    # Si l'image est en couleur, on passe en gris
     if len(img_or_mask.shape) == 3:
         gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
     else:
         gray = img_or_mask.copy()
 
-    # Lissage léger
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    # Binarisation
     _, bin_img = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
 
-    # Nettoyage
     kernel = np.ones((3, 3), np.uint8)
     bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
     bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
 
-    # On garde seulement le plus gros objet
     bin_img = _keep_largest_component(bin_img)
 
     ys, xs = np.where(bin_img > 0)
@@ -119,7 +133,6 @@ def _normalize_symbol_mask(img_or_mask, is_template=False):
     if crop is None or crop.size == 0:
         return None
 
-    # On place la forme dans un canvas carré
     target = 96
     canvas = np.zeros((target, target), dtype=np.uint8)
 
@@ -141,9 +154,6 @@ def _normalize_symbol_mask(img_or_mask, is_template=False):
 
 
 def _symbol_iou(a, b):
-    """
-    Compare deux masques binaires par recouvrement.
-    """
     if a is None or b is None:
         return 0.0
 
@@ -160,24 +170,15 @@ def _symbol_iou(a, b):
 
 
 def _symbol_xor_score(a, b):
-    """
-    Mesure simple de différence de forme.
-    Plus c'est proche de 1, mieux c'est.
-    """
     if a is None or b is None:
         return 0.0
 
     diff = cv2.bitwise_xor(a, b)
     ratio = np.count_nonzero(diff) / float(diff.size)
-
     return float(max(0.0, 1.0 - ratio))
 
 
 def _hu_score(a, b):
-    """
-    Compare les moments de Hu.
-    Sert de sécurité supplémentaire sur la forme.
-    """
     if a is None or b is None:
         return 0.0
 
@@ -187,57 +188,43 @@ def _hu_score(a, b):
     hua = cv2.HuMoments(ma).flatten()
     hub = cv2.HuMoments(mb).flatten()
 
-    # Passage log pour stabiliser
     eps = 1e-10
     hua = -np.sign(hua) * np.log10(np.abs(hua) + eps)
     hub = -np.sign(hub) * np.log10(np.abs(hub) + eps)
 
     dist = np.mean(np.abs(hua - hub))
-    score = 1.0 / (1.0 + dist)
-
-    return float(score)
+    return float(1.0 / (1.0 + dist))
 
 
-def detect_symbol(zone):
-    """
-    Détection symbole plus robuste :
-    - crop un peu plus large
-    - nettoyage fort
-    - recentrage du symbole
-    - comparaison de forme
-    - retour du meilleur score + écart avec le 2e
-    """
-    templates = {
-        "SCIENTIFIQUE": cv2.imread(os.path.join(SYMBOLS_DIR, "scientifique.png"), 0),
-        "ASTRONAUTE": cv2.imread(os.path.join(SYMBOLS_DIR, "astronaute.png"), 0),
-        "MECANICIEN": cv2.imread(os.path.join(SYMBOLS_DIR, "mecanicien.png"), 0),
-        "MEDECIN": cv2.imread(os.path.join(SYMBOLS_DIR, "medecin.png"), 0),
+def _compare_symbol_masks(scan_mask, tpl_mask):
+    if scan_mask is None or tpl_mask is None:
+        return {"iou": 0.0, "xor": 0.0, "hu": 0.0, "score": 0.0}
+
+    iou = _symbol_iou(scan_mask, tpl_mask)
+    xor_score = _symbol_xor_score(scan_mask, tpl_mask)
+    hu = _hu_score(scan_mask, tpl_mask)
+    score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
+
+    return {
+        "iou": float(iou),
+        "xor": float(xor_score),
+        "hu": float(hu),
+        "score": float(score),
     }
 
-    if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
 
-    h, w = zone.shape[:2]
+def _build_symbol_prototypes_from_icons():
+    prototypes = {}
+    mapping = {
+        "SCIENTIFIQUE": "scientifique.png",
+        "ASTRONAUTE": "astronaute.png",
+        "MECANICIEN": "mecanicien.png",
+        "MEDECIN": "medecin.png",
+    }
 
-    # Crop un peu plus large que la version précédente
-    x1 = int(w * 0.10)
-    x2 = int(w * 0.90)
-    y1 = int(h * 0.10)
-    y2 = int(h * 0.90)
-
-    zone = zone[y1:y2, x1:x2]
-
-    if zone is None or zone.size == 0:
-        return None, 0.0, 0.0
-
-    scan_mask = _normalize_symbol_mask(zone, is_template=False)
-
-    if scan_mask is None:
-        return None, 0.0, 0.0
-
-    scores = []
-
-    for name, tpl in templates.items():
+    for label, filename in mapping.items():
+        path = os.path.join(SYMBOLS_DIR, filename)
+        tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         if tpl is None or tpl.size == 0:
             continue
 
@@ -245,30 +232,176 @@ def detect_symbol(zone):
         if tpl_mask is None:
             continue
 
-        # 3 scores complémentaires
-        iou = _symbol_iou(scan_mask, tpl_mask)
-        xor_score = _symbol_xor_score(scan_mask, tpl_mask)
-        hu = _hu_score(scan_mask, tpl_mask)
+        prototypes.setdefault(label, []).append({
+            "label": label,
+            "mask": tpl_mask,
+            "source": filename,
+            "kind": "icon"
+        })
 
-        # Score combiné : priorité à la forme réelle
-        score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
+    return prototypes
 
-        scores.append((name, float(score)))
 
-    if not scores:
+def _build_symbol_prototypes_from_cards():
+    prototypes = {}
+
+    try:
+        cards = load_cards_js()
+    except Exception:
+        return prototypes
+
+    for card in cards:
+        card_id = str(card.get("id") or "").upper().strip()
+        label = str(card.get("symbol") or "").upper().strip()
+
+        if not card_id or not label:
+            continue
+
+        path = find_card_image(card_id)
+        if path is None:
+            continue
+
+        img = cv2.imread(path)
+        if img is None or img.size == 0:
+            continue
+
+        _, zone, _ = extract_symbol_roi_from_full_card(img)
+        mask = _normalize_symbol_mask(zone, is_template=False)
+        if mask is None:
+            continue
+
+        prototypes.setdefault(label, []).append({
+            "label": label,
+            "mask": mask,
+            "source": card_id,
+            "kind": "card"
+        })
+
+    return prototypes
+
+
+def _get_symbol_prototypes():
+    global _SYMBOL_PROTOTYPES_CACHE
+
+    if _SYMBOL_PROTOTYPES_CACHE is not None:
+        return _SYMBOL_PROTOTYPES_CACHE
+
+    prototypes = _build_symbol_prototypes_from_cards()
+    icon_prototypes = _build_symbol_prototypes_from_icons()
+
+    for label, items in icon_prototypes.items():
+        prototypes.setdefault(label, []).extend(items)
+
+    _SYMBOL_PROTOTYPES_CACHE = prototypes
+    return _SYMBOL_PROTOTYPES_CACHE
+
+
+def reset_symbol_prototypes_cache():
+    global _SYMBOL_PROTOTYPES_CACHE
+    _SYMBOL_PROTOTYPES_CACHE = None
+
+
+def detect_symbol(zone, with_debug=False):
+    """
+    Détecte le symbole sur la vraie ROI imprimée.
+    Le matching se fait surtout contre des prototypes issus des cartes,
+    puis on garde aussi les icônes brutes comme fallback.
+    """
+    empty = {
+        "raw_name": None,
+        "score": 0.0,
+        "gap": 0.0,
+        "top_candidates": [],
+        "mode": "card_prototypes",
+    }
+
+    if zone is None or zone.size == 0:
+        if with_debug:
+            out = dict(empty)
+            out["debug_images"] = {"crop": None, "mask": None}
+            return out
         return None, 0.0, 0.0
 
-    scores.sort(key=lambda x: x[1], reverse=True)
+    scan_crop = zone.copy()
+    scan_mask = _normalize_symbol_mask(scan_crop, is_template=False)
 
-    best_name, best_score = scores[0]
+    if scan_mask is None:
+        if with_debug:
+            out = dict(empty)
+            out["debug_images"] = {"crop": scan_crop, "mask": None}
+            return out
+        return None, 0.0, 0.0
 
-    if len(scores) >= 2:
-        second_score = scores[1][1]
+    prototypes = _get_symbol_prototypes()
+    class_scores = []
+
+    for label, items in prototypes.items():
+        sample_scores = []
+
+        for item in items:
+            cmp = _compare_symbol_masks(scan_mask, item.get("mask"))
+            sample_scores.append({
+                "name": label,
+                "score": float(cmp["score"]),
+                "iou": float(cmp["iou"]),
+                "xor": float(cmp["xor"]),
+                "hu": float(cmp["hu"]),
+                "source": item.get("source"),
+                "kind": item.get("kind"),
+            })
+
+        if not sample_scores:
+            continue
+
+        sample_scores.sort(key=lambda x: x["score"], reverse=True)
+        best_samples = sample_scores[:3]
+        class_score = float(sum(s["score"] for s in best_samples) / float(len(best_samples)))
+
+        class_scores.append({
+            "name": label,
+            "score": class_score,
+            "best_source": best_samples[0].get("source"),
+            "best_kind": best_samples[0].get("kind"),
+            "support": len(sample_scores),
+        })
+
+    class_scores.sort(key=lambda x: x["score"], reverse=True)
+
+    if class_scores:
+        raw_name = class_scores[0]["name"]
+        best_score = float(class_scores[0]["score"])
+        second_score = float(class_scores[1]["score"]) if len(class_scores) >= 2 else 0.0
         gap = float(best_score - second_score)
     else:
-        gap = float(best_score)
+        raw_name = None
+        best_score = 0.0
+        gap = 0.0
 
-    return best_name, float(best_score), gap
+    top_candidates = [
+        {
+            "name": row["name"],
+            "score": float(row["score"]),
+            "best_source": row.get("best_source"),
+            "best_kind": row.get("best_kind"),
+            "support": int(row.get("support", 0)),
+        }
+        for row in class_scores[:4]
+    ]
+
+    if with_debug:
+        return {
+            "raw_name": raw_name,
+            "score": float(best_score),
+            "gap": float(gap),
+            "top_candidates": top_candidates,
+            "mode": "card_prototypes",
+            "debug_images": {
+                "crop": scan_crop,
+                "mask": scan_mask,
+            },
+        }
+
+    return raw_name, float(best_score), float(gap)
 
 # =====================================================
 # DIGIT DETECTION
@@ -1365,12 +1498,10 @@ def compute_signature(img):
     # -------------------------------------------------
     # SYMBOL
     # -------------------------------------------------
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.20)
-    y1 = int(h * 0.20)
-    y2 = int(h * 0.31)
-
-    zone = img[y1:y2, x1:x2]
+    _, zone, symbol_box = extract_symbol_roi_from_full_card(img)
+    x1, y1, sw, sh = symbol_box
+    x2 = x1 + sw
+    y2 = y1 + sh
 
     rois.append({
         "type": "SYMBOL",
@@ -1381,17 +1512,24 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    symbol_name, symbol_score, symbol_gap = detect_symbol(zone)
+    symbol_debug = detect_symbol(zone, with_debug=True)
+    raw_symbol_name = symbol_debug.get("raw_name")
+    symbol_score = float(symbol_debug.get("score", 0.0))
+    symbol_gap = float(symbol_debug.get("gap", 0.0))
 
-    if symbol_score < 0.43 or symbol_gap < 0.02:
+    symbol_name = raw_symbol_name
+    if symbol_score < 0.62 or symbol_gap < 0.05:
         symbol_name = None
 
     symbol_sig = {
         "mean": float(np.mean(gray)),
         "std": float(np.std(gray)),
         "name": symbol_name,
+        "raw_name": raw_symbol_name,
         "score": float(symbol_score),
-        "gap": float(symbol_gap)
+        "gap": float(symbol_gap),
+        "top_candidates": symbol_debug.get("top_candidates", []),
+        "mode": symbol_debug.get("mode", "card_prototypes")
     }
 
     # -------------------------------------------------
@@ -1818,6 +1956,7 @@ def warp():
 @app.route("/build_signatures")
 def build_signatures():
     try:
+        reset_symbol_prototypes_cache()
         cards = load_cards_js()
 
         # Sauvegarde de sécurité avant réécriture
@@ -1899,6 +2038,7 @@ def build_signatures():
             updated += 1
 
         save_cards_js(cards)
+        reset_symbol_prototypes_cache()
 
         return jsonify({
             "ok": True,
@@ -2004,6 +2144,99 @@ def bottom_test():
     </body>
     </html>
     """
+
+
+@app.route("/symbol-test", methods=["GET", "POST"])
+def symbol_test():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Symbol Test</title>
+        </head>
+        <body style="font-family:Arial,sans-serif; padding:20px;">
+          <h1>Test du symbole</h1>
+          <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
+
+          <form method="post" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*" required />
+            <button type="submit">Analyser</button>
+          </form>
+        </body>
+        </html>
+        """
+
+    if "image" not in request.files:
+        return "Aucun fichier envoyé", 400
+
+    file = request.files["image"]
+    if not file or file.filename == "":
+        return "Fichier vide", 400
+
+    data = file.read()
+    if not data:
+        return "Impossible de lire le fichier", 400
+
+    np_arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return "Image invalide", 400
+
+    rect = detect_main_card(img)
+    warped = None
+    if rect is not None:
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(img, quad)
+
+    if warped is None or warped.size == 0:
+        warped = img
+
+    warped_card, symbol_roi, symbol_box = extract_symbol_roi_from_full_card(warped)
+    x, y, rw, rh = symbol_box
+
+    overlay = warped_card.copy()
+    cv2.rectangle(overlay, (x, y), (x + rw, y + rh), (0, 255, 0), 2)
+
+    symbol_result = detect_symbol(symbol_roi, with_debug=True)
+    crop_img = symbol_result.get("debug_images", {}).get("crop")
+    mask_img = symbol_result.get("debug_images", {}).get("mask")
+
+    payload = {
+        "raw_name": symbol_result.get("raw_name"),
+        "score": float(symbol_result.get("score", 0.0)),
+        "gap": float(symbol_result.get("gap", 0.0)),
+        "top_candidates": symbol_result.get("top_candidates", []),
+        "mode": symbol_result.get("mode"),
+        "roi": {
+            "x": int(x),
+            "y": int(y),
+            "w": int(rw),
+            "h": int(rh),
+        },
+    }
+
+    pretty_json = json.dumps(payload, indent=2, ensure_ascii=False)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Symbol Test</title>
+    </head>
+    <body style="font-family:Arial,sans-serif; padding:20px;">
+      <h1>Résultat du test symbole</h1>
+      <p><a href="/symbol-test">← Revenir au formulaire</a></p>
+      <h2>Résultat JSON</h2>
+      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
+      {_html_img_block("Carte redressée", _img_to_base64(warped_card))}
+      {_html_img_block("Overlay ROI symbole", _img_to_base64(overlay))}
+      {_html_img_block("Crop symbole", _img_to_base64(crop_img) if crop_img is not None else None)}
+      {_html_img_block("Masque symbole normalisé", _img_to_base64(mask_img) if mask_img is not None else None)}
+    </body>
+    </html>
+    """
+
 def verify_cards_integrity():
     """
     Vérifie que chaque carte a bien une signature enrichie.
