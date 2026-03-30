@@ -69,10 +69,11 @@ def extract_symbol_roi_from_full_card(img):
     return img, roi, (x1, y1, x2 - x1, y2 - y1)
 
 
-def _keep_largest_component(bin_img):
+def _keep_main_components(bin_img, max_components=4, min_area_ratio=0.005):
     """
-    Garde uniquement le plus gros composant blanc.
-    Ça évite que du bruit parasite casse la reconnaissance.
+    Garde les principaux composants blancs au lieu d'un seul.
+    C'est crucial pour les symboles composés de plusieurs morceaux
+    (ex: SCIENTIFIQUE avec plusieurs éléments séparés).
     """
     if bin_img is None or bin_img.size == 0:
         return bin_img
@@ -82,17 +83,23 @@ def _keep_largest_component(bin_img):
     if num_labels <= 1:
         return bin_img
 
-    largest_label = 1
-    largest_area = stats[1, cv2.CC_STAT_AREA]
+    total_area = float(bin_img.shape[0] * bin_img.shape[1])
+    keep = []
 
-    for i in range(2, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > largest_area:
-            largest_area = area
-            largest_label = i
+    for i in range(1, num_labels):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area >= total_area * float(min_area_ratio):
+            keep.append((area, i))
 
+    if not keep:
+        return bin_img
+
+    keep.sort(reverse=True)
     out = np.zeros_like(bin_img)
-    out[labels == largest_label] = 255
+
+    for _, label_idx in keep[:max_components]:
+        out[labels == label_idx] = 255
+
     return out
 
 
