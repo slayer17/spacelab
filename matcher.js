@@ -51,11 +51,7 @@ function patchScore(a, b) {
     const vectorA = a.vector || null;
     const vectorB = b.vector || null;
 
-    const vecScore =
-        vectorA && vectorB
-            ? similarityScore(vectorA, vectorB)
-            : 0;
-
+    const vecScore = vectorA && vectorB ? similarityScore(vectorA, vectorB) : 0;
     const statsScore = meanStdScore(a, b);
 
     if (vectorA && vectorB) {
@@ -67,22 +63,14 @@ function patchScore(a, b) {
 
 function getScanPart(signature, part) {
     if (!signature) return null;
-
-    if (signature.scan && signature.scan[part] != null) {
-        return signature.scan[part];
-    }
-
-    if (signature[part] != null) {
-        return signature[part];
-    }
-
+    if (signature.scan && signature.scan[part] != null) return signature.scan[part];
+    if (signature[part] != null) return signature[part];
     return null;
 }
 
 function getReliableDetectedPoints(querySig) {
     const points = getScanPart(querySig, "points");
-    if (!points) return null;
-    if (points.digit == null) return null;
+    if (!points || points.digit == null) return null;
 
     const digit = Number(points.digit);
     if (!isFinite(digit)) return null;
@@ -96,30 +84,48 @@ function getReliableDetectedPoints(querySig) {
     return digit;
 }
 
+function getDetectedSymbolInfo(querySig) {
+    const symbol = getScanPart(querySig, "symbol") || {};
+    const rawName = symbol.raw_name || symbol.name || null;
+    const score = Number(symbol.score ?? 0);
+    const gap = Number(symbol.gap ?? 0);
+    const topCandidates = Array.isArray(symbol.top_candidates) ? symbol.top_candidates : [];
+    const reliable = Boolean(rawName && score >= 0.62 && gap >= 0.05);
+
+    return {
+        rawName,
+        name: reliable ? rawName : null,
+        score,
+        gap,
+        reliable,
+        topCandidates
+    };
+}
+
 function pointsMatchScore(querySig, card) {
     const detectedPoints = getReliableDetectedPoints(querySig);
 
-    if (detectedPoints == null) {
-        return 0.50;
-    }
+    if (detectedPoints == null) return 0.50;
 
     const cardPoints = Number(card.points);
-    if (!isFinite(cardPoints)) {
-        return 0.50;
-    }
+    if (!isFinite(cardPoints)) return 0.50;
 
-    if (cardPoints === detectedPoints) {
-        return 1.00;
-    }
-
-    if (Math.abs(cardPoints - detectedPoints) === 1) {
-        return 0.15;
-    }
-
+    if (cardPoints === detectedPoints) return 1.00;
+    if (Math.abs(cardPoints - detectedPoints) === 1) return 0.15;
     return 0.00;
 }
 
-function enrichCandidate(querySig, card) {
+function symbolMatchScore(symbolInfo, card) {
+    if (!symbolInfo || !symbolInfo.reliable || !symbolInfo.name) return 0.50;
+
+    const cardSymbol = String(card.symbol || "").toUpperCase().trim();
+    const detectedSymbol = String(symbolInfo.name || "").toUpperCase().trim();
+
+    if (!cardSymbol || !detectedSymbol) return 0.00;
+    return cardSymbol === detectedSymbol ? 1.00 : 0.00;
+}
+
+function enrichCandidate(querySig, card, symbolInfo) {
     const cardSig = card.signature || card;
 
     const qColor = getScanPart(querySig, "color")?.color;
@@ -135,21 +141,14 @@ function enrichCandidate(querySig, card) {
         colorScore = 1 / (1 + d / 50);
     }
 
-    const symbolScore = meanStdScore(
-        getScanPart(querySig, "symbol"),
-        getScanPart(cardSig, "symbol")
-    );
-
+    const symbolScore = symbolMatchScore(symbolInfo, card);
     const pointsScore = pointsMatchScore(querySig, card);
+    const bottomScore = patchScore(getScanPart(querySig, "bottom"), getScanPart(cardSig, "bottom"));
+    const globalScore = patchScore(getScanPart(querySig, "global"), getScanPart(cardSig, "global"));
 
-    const bottomScore = patchScore(
-        getScanPart(querySig, "bottom"),
-        getScanPart(cardSig, "bottom")
-    );
-
-    const globalScore = patchScore(
-        getScanPart(querySig, "global"),
-        getScanPart(cardSig, "global")
+    const cardSymbol = String(card.symbol || "").toUpperCase().trim();
+    const symbolExactMatch = Boolean(
+        symbolInfo && symbolInfo.name && cardSymbol === String(symbolInfo.name).toUpperCase().trim()
     );
 
     return {
@@ -158,22 +157,17 @@ function enrichCandidate(querySig, card) {
         symbolScore,
         pointsScore,
         bottomScore,
-        globalScore
+        globalScore,
+        symbolExactMatch
     };
 }
 
 function keepBestBy(candidates, key, options = {}) {
-    const {
-        keepTop = 8,
-        ratio = 0.92,
-        minKeep = 2
-    } = options;
-
+    const { keepTop = 8, ratio = 0.92, minKeep = 2 } = options;
     if (!candidates.length) return [];
 
     const sorted = [...candidates].sort((a, b) => b[key] - a[key]);
     const best = sorted[0][key];
-
     let kept = sorted.filter(c => c[key] >= best * ratio);
 
     if (kept.length < minKeep) {
@@ -185,32 +179,55 @@ function keepBestBy(candidates, key, options = {}) {
     return kept;
 }
 
-function finalTieBreak(candidates) {
-    if (!candidates.length) return null;
+function computeFinalScore(candidate, options = {}) {
+    if (options.useReliableSymbol) {
+        return (
+            (candidate.colorScore * 0.18) +
+            (candidate.symbolScore * 0.33) +
+            (candidate.pointsScore * 0.04) +
+            (candidate.bottomScore * 0.30) +
+            (candidate.globalScore * 0.15)
+        );
+    }
 
-    const scored = candidates.map(c => ({
-        ...c,
-        finalScore:
-            (c.colorScore * 0.20) +
-            (c.symbolScore * 0.30) +
-            (c.pointsScore * 0.05) +
-            (c.bottomScore * 0.30) +
-            (c.globalScore * 0.15)
+    return (
+        (candidate.colorScore * 0.26) +
+        (candidate.pointsScore * 0.05) +
+        (candidate.bottomScore * 0.44) +
+        (candidate.globalScore * 0.25)
+    );
+}
+
+function scoreFinalCandidates(candidates, options = {}) {
+    return [...candidates]
+        .map(c => ({ ...c, finalScore: computeFinalScore(c, options) }))
+        .sort((a, b) => b.finalScore - a.finalScore);
+}
+
+function summarizeCandidates(candidates, limit = 5) {
+    return [...candidates].slice(0, limit).map(c => ({
+        id: c.card?.id,
+        couleur: c.card?.couleur,
+        symbol: c.card?.symbol,
+        points: c.card?.points,
+        colorScore: Number(c.colorScore ?? 0),
+        symbolScore: Number(c.symbolScore ?? 0),
+        pointsScore: Number(c.pointsScore ?? 0),
+        bottomScore: Number(c.bottomScore ?? 0),
+        globalScore: Number(c.globalScore ?? 0),
+        boostedBottom: Number(c.boostedBottom ?? 0),
+        finalScore: Number(c.finalScore ?? 0),
+        symbolExactMatch: Boolean(c.symbolExactMatch)
     }));
-
-    scored.sort((a, b) => b.finalScore - a.finalScore);
-    return scored[0];
 }
 
 function matchSignature(querySig, cardsDb) {
     if (!querySig || !cardsDb || !cardsDb.length) {
-        return {
-            card: cardsDb ? cardsDb[0] : null,
-            score: 0
-        };
+        return { card: cardsDb ? cardsDb[0] : null, score: 0 };
     }
 
-    const candidates = cardsDb.map(card => enrichCandidate(querySig, card));
+    const symbolInfo = getDetectedSymbolInfo(querySig);
+    const candidates = cardsDb.map(card => enrichCandidate(querySig, card, symbolInfo));
 
     const stepColor = keepBestBy(candidates, "colorScore", {
         keepTop: 12,
@@ -218,25 +235,20 @@ function matchSignature(querySig, cardsDb) {
         minKeep: 4
     });
 
-    const detectedSymbol = getScanPart(querySig, "symbol")?.name || null;
-    const detectedSymbolScore = Number(getScanPart(querySig, "symbol")?.score || 0);
-
     let stepSymbol = stepColor;
+    let symbolFilterApplied = false;
 
-    if (detectedSymbol && detectedSymbolScore >= 0.55) {
-        const filtered = stepColor.filter(c => {
-            if (!c.card.symbol) return false;
-            return c.card.symbol.toUpperCase().trim() === detectedSymbol.toUpperCase().trim();
-        });
-
+    if (symbolInfo.reliable && symbolInfo.name) {
+        const filtered = stepColor.filter(c => c.symbolExactMatch);
         if (filtered.length > 0) {
             stepSymbol = filtered;
-            console.log("SYMBOL EXACT =", detectedSymbol);
+            symbolFilterApplied = true;
+            console.log("SYMBOL EXACT =", symbolInfo.name, "matches =", filtered.length);
         } else {
-            console.log("SYMBOL FILTER FAILED -> keep color");
+            console.log("SYMBOL RELIABLE BUT NO MATCHING CARD -> keep color");
         }
     } else {
-        console.log("SYMBOL UNKNOWN");
+        console.log("SYMBOL NOT RELIABLE", symbolInfo);
     }
 
     const stepPoints = stepSymbol.map(c => ({
@@ -256,46 +268,44 @@ function matchSignature(querySig, cardsDb) {
         minKeep: 1
     });
 
-    let best = finalTieBreak(stepGlobal);
+    const finalOptions = { useReliableSymbol: symbolFilterApplied };
+    const scoredFinal = scoreFinalCandidates(stepGlobal, finalOptions);
+    let best = scoredFinal[0] || null;
 
     if (!best) {
-        const fallback = [...candidates]
-            .map(c => ({
-                ...c,
-                finalScore:
-                    (c.colorScore * 0.20) +
-                    (c.symbolScore * 0.30) +
-                    (c.pointsScore * 0.05) +
-                    (c.bottomScore * 0.30) +
-                    (c.globalScore * 0.15)
-            }))
-            .sort((a, b) => b.finalScore - a.finalScore);
-
-        best = fallback[0];
+        best = scoreFinalCandidates(candidates, finalOptions)[0] || null;
     }
 
     if (!best || !best.card) {
-        return {
-            card: cardsDb[0],
-            score: 0
-        };
+        return { card: cardsDb[0], score: 0 };
     }
 
-    return {
-        card: best.card,
-        score: best.finalScore ?? (
-            (best.colorScore * 0.20) +
-            (best.symbolScore * 0.30) +
-            (best.pointsScore * 0.05) +
-            (best.bottomScore * 0.30) +
-            (best.globalScore * 0.15)
-        ),
-        debug: {
+    const debug = {
+        detectedSymbol: symbolInfo,
+        symbolFilterApplied,
+        steps: {
+            afterColor: summarizeCandidates(stepColor, 5),
+            afterSymbol: summarizeCandidates(stepSymbol, 5),
+            afterBottom: summarizeCandidates(stepBottom, 5),
+            afterGlobal: summarizeCandidates(stepGlobal, 5),
+            final: summarizeCandidates(scoredFinal, 5)
+        },
+        best: {
+            id: best.card?.id,
             colorScore: best.colorScore,
             symbolScore: best.symbolScore,
             pointsScore: best.pointsScore,
             bottomScore: best.bottomScore,
-            globalScore: best.globalScore
+            globalScore: best.globalScore,
+            finalScore: best.finalScore
         }
+    };
+
+    console.log("MATCH DEBUG =", debug);
+
+    return {
+        card: best.card,
+        score: best.finalScore ?? computeFinalScore(best, finalOptions),
+        debug
     };
 }
