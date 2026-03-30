@@ -127,7 +127,7 @@ def _normalize_symbol_mask(img_or_mask, is_template=False):
     bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
     bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
 
-    bin_img = _keep_largest_component(bin_img)
+    bin_img = _keep_main_components(bin_img)
 
     ys, xs = np.where(bin_img > 0)
     if len(xs) == 0 or len(ys) == 0:
