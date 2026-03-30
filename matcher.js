@@ -6,6 +6,11 @@ function toArray(v) {
     return [];
 }
 
+function clamp01(v) {
+    if (!isFinite(v)) return 0;
+    return Math.max(0, Math.min(1, v));
+}
+
 function euclideanDistance(a, b) {
     const aa = toArray(a);
     const bb = toArray(b);
@@ -86,11 +91,17 @@ function getReliableDetectedPoints(querySig) {
 
 function getDetectedSymbolInfo(querySig) {
     const symbol = getScanPart(querySig, "symbol") || {};
-    const rawName = symbol.raw_name || symbol.name || null;
+    const rawName = String(symbol.raw_name || symbol.name || "").toUpperCase().trim() || null;
     const score = Number(symbol.score ?? 0);
     const gap = Number(symbol.gap ?? 0);
     const topCandidates = Array.isArray(symbol.top_candidates) ? symbol.top_candidates : [];
-    const reliable = Boolean(rawName && score >= 0.62 && gap >= 0.05);
+
+    const scoreConfidence = clamp01((score - 0.58) / 0.16);
+    const gapConfidence = clamp01(gap / 0.05);
+    const confidence = clamp01((scoreConfidence * 0.75) + (gapConfidence * 0.25));
+
+    const reliable = Boolean(rawName && score >= 0.68 && gap >= 0.03);
+    const weakReliable = Boolean(rawName && score >= 0.62);
 
     return {
         rawName,
@@ -98,6 +109,8 @@ function getDetectedSymbolInfo(querySig) {
         score,
         gap,
         reliable,
+        weakReliable,
+        confidence,
         topCandidates
     };
 }
@@ -116,13 +129,19 @@ function pointsMatchScore(querySig, card) {
 }
 
 function symbolMatchScore(symbolInfo, card) {
-    if (!symbolInfo || !symbolInfo.reliable || !symbolInfo.name) return 0.50;
+    if (!symbolInfo || !symbolInfo.rawName) return 0.50;
 
     const cardSymbol = String(card.symbol || "").toUpperCase().trim();
-    const detectedSymbol = String(symbolInfo.name || "").toUpperCase().trim();
+    const detectedSymbol = String(symbolInfo.rawName || "").toUpperCase().trim();
+    const confidence = clamp01(symbolInfo.confidence ?? 0);
 
-    if (!cardSymbol || !detectedSymbol) return 0.00;
-    return cardSymbol === detectedSymbol ? 1.00 : 0.00;
+    if (!cardSymbol || !detectedSymbol) return 0.50;
+
+    if (cardSymbol === detectedSymbol) {
+        return 0.50 + (confidence * 0.50);
+    }
+
+    return 0.50 - (confidence * 0.45);
 }
 
 function enrichCandidate(querySig, card, symbolInfo) {
@@ -148,7 +167,7 @@ function enrichCandidate(querySig, card, symbolInfo) {
 
     const cardSymbol = String(card.symbol || "").toUpperCase().trim();
     const symbolExactMatch = Boolean(
-        symbolInfo && symbolInfo.name && cardSymbol === String(symbolInfo.name).toUpperCase().trim()
+        symbolInfo && symbolInfo.rawName && cardSymbol === String(symbolInfo.rawName).toUpperCase().trim()
     );
 
     return {
@@ -180,13 +199,23 @@ function keepBestBy(candidates, key, options = {}) {
 }
 
 function computeFinalScore(candidate, options = {}) {
-    if (options.useReliableSymbol) {
+    if (options.symbolMode === "strong") {
         return (
             (candidate.colorScore * 0.18) +
-            (candidate.symbolScore * 0.33) +
-            (candidate.pointsScore * 0.04) +
+            (candidate.symbolScore * 0.30) +
+            (candidate.pointsScore * 0.05) +
             (candidate.bottomScore * 0.30) +
-            (candidate.globalScore * 0.15)
+            (candidate.globalScore * 0.17)
+        );
+    }
+
+    if (options.symbolMode === "weak") {
+        return (
+            (candidate.colorScore * 0.22) +
+            (candidate.symbolScore * 0.15) +
+            (candidate.pointsScore * 0.05) +
+            (candidate.bottomScore * 0.36) +
+            (candidate.globalScore * 0.22)
         );
     }
 
@@ -238,37 +267,41 @@ function matchSignature(querySig, cardsDb) {
     let stepSymbol = stepColor;
     let symbolFilterApplied = false;
 
-    if (symbolInfo.reliable && symbolInfo.name) {
+    if (symbolInfo.reliable && symbolInfo.rawName) {
         const filtered = stepColor.filter(c => c.symbolExactMatch);
         if (filtered.length > 0) {
             stepSymbol = filtered;
             symbolFilterApplied = true;
-            console.log("SYMBOL EXACT =", symbolInfo.name, "matches =", filtered.length);
+            console.log("SYMBOL STRONG =", JSON.parse(JSON.stringify(symbolInfo)), "matches =", filtered.length);
         } else {
-            console.log("SYMBOL RELIABLE BUT NO MATCHING CARD -> keep color");
+            console.log("SYMBOL STRONG BUT NO MATCHING CARD -> keep color");
         }
+    } else if (symbolInfo.weakReliable) {
+        console.log("SYMBOL WEAK =", JSON.parse(JSON.stringify(symbolInfo)));
     } else {
-        console.log("SYMBOL NOT RELIABLE", symbolInfo);
+        console.log("SYMBOL NONE =", JSON.parse(JSON.stringify(symbolInfo)));
     }
 
     const stepPoints = stepSymbol.map(c => ({
         ...c,
-        boostedBottom: (c.bottomScore * 0.90) + (c.pointsScore * 0.10)
+        boostedBottom: (c.bottomScore * 0.88) + (c.pointsScore * 0.12)
     }));
 
     const stepBottom = keepBestBy(stepPoints, "boostedBottom", {
-        keepTop: 4,
-        ratio: 0.97,
-        minKeep: 1
+        keepTop: 6,
+        ratio: 0.93,
+        minKeep: 2
     });
 
     const stepGlobal = keepBestBy(stepBottom, "globalScore", {
-        keepTop: 2,
-        ratio: 0.97,
-        minKeep: 1
+        keepTop: 4,
+        ratio: 0.92,
+        minKeep: 2
     });
 
-    const finalOptions = { useReliableSymbol: symbolFilterApplied };
+    const finalOptions = {
+        symbolMode: symbolFilterApplied ? "strong" : (symbolInfo.weakReliable ? "weak" : "none")
+    };
     const scoredFinal = scoreFinalCandidates(stepGlobal, finalOptions);
     let best = scoredFinal[0] || null;
 
@@ -283,6 +316,7 @@ function matchSignature(querySig, cardsDb) {
     const debug = {
         detectedSymbol: symbolInfo,
         symbolFilterApplied,
+        finalOptions,
         steps: {
             afterColor: summarizeCandidates(stepColor, 5),
             afterSymbol: summarizeCandidates(stepSymbol, 5),
@@ -301,7 +335,7 @@ function matchSignature(querySig, cardsDb) {
         }
     };
 
-    console.log("MATCH DEBUG =", debug);
+    console.log("MATCH DEBUG JSON\n" + JSON.stringify(debug, null, 2));
 
     return {
         card: best.card,
