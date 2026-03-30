@@ -103,61 +103,117 @@ def _keep_main_components(bin_img, max_components=4, min_area_ratio=0.005):
     return out
 
 
-def _normalize_symbol_mask(img_or_mask, is_template=False):
+def _keep_largest_component(bin_img):
+    """Compatibilité arrière : ancien nom appelé ailleurs."""
+    return _keep_main_components(bin_img, max_components=4, min_area_ratio=0.005)
+
+
+def _mask_to_centered_canvas(mask, target=96, padding=16):
     """
-    Transforme une image de symbole en masque binaire propre,
-    centré et redimensionné de manière stable.
+    Centre un masque binaire sur un canvas carré stable.
+    """
+    if mask is None or mask.size == 0:
+        return None
+
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+    crop = mask[y1:y2 + 1, x1:x2 + 1]
+    if crop is None or crop.size == 0:
+        return None
+
+    h, w = crop.shape[:2]
+    if h == 0 or w == 0:
+        return None
+
+    canvas = np.zeros((target, target), dtype=np.uint8)
+    scale = min((target - padding) / float(w), (target - padding) / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+
+    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+    x = (target - new_w) // 2
+    y = (target - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+    return canvas
+
+
+def _extract_template_symbol_mask(img_or_mask):
+    """
+    Pour les icônes PNG, on privilégie l'alpha plutôt qu'un seuillage gris.
     """
     if img_or_mask is None or img_or_mask.size == 0:
         return None
+
+    if len(img_or_mask.shape) == 3 and img_or_mask.shape[2] == 4:
+        alpha = img_or_mask[:, :, 3]
+        mask = np.where(alpha > 10, 255, 0).astype(np.uint8)
+        return _mask_to_centered_canvas(mask, target=96, padding=16)
 
     if len(img_or_mask.shape) == 3:
         gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
     else:
         gray = img_or_mask.copy()
 
+    _, mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+    return _mask_to_centered_canvas(mask, target=96, padding=16)
+
+
+def _extract_scan_symbol_mask(img_or_mask):
+    """
+    Extrait le symbole blanc imprimé sur le panneau sombre.
+    On évite de ramasser le liseré coloré du panneau.
+    """
+    if img_or_mask is None or img_or_mask.size == 0:
+        return None
+
+    if len(img_or_mask.shape) == 3:
+        color = img_or_mask.copy()
+    else:
+        color = cv2.cvtColor(img_or_mask, cv2.COLOR_GRAY2BGR)
+
+    h, w = color.shape[:2]
+    if h < 4 or w < 4:
+        return None
+
+    # On retire un petit bord pour éviter le cadre du cartouche symbole.
+    pad_x = max(1, int(round(w * 0.08)))
+    pad_y = max(1, int(round(h * 0.08)))
+    inner = color[pad_y:h - pad_y, pad_x:w - pad_x]
+    if inner is None or inner.size == 0:
+        inner = color
+
+    hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
+    h_ch, s_ch, v_ch = cv2.split(hsv)
+    gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     gray = cv2.equalizeHist(gray)
 
-    _, bin_img = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
+    # Le symbole est blanc / peu saturé / lumineux.
+    white_mask = np.where((v_ch >= 120) & (s_ch <= 120), 255, 0).astype(np.uint8)
+
+    # Fallback si le masque blanc est trop faible.
+    if np.count_nonzero(white_mask) < max(20, int(white_mask.size * 0.02)):
+        _, white_mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((3, 3), np.uint8)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+    white_mask = _keep_main_components(white_mask, max_components=6, min_area_ratio=0.01)
 
-    bin_img = _keep_main_components(bin_img)
+    return _mask_to_centered_canvas(white_mask, target=96, padding=16)
 
-    ys, xs = np.where(bin_img > 0)
-    if len(xs) == 0 or len(ys) == 0:
-        return None
 
-    x1, x2 = xs.min(), xs.max()
-    y1, y2 = ys.min(), ys.max()
-
-    crop = bin_img[y1:y2 + 1, x1:x2 + 1]
-    if crop is None or crop.size == 0:
-        return None
-
-    target = 96
-    canvas = np.zeros((target, target), dtype=np.uint8)
-
-    h, w = crop.shape[:2]
-    if h == 0 or w == 0:
-        return None
-
-    scale = min((target - 16) / w, (target - 16) / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
-
-    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-    x = (target - new_w) // 2
-    y = (target - new_h) // 2
-    canvas[y:y + new_h, x:x + new_w] = resized
-
-    return canvas
+def _normalize_symbol_mask(img_or_mask, is_template=False):
+    """
+    Point d'entrée unique pour normaliser les symboles.
+    """
+    if is_template:
+        return _extract_template_symbol_mask(img_or_mask)
+    return _extract_scan_symbol_mask(img_or_mask)
 
 
 def _symbol_iou(a, b):
@@ -203,19 +259,62 @@ def _hu_score(a, b):
     return float(1.0 / (1.0 + dist))
 
 
+def _symbol_chamfer_score(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    a = np.where(a > 0, 255, 0).astype(np.uint8)
+    b = np.where(b > 0, 255, 0).astype(np.uint8)
+
+    da = cv2.distanceTransform(255 - a, cv2.DIST_L2, 3)
+    db = cv2.distanceTransform(255 - b, cv2.DIST_L2, 3)
+
+    ea = cv2.Canny(a, 50, 150)
+    eb = cv2.Canny(b, 50, 150)
+
+    pa = np.argwhere(ea > 0)
+    pb = np.argwhere(eb > 0)
+    if len(pa) == 0 or len(pb) == 0:
+        return 0.0
+
+    sa = float(np.mean(db[pa[:, 0], pa[:, 1]]))
+    sb = float(np.mean(da[pb[:, 0], pb[:, 1]]))
+    return float(1.0 / (1.0 + ((sa + sb) * 0.5)))
+
+
+def _symbol_contour_score(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    cnts_a, _ = cv2.findContours(a, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts_b, _ = cv2.findContours(b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts_a or not cnts_b:
+        return 0.0
+
+    ca = max(cnts_a, key=cv2.contourArea)
+    cb = max(cnts_b, key=cv2.contourArea)
+    dist = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0.0)
+    return float(1.0 / (1.0 + dist))
+
+
 def _compare_symbol_masks(scan_mask, tpl_mask):
     if scan_mask is None or tpl_mask is None:
-        return {"iou": 0.0, "xor": 0.0, "hu": 0.0, "score": 0.0}
+        return {"iou": 0.0, "xor": 0.0, "hu": 0.0, "chamfer": 0.0, "contour": 0.0, "score": 0.0}
 
     iou = _symbol_iou(scan_mask, tpl_mask)
     xor_score = _symbol_xor_score(scan_mask, tpl_mask)
     hu = _hu_score(scan_mask, tpl_mask)
-    score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
+    chamfer = _symbol_chamfer_score(scan_mask, tpl_mask)
+    contour = _symbol_contour_score(scan_mask, tpl_mask)
+
+    score = (iou * 0.20) + (xor_score * 0.15) + (hu * 0.15) + (chamfer * 0.30) + (contour * 0.20)
 
     return {
         "iou": float(iou),
         "xor": float(xor_score),
         "hu": float(hu),
+        "chamfer": float(chamfer),
+        "contour": float(contour),
         "score": float(score),
     }
 
@@ -231,7 +330,7 @@ def _build_symbol_prototypes_from_icons():
 
     for label, filename in mapping.items():
         path = os.path.join(SYMBOLS_DIR, filename)
-        tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        tpl = cv2.imread(path, cv2.IMREAD_UNCHANGED)
         if tpl is None or tpl.size == 0:
             continue
 
@@ -361,14 +460,19 @@ def detect_symbol(zone, with_debug=False):
             continue
 
         sample_scores.sort(key=lambda x: x["score"], reverse=True)
-        best_samples = sample_scores[:3]
-        class_score = float(sum(s["score"] for s in best_samples) / float(len(best_samples)))
+        best = sample_scores[0]
+        next_best = sample_scores[1]["score"] if len(sample_scores) >= 2 else 0.0
+        best_kind = best.get("kind")
+        icon_best = next((s for s in sample_scores if s.get("kind") == "icon"), None)
+        icon_score = float(icon_best["score"]) if icon_best is not None else 0.0
+        class_score = float((float(best["score"]) * 0.65) + (icon_score * 0.25) + (float(next_best) * 0.10))
 
         class_scores.append({
             "name": label,
             "score": class_score,
-            "best_source": best_samples[0].get("source"),
-            "best_kind": best_samples[0].get("kind"),
+            "best_source": best.get("source"),
+            "best_kind": best_kind,
+            "icon_score": icon_score,
             "support": len(sample_scores),
         })
 
@@ -390,10 +494,35 @@ def detect_symbol(zone, with_debug=False):
             "score": float(row["score"]),
             "best_source": row.get("best_source"),
             "best_kind": row.get("best_kind"),
+            "icon_score": float(row.get("icon_score", 0.0)),
             "support": int(row.get("support", 0)),
         }
         for row in class_scores[:4]
     ]
+
+    # Tie-break ciblé : la seule confusion qui reste souvent est
+    # MEDECIN <-> MECANICIEN. On recompare alors uniquement contre les icônes.
+    if len(top_candidates) >= 2:
+        duo = {top_candidates[0]["name"], top_candidates[1]["name"]}
+        need_tiebreak = duo == {"MEDECIN", "MECANICIEN"} and (gap < 0.08 or best_score < 0.76)
+        if need_tiebreak:
+            icon_map = {}
+            for item in prototypes.get("MEDECIN", []) + prototypes.get("MECANICIEN", []):
+                if item.get("kind") == "icon":
+                    icon_map[item.get("label")] = item.get("mask")
+            med_mask = icon_map.get("MEDECIN")
+            mec_mask = icon_map.get("MECANICIEN")
+            if med_mask is not None and mec_mask is not None:
+                med_cmp = _compare_symbol_masks(scan_mask, med_mask)
+                mec_cmp = _compare_symbol_masks(scan_mask, mec_mask)
+                if mec_cmp["score"] > med_cmp["score"] + 0.015:
+                    raw_name = "MECANICIEN"
+                    best_score = float(mec_cmp["score"])
+                    gap = float(mec_cmp["score"] - med_cmp["score"])
+                elif med_cmp["score"] > mec_cmp["score"] + 0.015:
+                    raw_name = "MEDECIN"
+                    best_score = float(med_cmp["score"])
+                    gap = float(med_cmp["score"] - mec_cmp["score"])
 
     if with_debug:
         return {
