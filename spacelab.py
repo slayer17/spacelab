@@ -2320,12 +2320,14 @@ def symbol_test():
 
     top_candidates = symbol_debug.get("top_candidates") or []
     winner = top_candidates[0] if top_candidates else None
+    winner_references = symbol_debug.get("winner_references") or []
+
     pretty_json = json.dumps({
         "raw_name": raw_name,
         "score": score,
         "gap": gap,
-        "winner": symbol_debug.get("top_candidates", [None])[0],
-        "winner_references": symbol_debug.get("winner_references", [])
+        "winner": winner,
+        "winner_references": winner_references
     }, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
