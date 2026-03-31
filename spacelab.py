@@ -556,7 +556,7 @@ def detect_symbol(zone):
                     "support": int(best["support"])
                 }
             ],
-            "winner_references": winner_card_scores[:5],
+            "winner_references": winner_card_scores[:20],
             "runner_up": {
                 "name": second["name"],
                 "score": float(second["score"])
