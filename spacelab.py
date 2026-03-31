@@ -2304,7 +2304,7 @@ def symbol_test():
     rect = detect_main_card(img)
     warped = None
 
-if rect is not None:
+    if rect is not None:
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
 
