@@ -2316,14 +2316,13 @@ def symbol_test():
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
-    pretty_json = json.dumps({
-        "raw_name": raw_name,
-        "score": score,
-        "gap": gap,
-        "top_candidates": symbol_debug.get("top_candidates", []),
-        "winner_references": symbol_debug.get("winner_references", []),
-        "runner_up": symbol_debug.get("runner_up")
-    }, indent=2, ensure_ascii=False)
+  pretty_json = json.dumps({
+    "raw_name": raw_name,
+    "score": score,
+    "gap": gap,
+    "winner": symbol_debug.get("top_candidates", [None])[0],
+    "winner_references": symbol_debug.get("winner_references", [])
+}, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
