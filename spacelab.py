@@ -1705,18 +1705,17 @@ def compute_signature(img):
     if symbol_score < 0.58 or symbol_gap < 0.025:
         symbol_name = None
 
-    symbol_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "name": symbol_name,
-        "raw_name": raw_symbol_name,
-        "score": float(symbol_score),
-        "gap": float(symbol_gap),
-        "top_candidates": top_candidates,
-        "winner_references": symbol_debug.get("winner_references", []),
-        "runner_up": symbol_debug.get("runner_up"),
-        "mode": "icon_card_refs"
-    }
+  symbol_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "name": symbol_name,
+    "raw_name": raw_symbol_name,
+    "score": float(symbol_score),
+    "gap": float(symbol_gap),
+    "winner": top_candidates[0] if top_candidates else None,
+    "winner_references": symbol_debug.get("winner_references", []),
+    "mode": "icon_card_refs"
+ }
 
     # -------------------------------------------------
     # BOTTOM
@@ -2316,14 +2315,13 @@ def symbol_test():
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
-    pretty_json = json.dumps({
-        "raw_name": raw_name,
-        "score": score,
-        "gap": gap,
-        "top_candidates": symbol_debug.get("top_candidates", []),
-        "winner_references": symbol_debug.get("winner_references", []),
-        "runner_up": symbol_debug.get("runner_up")
-    }, indent=2, ensure_ascii=False)
+   pretty_json = json.dumps({
+    "raw_name": raw_name,
+    "score": score,
+    "gap": gap,
+    "winner": symbol_debug.get("top_candidates", [None])[0],
+    "winner_references": symbol_debug.get("winner_references", [])
+}, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
