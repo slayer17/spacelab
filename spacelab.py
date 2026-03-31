@@ -519,21 +519,40 @@ def detect_symbol(zone):
         second = ranked[1] if len(ranked) > 1 else None
         gap = float(best["score"] - (second["score"] if second else 0.0))
 
-        result = {
-            "raw_name": best["name"],
+    winner_name = best["name"]
+
+winner_card_scores = []
+for card_ref in refs["cards"].get(winner_name, []):
+    ref_mask = card_ref.get("mask")
+    if ref_mask is None:
+        continue
+    s = _score_symbol_masks(scan_mask, ref_mask)
+    winner_card_scores.append({
+        "card_id": card_ref.get("id"),
+        "score": float(s)
+    })
+
+winner_card_scores.sort(key=lambda d: d["score"], reverse=True)
+
+result = {
+    "raw_name": winner_name,
+    "score": float(best["score"]),
+    "gap": gap,
+    "top_candidates": [
+        {
+            "best_kind": "card" if best["best_source"] else "icon",
+            "best_source": best["best_source"] or best["name"].lower(),
+            "name": best["name"],
             "score": float(best["score"]),
-            "gap": gap,
-            "top_candidates": [
-                {
-                    "best_kind": "card" if cand["best_source"] else "icon",
-                    "best_source": cand["best_source"] or cand["name"].lower(),
-                    "name": cand["name"],
-                    "score": float(cand["score"]),
-                    "support": int(cand["support"])
-                }
-                for cand in ranked[:4]
-            ]
+            "support": int(best["support"])
         }
+    ],
+    "winner_references": winner_card_scores[:5],
+    "runner_up": {
+        "name": second["name"],
+        "score": float(second["score"])
+    } if second else None
+}
 
         if best_result is None:
             best_result = result
