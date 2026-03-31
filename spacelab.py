@@ -46,15 +46,15 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
 
+
 # =====================================================
 # SYMBOL DETECTION
 # =====================================================
 
-def _keep_main_components(bin_img, max_components=3, min_area_ratio=0.08):
-    """
-    Garde les plus gros composants utiles au lieu d'un seul bloc.
-    C'est important pour les symboles qui ont plusieurs parties.
-    """
+_SYMBOL_REFS_CACHE = None
+
+
+def _keep_main_components(bin_img, max_components=6, min_ratio=0.08):
     if bin_img is None or bin_img.size == 0:
         return bin_img
 
@@ -62,122 +62,228 @@ def _keep_main_components(bin_img, max_components=3, min_area_ratio=0.08):
     if num_labels <= 1:
         return bin_img
 
-    areas = []
+    comps = []
     for i in range(1, num_labels):
-        area = int(stats[i, cv2.CC_STAT_AREA])
-        if area > 0:
-            areas.append((i, area))
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= 4:
+            comps.append((i, area))
 
-    if not areas:
+    if not comps:
         return bin_img
 
-    areas.sort(key=lambda x: x[1], reverse=True)
-    largest = float(areas[0][1])
-    kept = []
-    for i, area in areas[:max_components]:
-        if area >= largest * float(min_area_ratio):
-            kept.append(i)
+    comps.sort(key=lambda t: t[1], reverse=True)
+    largest = comps[0][1]
 
-    if not kept:
-        kept = [areas[0][0]]
+    keep = [
+        i for i, area in comps[:max_components]
+        if area >= largest * float(min_ratio)
+    ]
 
     out = np.zeros_like(bin_img)
-    for label in kept:
-        out[labels == label] = 255
+    for i in keep:
+        out[labels == i] = 255
     return out
 
 
-def _keep_largest_component(bin_img):
-    """
-    Compatibilité arrière : ancien nom utilisé ailleurs.
-    """
-    return _keep_main_components(bin_img, max_components=1, min_area_ratio=0.0)
+def _remove_border_touching_components(bin_img, min_area=4):
+    if bin_img is None or bin_img.size == 0:
+        return bin_img
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
+    h, w = bin_img.shape[:2]
+    out = np.zeros_like(bin_img)
+
+    for i in range(1, num_labels):
+        x, y, bw, bh, area = stats[i]
+        if area < min_area:
+            continue
+
+        touches_border = (
+            x <= 0 or
+            y <= 0 or
+            (x + bw) >= (w - 1) or
+            (y + bh) >= (h - 1)
+        )
+
+        if touches_border:
+            continue
+
+        out[labels == i] = 255
+
+    return out
 
 
-def _prepare_symbol_gray(img_or_mask):
-    if img_or_mask is None or img_or_mask.size == 0:
+def _normalize_binary_to_canvas(bin_img, target=96, pad=8):
+    if bin_img is None or bin_img.size == 0:
         return None
 
-    if len(img_or_mask.shape) == 3:
-        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
+    ys, xs = np.where(bin_img > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+
+    crop = bin_img[y1:y2 + 1, x1:x2 + 1]
+    if crop is None or crop.size == 0:
+        return None
+
+    h, w = crop.shape[:2]
+    if h <= 0 or w <= 0:
+        return None
+
+    canvas = np.zeros((target, target), dtype=np.uint8)
+
+    scale = min((target - 2 * pad) / float(w), (target - 2 * pad) / float(h))
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+
+    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    ox = (target - new_w) // 2
+    oy = (target - new_h) // 2
+    canvas[oy:oy + new_h, ox:ox + new_w] = resized
+
+    return canvas
+
+
+def _extract_symbol_panel(zone):
+    if zone is None or zone.size == 0:
+        return zone
+
+    if len(zone.shape) == 3:
+        gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
     else:
-        gray = img_or_mask.copy()
+        gray = zone.copy()
+
+    dark_mask = np.where(gray < 105, 255, 0).astype(np.uint8)
+    dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(dark_mask, 8)
+    h, w = gray.shape[:2]
+
+    best = None
+
+    for i in range(1, num_labels):
+        x, y, bw, bh, area = stats[i]
+
+        if area < 25 or bw < 8 or bh < 8:
+            continue
+
+        ratio = bw / float(bh)
+        if ratio < 0.65 or ratio > 1.35:
+            continue
+
+        cx, cy = centroids[i]
+        score = area - 1.5 * abs(cx - (w * 0.38)) - 1.5 * abs(cy - (h * 0.52))
+
+        if best is None or score > best[0]:
+            best = (score, (x, y, bw, bh))
+
+    if best is None:
+        return zone
+
+    x, y, bw, bh = best[1]
+    pad = 2
+
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(zone.shape[1], x + bw + pad)
+    y2 = min(zone.shape[0], y + bh + pad)
+
+    panel = zone[y1:y2, x1:x2]
+    if panel is None or panel.size == 0:
+        return zone
+
+    return panel
+
+
+def _normalize_symbol_scan(zone):
+    if zone is None or zone.size == 0:
+        return None, None
+
+    panel = _extract_symbol_panel(zone)
+
+    if len(panel.shape) == 3:
+        gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = panel.copy()
 
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    gray = cv2.equalizeHist(gray)
-    return gray
+
+    _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bin_img = _remove_border_touching_components(bin_img, min_area=3)
+
+    if np.count_nonzero(bin_img) == 0:
+        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
+    bin_img = _keep_main_components(bin_img, max_components=8, min_ratio=0.07)
+
+    return _normalize_binary_to_canvas(bin_img), panel
 
 
-def _normalize_symbol_mask(img_or_mask, is_template=False):
-    """
-    Transforme une image de symbole en masque binaire propre,
-    centré et redimensionné de manière stable.
-    """
-    gray = _prepare_symbol_gray(img_or_mask)
-    if gray is None:
+def _normalize_symbol_template(img):
+    if img is None or img.size == 0:
         return None
 
-    candidates = []
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img.copy()
 
-    # Variante standard : symbole foncé sur fond clair.
-    _, bin_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    candidates.append(bin_inv)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bin_img = _remove_border_touching_components(bin_img, min_area=3)
 
-    # Variante sécurité : selon certaines captures, l'icône ressort mieux autrement.
-    _, bin_norm = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # On veut toujours un symbole blanc sur fond noir.
-    if np.count_nonzero(bin_norm) > (bin_norm.size * 0.5):
-        bin_norm = cv2.bitwise_not(bin_norm)
-    candidates.append(bin_norm)
+    if np.count_nonzero(bin_img) == 0:
+        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    kernel = np.ones((3, 3), np.uint8)
-    best_canvas = None
-    best_score = -1.0
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
+    bin_img = _keep_main_components(bin_img, max_components=8, min_ratio=0.05)
 
-    for bin_img in candidates:
-        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
-        bin_img = _keep_main_components(bin_img, max_components=3, min_area_ratio=0.10)
+    return _normalize_binary_to_canvas(bin_img)
 
-        ys, xs = np.where(bin_img > 0)
-        if len(xs) == 0 or len(ys) == 0:
+
+def _extract_symbol_zone_variants(zone):
+    if zone is None or zone.size == 0:
+        return []
+
+    h, w = zone.shape[:2]
+    variants = []
+
+    crops = [
+        (0.00, 0.00, 1.00, 1.00),
+        (0.03, 0.00, 0.97, 1.00),
+        (0.00, 0.03, 1.00, 0.97),
+        (0.05, 0.05, 0.95, 0.95),
+        (0.02, 0.02, 0.98, 0.98),
+    ]
+
+    seen = set()
+
+    for x1r, y1r, x2r, y2r in crops:
+        x1 = max(0, min(w, int(round(w * x1r))))
+        x2 = max(0, min(w, int(round(w * x2r))))
+        y1 = max(0, min(h, int(round(h * y1r))))
+        y2 = max(0, min(h, int(round(h * y2r))))
+
+        key = (x1, y1, x2, y2)
+        if key in seen:
             continue
+        seen.add(key)
 
-        x1, x2 = xs.min(), xs.max()
-        y1, y2 = ys.min(), ys.max()
+        crop = zone[y1:y2, x1:x2]
+        if crop is not None and crop.size > 0:
+            variants.append(crop)
 
-        crop = bin_img[y1:y2 + 1, x1:x2 + 1]
-        if crop is None or crop.size == 0:
-            continue
-
-        target = 96
-        canvas = np.zeros((target, target), dtype=np.uint8)
-
-        h, w = crop.shape[:2]
-        if h == 0 or w == 0:
-            continue
-
-        scale = min((target - 16) / w, (target - 16) / h)
-        new_w = max(1, int(w * scale))
-        new_h = max(1, int(h * scale))
-        resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-        x = (target - new_w) // 2
-        y = (target - new_h) // 2
-        canvas[y:y + new_h, x:x + new_w] = resized
-
-        fill_ratio = float(np.count_nonzero(canvas)) / float(canvas.size)
-        if fill_ratio > best_score:
-            best_score = fill_ratio
-            best_canvas = canvas
-
-    return best_canvas
+    return variants
 
 
 def _symbol_iou(a, b):
-    """
-    Compare deux masques binaires par recouvrement.
-    """
     if a is None or b is None:
         return 0.0
 
@@ -194,24 +300,15 @@ def _symbol_iou(a, b):
 
 
 def _symbol_xor_score(a, b):
-    """
-    Mesure simple de différence de forme.
-    Plus c'est proche de 1, mieux c'est.
-    """
     if a is None or b is None:
         return 0.0
 
     diff = cv2.bitwise_xor(a, b)
     ratio = np.count_nonzero(diff) / float(diff.size)
-
     return float(max(0.0, 1.0 - ratio))
 
 
 def _hu_score(a, b):
-    """
-    Compare les moments de Hu.
-    Sert de sécurité supplémentaire sur la forme.
-    """
     if a is None or b is None:
         return 0.0
 
@@ -226,124 +323,235 @@ def _hu_score(a, b):
     hub = -np.sign(hub) * np.log10(np.abs(hub) + eps)
 
     dist = np.mean(np.abs(hua - hub))
-    score = 1.0 / (1.0 + dist)
-
-    return float(score)
+    return float(1.0 / (1.0 + dist))
 
 
-def _load_symbol_templates():
-    templates = {}
-    mapping = {
-        "SCIENTIFIQUE": "scientifique.png",
-        "ASTRONAUTE": "astronaute.png",
-        "MECANICIEN": "mecanicien.png",
-        "MEDECIN": "medecin.png",
-    }
+def _contour_shape_score(a, b):
+    if a is None or b is None:
+        return 0.0
 
-    for name, filename in mapping.items():
-        path = os.path.join(SYMBOLS_DIR, filename)
-        tpl = cv2.imread(path, 0)
-        if tpl is None or tpl.size == 0:
-            continue
-        tpl_mask = _normalize_symbol_mask(tpl, is_template=True)
-        if tpl_mask is not None:
-            templates[name] = tpl_mask
-    return templates
+    cnts_a, _ = cv2.findContours(a, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts_b, _ = cv2.findContours(b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not cnts_a or not cnts_b:
+        return 0.0
+
+    ca = max(cnts_a, key=cv2.contourArea)
+    cb = max(cnts_b, key=cv2.contourArea)
+
+    val = cv2.matchShapes(ca, cb, cv2.CONTOURS_MATCH_I1, 0)
+    return float(1.0 / (1.0 + val))
 
 
-def _iter_symbol_variants(zone):
+def _projection_score(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    aa = (a > 0).astype(np.float32)
+    bb = (b > 0).astype(np.float32)
+
+    proj_x_a = aa.mean(axis=0)
+    proj_x_b = bb.mean(axis=0)
+    proj_y_a = aa.mean(axis=1)
+    proj_y_b = bb.mean(axis=1)
+
+    dx = np.mean(np.abs(proj_x_a - proj_x_b))
+    dy = np.mean(np.abs(proj_y_a - proj_y_b))
+
+    return float(max(0.0, 1.0 - ((dx + dy) / 2.0)))
+
+
+def _score_symbol_masks(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    iou = _symbol_iou(a, b)
+    xor_score = _symbol_xor_score(a, b)
+    hu = _hu_score(a, b)
+    contour = _contour_shape_score(a, b)
+    proj = _projection_score(a, b)
+
+    return float(
+        (iou * 0.32) +
+        (xor_score * 0.20) +
+        (hu * 0.12) +
+        (contour * 0.16) +
+        (proj * 0.20)
+    )
+
+
+def _extract_symbol_zone_from_card(img):
+    if img is None or img.size == 0:
+        return None
+
+    img = cv2.resize(img, (200, 300))
+    h, w = img.shape[:2]
+
+    x1 = int(w * 0.02)
+    x2 = int(w * 0.24)
+    y1 = int(h * 0.16)
+    y2 = int(h * 0.34)
+
+    zone = img[y1:y2, x1:x2]
     if zone is None or zone.size == 0:
-        return []
+        return None
 
-    h, w = zone.shape[:2]
-    variants = []
-    # crop central + petits décalages pour absorber les variations de cadrage.
-    boxes = [
-        (0.08, 0.92, 0.08, 0.92),
-        (0.02, 0.88, 0.08, 0.92),
-        (0.12, 0.98, 0.08, 0.92),
-        (0.08, 0.92, 0.02, 0.88),
-        (0.08, 0.92, 0.12, 0.98),
-    ]
-    for xa, xb, ya, yb in boxes:
-        x1 = int(w * xa)
-        x2 = int(w * xb)
-        y1 = int(h * ya)
-        y2 = int(h * yb)
-        crop = zone[y1:y2, x1:x2]
-        if crop is not None and crop.size > 0:
-            variants.append(crop)
-    return variants or [zone]
+    return zone
 
 
-def detect_symbol(zone, return_debug=False):
-    """
-    Détection symbole sur le crop symbole de la carte.
-    Version icon-first, plus robuste pour un scanner mono-carte.
-    """
-    templates = _load_symbol_templates()
+def _load_symbol_references():
+    global _SYMBOL_REFS_CACHE
 
-    empty_debug = {
-        "raw_name": None,
-        "score": 0.0,
-        "gap": 0.0,
-        "top_candidates": [],
-        "scan_mask": None,
+    if _SYMBOL_REFS_CACHE is not None:
+        return _SYMBOL_REFS_CACHE
+
+    refs = {
+        "icons": {},
+        "cards": {
+            "SCIENTIFIQUE": [],
+            "ASTRONAUTE": [],
+            "MECANICIEN": [],
+            "MEDECIN": [],
+        }
     }
 
-    if zone is None or zone.size == 0 or not templates:
-        return (None, 0.0, 0.0, empty_debug) if return_debug else (None, 0.0, 0.0)
+    for name in ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]:
+        path = os.path.join(SYMBOLS_DIR, f"{name.lower()}.png")
+        tpl = cv2.imread(path, cv2.IMREAD_COLOR)
+        refs["icons"][name] = _normalize_symbol_template(tpl)
 
-    best_variant_mask = None
-    best_variant_scores = None
-    best_variant_best = -1.0
+    try:
+        cards = load_cards_js()
+    except Exception:
+        cards = []
 
-    for variant in _iter_symbol_variants(zone):
-        scan_mask = _normalize_symbol_mask(variant, is_template=False)
+    for card in cards:
+        card_id = card.get("id")
+        symbol_name = card.get("symbol")
+
+        if not card_id or symbol_name not in refs["cards"]:
+            continue
+
+        path = find_card_image(card_id)
+        if path is None:
+            continue
+
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img is None or img.size == 0:
+            continue
+
+        zone = _extract_symbol_zone_from_card(img)
+        if zone is None or zone.size == 0:
+            continue
+
+        mask, _ = _normalize_symbol_scan(zone)
+        if mask is None:
+            continue
+
+        refs["cards"][symbol_name].append({
+            "id": card_id,
+            "mask": mask
+        })
+
+    _SYMBOL_REFS_CACHE = refs
+    return refs
+
+
+def detect_symbol(zone):
+    refs = _load_symbol_references()
+
+    if zone is None or zone.size == 0:
+        return None, 0.0, 0.0, []
+
+    variants = _extract_symbol_zone_variants(zone)
+    if not variants:
+        return None, 0.0, 0.0, []
+
+    best_result = None
+
+    for variant in variants:
+        scan_mask, _ = _normalize_symbol_scan(variant)
         if scan_mask is None:
             continue
 
-        scores = []
-        for name, tpl_mask in templates.items():
-            iou = _symbol_iou(scan_mask, tpl_mask)
-            xor_score = _symbol_xor_score(scan_mask, tpl_mask)
-            hu = _hu_score(scan_mask, tpl_mask)
-            # poids un peu plus forts sur la forme binaire
-            score = (iou * 0.55) + (xor_score * 0.30) + (hu * 0.15)
-            scores.append({
-                "name": name,
-                "score": float(score),
-                "iou": float(iou),
-                "xor": float(xor_score),
-                "hu": float(hu),
-            })
+        per_symbol = {}
 
-        if not scores:
+        for symbol_name in ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]:
+            icon_mask = refs["icons"].get(symbol_name)
+            icon_score = _score_symbol_masks(scan_mask, icon_mask) if icon_mask is not None else 0.0
+
+            card_scores = []
+            for card_ref in refs["cards"].get(symbol_name, []):
+                ref_mask = card_ref.get("mask")
+                if ref_mask is None:
+                    continue
+                s = _score_symbol_masks(scan_mask, ref_mask)
+                card_scores.append((float(s), card_ref.get("id")))
+
+            card_scores.sort(key=lambda t: t[0], reverse=True)
+
+            if card_scores:
+                top_scores = card_scores[:3]
+                avg_card_score = float(sum(s for s, _ in top_scores) / len(top_scores))
+                best_source = top_scores[0][1]
+                support = len(card_scores)
+            else:
+                avg_card_score = 0.0
+                best_source = None
+                support = 0
+
+            final_score = float((avg_card_score * 0.55) + (icon_score * 0.45))
+
+            per_symbol[symbol_name] = {
+                "name": symbol_name,
+                "score": final_score,
+                "icon_score": float(icon_score),
+                "card_score": float(avg_card_score),
+                "best_source": best_source,
+                "support": support
+            }
+
+        ranked = sorted(per_symbol.values(), key=lambda d: d["score"], reverse=True)
+        if not ranked:
             continue
 
-        scores.sort(key=lambda x: x["score"], reverse=True)
-        if float(scores[0]["score"]) > best_variant_best:
-            best_variant_best = float(scores[0]["score"])
-            best_variant_mask = scan_mask
-            best_variant_scores = scores
+        best = ranked[0]
+        second = ranked[1] if len(ranked) > 1 else None
+        gap = float(best["score"] - (second["score"] if second else 0.0))
 
-    if not best_variant_scores:
-        dbg = dict(empty_debug)
-        return (None, 0.0, 0.0, dbg) if return_debug else (None, 0.0, 0.0)
+        result = {
+            "raw_name": best["name"],
+            "score": float(best["score"]),
+            "gap": gap,
+            "top_candidates": [
+                {
+                    "best_kind": "card" if cand["best_source"] else "icon",
+                    "best_source": cand["best_source"] or cand["name"].lower(),
+                    "name": cand["name"],
+                    "score": float(cand["score"]),
+                    "support": int(cand["support"])
+                }
+                for cand in ranked[:4]
+            ]
+        }
 
-    best_name = best_variant_scores[0]["name"]
-    best_score = float(best_variant_scores[0]["score"])
-    gap = float(best_score - float(best_variant_scores[1]["score"])) if len(best_variant_scores) >= 2 else float(best_score)
+        if best_result is None:
+            best_result = result
+        else:
+            prev = (best_result["score"], best_result["gap"])
+            cur = (result["score"], result["gap"])
+            if cur > prev:
+                best_result = result
 
-    dbg = {
-        "raw_name": best_name,
-        "score": float(best_score),
-        "gap": float(gap),
-        "top_candidates": best_variant_scores[:4],
-        "scan_mask": best_variant_mask,
-    }
-    return (best_name, float(best_score), gap, dbg) if return_debug else (best_name, float(best_score), gap)
+    if best_result is None:
+        return None, 0.0, 0.0, []
 
+    return (
+        best_result["raw_name"],
+        float(best_result["score"]),
+        float(best_result["gap"]),
+        best_result["top_candidates"]
+    )
 
 # =====================================================
 # DIGIT DETECTION
@@ -1440,10 +1648,10 @@ def compute_signature(img):
     # -------------------------------------------------
     # SYMBOL
     # -------------------------------------------------
-    x1 = int(w * 0.04)
-    x2 = int(w * 0.22)
-    y1 = int(h * 0.18)
-    y2 = int(h * 0.33)
+    x1 = int(w * 0.02)
+    x2 = int(w * 0.24)
+    y1 = int(h * 0.16)
+    y2 = int(h * 0.34)
 
     zone = img[y1:y2, x1:x2]
 
@@ -1456,10 +1664,10 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone, return_debug=True)
+    raw_symbol_name, symbol_score, symbol_gap, top_candidates = detect_symbol(zone)
 
     symbol_name = raw_symbol_name
-    if symbol_score < 0.60 or symbol_gap < 0.03:
+    if symbol_score < 0.58 or symbol_gap < 0.025:
         symbol_name = None
 
     symbol_sig = {
@@ -1469,7 +1677,8 @@ def compute_signature(img):
         "raw_name": raw_symbol_name,
         "score": float(symbol_score),
         "gap": float(symbol_gap),
-        "top_candidates": symbol_debug.get("top_candidates", [])
+        "top_candidates": top_candidates,
+        "mode": "icon_card_refs"
     }
 
     # -------------------------------------------------
@@ -1861,19 +2070,24 @@ def upload():
                 "y": 0,
                 "w": int(w),
                 "h": int(h),
-                "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]]
+                "quad": [
+                    [0, 0],
+                    [w - 1, 0],
+                    [w - 1, h - 1],
+                    [0, h - 1]
+                ]
             }
 
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
 
-        if warped is None or warped.size == 0:
-            warped = img.copy()
-
         sig = None
         rois = []
 
-        if warped is not None:
+        if warped is None or warped.size == 0:
+            warped = img.copy()
+
+        if warped is not None and warped.size != 0:
             cv2.imwrite(WARP_PATH, warped)
             sig, rois = compute_signature(warped)
 
@@ -1912,6 +2126,9 @@ def build_signatures():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = f"{CARDS_JS_PATH}.bak_{timestamp}"
         shutil.copyfile(CARDS_JS_PATH, backup_path)
+
+        global _SYMBOL_REFS_CACHE
+        _SYMBOL_REFS_CACHE = None
 
         updated = 0
         skipped = []
@@ -2006,74 +2223,101 @@ def build_signatures():
             "error": str(e)
         }), 500
 
-# =====================================================
-# BOTTOM TEST
-# =====================================================
 
-
+# =====================================================
+# SYMBOL TEST
+# =====================================================
 
 @app.route("/symbol-test", methods=["GET", "POST"])
 def symbol_test():
     if request.method == "GET":
         return """
-        <html><body style="font-family:Arial,sans-serif; padding:20px;">
-          <h2>Symbol test</h2>
-          <form method="POST" enctype="multipart/form-data">
-            <input type="file" name="image" accept="image/*" required>
-            <button type="submit">Tester</button>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Symbol Test</title>
+        </head>
+        <body style="font-family:Arial,sans-serif; padding:20px;">
+          <h1>Test du symbole</h1>
+          <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
+          <form method="post" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*" required />
+            <button type="submit">Analyser</button>
           </form>
-        </body></html>
+        </body>
+        </html>
         """
 
     if "image" not in request.files:
-        return "Image manquante", 400
+        return "Aucun fichier envoyé", 400
 
     file = request.files["image"]
-    data = np.frombuffer(file.read(), np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if not file or file.filename == "":
+        return "Fichier vide", 400
+
+    data = file.read()
+    if not data:
+        return "Impossible de lire le fichier", 400
+
+    np_arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     if img is None:
         return "Image invalide", 400
 
     rect = detect_main_card(img)
-    if rect is None:
-        warped = img.copy()
-    else:
+    warped = None
+
+    if rect is not None:
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
-        if warped is None or warped.size == 0:
-            warped = img.copy()
+
+    if warped is None or warped.size == 0:
+        warped = img.copy()
 
     warped = cv2.resize(warped, (200, 300))
-    h, w = warped.shape[:2]
-    x1 = int(w * 0.04)
-    x2 = int(w * 0.22)
-    y1 = int(h * 0.18)
-    y2 = int(h * 0.33)
-    symbol_zone = warped[y1:y2, x1:x2]
+    zone = _extract_symbol_zone_from_card(warped)
+    scan_mask, panel = _normalize_symbol_scan(zone)
+    raw_name, score, gap, top_candidates = detect_symbol(zone)
 
-    raw_name, score, gap, dbg = detect_symbol(symbol_zone, return_debug=True)
-
-    overlay = warped.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    scan_mask = dbg.get("scan_mask")
-
-    json_block = json.dumps({
+    pretty_json = json.dumps({
         "raw_name": raw_name,
-        "score": float(score),
-        "gap": float(gap),
-        "top_candidates": dbg.get("top_candidates", [])
+        "score": score,
+        "gap": gap,
+        "top_candidates": top_candidates
     }, indent=2, ensure_ascii=False)
 
-    parts = []
-    parts.append(_html_img_block("Carte redressée", _img_to_base64(warped)))
-    parts.append(_html_img_block("ROI symbole", _img_to_base64(symbol_zone)))
-    parts.append(_html_img_block("Overlay ROI", _img_to_base64(overlay)))
-    parts.append(_html_img_block("Masque symbole", _img_to_base64(scan_mask)))
-    parts.append(f"<pre style='background:#f5f5f5; padding:12px; border:1px solid #ddd;'>{json_block}</pre>")
-    parts.append("<p><a href='/symbol-test'>← Revenir</a></p>")
+    overlay = warped.copy()
+    h, w = warped.shape[:2]
+    x1 = int(w * 0.02)
+    x2 = int(w * 0.24)
+    y1 = int(h * 0.16)
+    y2 = int(h * 0.34)
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    return "<html><body style='font-family:Arial,sans-serif; padding:20px;'>" + "".join(parts) + "</body></html>"
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Symbol Test</title>
+    </head>
+    <body style="font-family:Arial,sans-serif; padding:20px;">
+      <h1>Résultat du test symbole</h1>
+      <p><a href="/symbol-test">← Revenir au formulaire</a></p>
+      <h2>Résultat JSON</h2>
+      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
+      {_html_img_block("Carte redressée", _img_to_base64(warped))}
+      {_html_img_block("Overlay ROI symbole", _img_to_base64(overlay))}
+      {_html_img_block("Zone symbole", _img_to_base64(zone))}
+      {_html_img_block("Panel interne", _img_to_base64(panel))}
+      {_html_img_block("Masque symbole", _img_to_base64(scan_mask))}
+    </body>
+    </html>
+    """
 
+
+# =====================================================
+# BOTTOM TEST
+# =====================================================
 
 @app.route("/bottom-test", methods=["GET", "POST"])
 def bottom_test():
