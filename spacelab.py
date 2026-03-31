@@ -1698,22 +1698,25 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-    raw_symbol_name, symbol_score, symbol_gap, top_candidates = detect_symbol(zone)
+   raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone)
+   top_candidates = symbol_debug.get("top_candidates", [])
 
     symbol_name = raw_symbol_name
     if symbol_score < 0.58 or symbol_gap < 0.025:
         symbol_name = None
 
-    symbol_sig = {
-        "mean": float(np.mean(gray)),
-        "std": float(np.std(gray)),
-        "name": symbol_name,
-        "raw_name": raw_symbol_name,
-        "score": float(symbol_score),
-        "gap": float(symbol_gap),
-        "top_candidates": top_candidates,
-        "mode": "icon_card_refs"
-    }
+   symbol_sig = {
+    "mean": float(np.mean(gray)),
+    "std": float(np.std(gray)),
+    "name": symbol_name,
+    "raw_name": raw_symbol_name,
+    "score": float(symbol_score),
+    "gap": float(symbol_gap),
+    "top_candidates": top_candidates,
+    "winner_references": symbol_debug.get("winner_references", []),
+    "runner_up": symbol_debug.get("runner_up"),
+    "mode": "icon_card_refs"
+}
 
     # -------------------------------------------------
     # BOTTOM
@@ -2311,14 +2314,16 @@ def symbol_test():
     warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
     scan_mask, panel = _normalize_symbol_scan(zone)
-    raw_name, score, gap, top_candidates = detect_symbol(zone)
+ raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
-    pretty_json = json.dumps({
-        "raw_name": raw_name,
-        "score": score,
-        "gap": gap,
-        "top_candidates": top_candidates
-    }, indent=2, ensure_ascii=False)
+pretty_json = json.dumps({
+    "raw_name": raw_name,
+    "score": score,
+    "gap": gap,
+    "top_candidates": symbol_debug.get("top_candidates", []),
+    "winner_references": symbol_debug.get("winner_references", []),
+    "runner_up": symbol_debug.get("runner_up")
+}, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
