@@ -1702,7 +1702,7 @@ def compute_signature(img):
     top_candidates = symbol_debug.get("top_candidates", [])
 
     symbol_name = raw_symbol_name
-    if symbol_score < 0.58 or symbol_gap < 0.025:
+    if symbol_score < 0.55 or symbol_gap < 0.025:
         symbol_name = None
 
     symbol_sig = {
