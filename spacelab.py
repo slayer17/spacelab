@@ -2308,10 +2308,10 @@ def symbol_test():
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
 
-    if warped is None or warped.size == 0:
+     if warped is None or warped.size == 0:
         warped = img.copy()
 
-   warped = cv2.resize(warped, (200, 300))
+    warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
