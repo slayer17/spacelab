@@ -50,31 +50,62 @@ WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 # SYMBOL DETECTION
 # =====================================================
 
-def _keep_largest_component(bin_img):
+def _keep_main_components(bin_img, max_components=3, min_area_ratio=0.08):
     """
-    Garde uniquement le plus gros composant blanc.
-    Ça évite que du bruit parasite casse la reconnaissance.
+    Garde les plus gros composants utiles au lieu d'un seul bloc.
+    C'est important pour les symboles qui ont plusieurs parties.
     """
     if bin_img is None or bin_img.size == 0:
         return bin_img
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
-
     if num_labels <= 1:
         return bin_img
 
-    largest_label = 1
-    largest_area = stats[1, cv2.CC_STAT_AREA]
+    areas = []
+    for i in range(1, num_labels):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area > 0:
+            areas.append((i, area))
 
-    for i in range(2, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area > largest_area:
-            largest_area = area
-            largest_label = i
+    if not areas:
+        return bin_img
+
+    areas.sort(key=lambda x: x[1], reverse=True)
+    largest = float(areas[0][1])
+    kept = []
+    for i, area in areas[:max_components]:
+        if area >= largest * float(min_area_ratio):
+            kept.append(i)
+
+    if not kept:
+        kept = [areas[0][0]]
 
     out = np.zeros_like(bin_img)
-    out[labels == largest_label] = 255
+    for label in kept:
+        out[labels == label] = 255
     return out
+
+
+def _keep_largest_component(bin_img):
+    """
+    Compatibilité arrière : ancien nom utilisé ailleurs.
+    """
+    return _keep_main_components(bin_img, max_components=1, min_area_ratio=0.0)
+
+
+def _prepare_symbol_gray(img_or_mask):
+    if img_or_mask is None or img_or_mask.size == 0:
+        return None
+
+    if len(img_or_mask.shape) == 3:
+        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img_or_mask.copy()
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.equalizeHist(gray)
+    return gray
 
 
 def _normalize_symbol_mask(img_or_mask, is_template=False):
@@ -82,62 +113,65 @@ def _normalize_symbol_mask(img_or_mask, is_template=False):
     Transforme une image de symbole en masque binaire propre,
     centré et redimensionné de manière stable.
     """
-    if img_or_mask is None or img_or_mask.size == 0:
+    gray = _prepare_symbol_gray(img_or_mask)
+    if gray is None:
         return None
 
-    # Si l'image est en couleur, on passe en gris
-    if len(img_or_mask.shape) == 3:
-        gray = cv2.cvtColor(img_or_mask, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img_or_mask.copy()
+    candidates = []
 
-    # Lissage léger
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    gray = cv2.equalizeHist(gray)
+    # Variante standard : symbole foncé sur fond clair.
+    _, bin_inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    candidates.append(bin_inv)
 
-    # Binarisation
-    _, bin_img = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
+    # Variante sécurité : selon certaines captures, l'icône ressort mieux autrement.
+    _, bin_norm = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # On veut toujours un symbole blanc sur fond noir.
+    if np.count_nonzero(bin_norm) > (bin_norm.size * 0.5):
+        bin_norm = cv2.bitwise_not(bin_norm)
+    candidates.append(bin_norm)
 
-    # Nettoyage
     kernel = np.ones((3, 3), np.uint8)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
+    best_canvas = None
+    best_score = -1.0
 
-    # On garde seulement le plus gros objet
-    bin_img = _keep_largest_component(bin_img)
+    for bin_img in candidates:
+        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
+        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel)
+        bin_img = _keep_main_components(bin_img, max_components=3, min_area_ratio=0.10)
 
-    ys, xs = np.where(bin_img > 0)
-    if len(xs) == 0 or len(ys) == 0:
-        return None
+        ys, xs = np.where(bin_img > 0)
+        if len(xs) == 0 or len(ys) == 0:
+            continue
 
-    x1, x2 = xs.min(), xs.max()
-    y1, y2 = ys.min(), ys.max()
+        x1, x2 = xs.min(), xs.max()
+        y1, y2 = ys.min(), ys.max()
 
-    crop = bin_img[y1:y2 + 1, x1:x2 + 1]
-    if crop is None or crop.size == 0:
-        return None
+        crop = bin_img[y1:y2 + 1, x1:x2 + 1]
+        if crop is None or crop.size == 0:
+            continue
 
-    # On place la forme dans un canvas carré
-    target = 96
-    canvas = np.zeros((target, target), dtype=np.uint8)
+        target = 96
+        canvas = np.zeros((target, target), dtype=np.uint8)
 
-    h, w = crop.shape[:2]
-    if h == 0 or w == 0:
-        return None
+        h, w = crop.shape[:2]
+        if h == 0 or w == 0:
+            continue
 
-    scale = min((target - 16) / w, (target - 16) / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
+        scale = min((target - 16) / w, (target - 16) / h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
 
-    resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        x = (target - new_w) // 2
+        y = (target - new_h) // 2
+        canvas[y:y + new_h, x:x + new_w] = resized
 
-    x = (target - new_w) // 2
-    y = (target - new_h) // 2
-    canvas[y:y + new_h, x:x + new_w] = resized
+        fill_ratio = float(np.count_nonzero(canvas)) / float(canvas.size)
+        if fill_ratio > best_score:
+            best_score = fill_ratio
+            best_canvas = canvas
 
-    return canvas
+    return best_canvas
 
 
 def _symbol_iou(a, b):
@@ -187,7 +221,6 @@ def _hu_score(a, b):
     hua = cv2.HuMoments(ma).flatten()
     hub = cv2.HuMoments(mb).flatten()
 
-    # Passage log pour stabiliser
     eps = 1e-10
     hua = -np.sign(hua) * np.log10(np.abs(hua) + eps)
     hub = -np.sign(hub) * np.log10(np.abs(hub) + eps)
@@ -198,18 +231,57 @@ def _hu_score(a, b):
     return float(score)
 
 
+def _load_symbol_templates():
+    templates = {}
+    mapping = {
+        "SCIENTIFIQUE": "scientifique.png",
+        "ASTRONAUTE": "astronaute.png",
+        "MECANICIEN": "mecanicien.png",
+        "MEDECIN": "medecin.png",
+    }
+
+    for name, filename in mapping.items():
+        path = os.path.join(SYMBOLS_DIR, filename)
+        tpl = cv2.imread(path, 0)
+        if tpl is None or tpl.size == 0:
+            continue
+        tpl_mask = _normalize_symbol_mask(tpl, is_template=True)
+        if tpl_mask is not None:
+            templates[name] = tpl_mask
+    return templates
+
+
+def _iter_symbol_variants(zone):
+    if zone is None or zone.size == 0:
+        return []
+
+    h, w = zone.shape[:2]
+    variants = []
+    # crop central + petits décalages pour absorber les variations de cadrage.
+    boxes = [
+        (0.08, 0.92, 0.08, 0.92),
+        (0.02, 0.88, 0.08, 0.92),
+        (0.12, 0.98, 0.08, 0.92),
+        (0.08, 0.92, 0.02, 0.88),
+        (0.08, 0.92, 0.12, 0.98),
+    ]
+    for xa, xb, ya, yb in boxes:
+        x1 = int(w * xa)
+        x2 = int(w * xb)
+        y1 = int(h * ya)
+        y2 = int(h * yb)
+        crop = zone[y1:y2, x1:x2]
+        if crop is not None and crop.size > 0:
+            variants.append(crop)
+    return variants or [zone]
+
+
 def detect_symbol(zone, return_debug=False):
     """
     Détection symbole sur le crop symbole de la carte.
-    On garde la logique actuelle, mais on expose aussi les détails
-    pour débuguer sans casser le reste du projet.
+    Version icon-first, plus robuste pour un scanner mono-carte.
     """
-    templates = {
-        "SCIENTIFIQUE": cv2.imread(os.path.join(SYMBOLS_DIR, "scientifique.png"), 0),
-        "ASTRONAUTE": cv2.imread(os.path.join(SYMBOLS_DIR, "astronaute.png"), 0),
-        "MECANICIEN": cv2.imread(os.path.join(SYMBOLS_DIR, "mecanicien.png"), 0),
-        "MEDECIN": cv2.imread(os.path.join(SYMBOLS_DIR, "medecin.png"), 0),
-    }
+    templates = _load_symbol_templates()
 
     empty_debug = {
         "raw_name": None,
@@ -219,61 +291,59 @@ def detect_symbol(zone, return_debug=False):
         "scan_mask": None,
     }
 
-    if zone is None or zone.size == 0:
+    if zone is None or zone.size == 0 or not templates:
         return (None, 0.0, 0.0, empty_debug) if return_debug else (None, 0.0, 0.0)
 
-    h, w = zone.shape[:2]
-    x1 = int(w * 0.10)
-    x2 = int(w * 0.90)
-    y1 = int(h * 0.10)
-    y2 = int(h * 0.90)
-    zone = zone[y1:y2, x1:x2]
+    best_variant_mask = None
+    best_variant_scores = None
+    best_variant_best = -1.0
 
-    if zone is None or zone.size == 0:
-        return (None, 0.0, 0.0, empty_debug) if return_debug else (None, 0.0, 0.0)
+    for variant in _iter_symbol_variants(zone):
+        scan_mask = _normalize_symbol_mask(variant, is_template=False)
+        if scan_mask is None:
+            continue
 
-    scan_mask = _normalize_symbol_mask(zone, is_template=False)
-    if scan_mask is None:
+        scores = []
+        for name, tpl_mask in templates.items():
+            iou = _symbol_iou(scan_mask, tpl_mask)
+            xor_score = _symbol_xor_score(scan_mask, tpl_mask)
+            hu = _hu_score(scan_mask, tpl_mask)
+            # poids un peu plus forts sur la forme binaire
+            score = (iou * 0.55) + (xor_score * 0.30) + (hu * 0.15)
+            scores.append({
+                "name": name,
+                "score": float(score),
+                "iou": float(iou),
+                "xor": float(xor_score),
+                "hu": float(hu),
+            })
+
+        if not scores:
+            continue
+
+        scores.sort(key=lambda x: x["score"], reverse=True)
+        if float(scores[0]["score"]) > best_variant_best:
+            best_variant_best = float(scores[0]["score"])
+            best_variant_mask = scan_mask
+            best_variant_scores = scores
+
+    if not best_variant_scores:
         dbg = dict(empty_debug)
         return (None, 0.0, 0.0, dbg) if return_debug else (None, 0.0, 0.0)
 
-    scores = []
-    for name, tpl in templates.items():
-        if tpl is None or tpl.size == 0:
-            continue
-        tpl_mask = _normalize_symbol_mask(tpl, is_template=True)
-        if tpl_mask is None:
-            continue
-        iou = _symbol_iou(scan_mask, tpl_mask)
-        xor_score = _symbol_xor_score(scan_mask, tpl_mask)
-        hu = _hu_score(scan_mask, tpl_mask)
-        score = (iou * 0.50) + (xor_score * 0.30) + (hu * 0.20)
-        scores.append({
-            "name": name,
-            "score": float(score),
-            "iou": float(iou),
-            "xor": float(xor_score),
-            "hu": float(hu),
-        })
-
-    if not scores:
-        dbg = dict(empty_debug)
-        dbg["scan_mask"] = scan_mask
-        return (None, 0.0, 0.0, dbg) if return_debug else (None, 0.0, 0.0)
-
-    scores.sort(key=lambda x: x["score"], reverse=True)
-    best_name = scores[0]["name"]
-    best_score = float(scores[0]["score"])
-    gap = float(best_score - float(scores[1]["score"])) if len(scores) >= 2 else float(best_score)
+    best_name = best_variant_scores[0]["name"]
+    best_score = float(best_variant_scores[0]["score"])
+    gap = float(best_score - float(best_variant_scores[1]["score"])) if len(best_variant_scores) >= 2 else float(best_score)
 
     dbg = {
         "raw_name": best_name,
         "score": float(best_score),
         "gap": float(gap),
-        "top_candidates": scores[:4],
-        "scan_mask": scan_mask,
+        "top_candidates": best_variant_scores[:4],
+        "scan_mask": best_variant_mask,
     }
     return (best_name, float(best_score), gap, dbg) if return_debug else (best_name, float(best_score), gap)
+
 
 # =====================================================
 # DIGIT DETECTION
@@ -1370,10 +1440,10 @@ def compute_signature(img):
     # -------------------------------------------------
     # SYMBOL
     # -------------------------------------------------
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.20)
-    y1 = int(h * 0.20)
-    y2 = int(h * 0.31)
+    x1 = int(w * 0.04)
+    x2 = int(w * 0.22)
+    y1 = int(h * 0.18)
+    y2 = int(h * 0.33)
 
     zone = img[y1:y2, x1:x2]
 
@@ -1389,7 +1459,7 @@ def compute_signature(img):
     raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone, return_debug=True)
 
     symbol_name = raw_symbol_name
-    if symbol_score < 0.43 or symbol_gap < 0.02:
+    if symbol_score < 0.60 or symbol_gap < 0.03:
         symbol_name = None
 
     symbol_sig = {
@@ -1975,10 +2045,10 @@ def symbol_test():
 
     warped = cv2.resize(warped, (200, 300))
     h, w = warped.shape[:2]
-    x1 = int(w * 0.05)
-    x2 = int(w * 0.20)
-    y1 = int(h * 0.20)
-    y2 = int(h * 0.31)
+    x1 = int(w * 0.04)
+    x2 = int(w * 0.22)
+    y1 = int(h * 0.18)
+    y2 = int(h * 0.33)
     symbol_zone = warped[y1:y2, x1:x2]
 
     raw_name, score, gap, dbg = detect_symbol(symbol_zone, return_debug=True)
