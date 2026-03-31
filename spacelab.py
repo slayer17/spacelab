@@ -1679,7 +1679,7 @@ def compute_signature(img):
         "debug": color_debug
     }
 
-    # -------------------------------------------------
+# -------------------------------------------------
     # SYMBOL
     # -------------------------------------------------
     x1 = int(w * 0.02)
@@ -1698,25 +1698,25 @@ def compute_signature(img):
     })
 
     gray = cv2.cvtColor(zone, cv2.COLOR_BGR2GRAY)
-   raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone)
-   top_candidates = symbol_debug.get("top_candidates", [])
+    raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone)
+    top_candidates = symbol_debug.get("top_candidates", [])
 
     symbol_name = raw_symbol_name
     if symbol_score < 0.58 or symbol_gap < 0.025:
         symbol_name = None
 
-   symbol_sig = {
-    "mean": float(np.mean(gray)),
-    "std": float(np.std(gray)),
-    "name": symbol_name,
-    "raw_name": raw_symbol_name,
-    "score": float(symbol_score),
-    "gap": float(symbol_gap),
-    "top_candidates": top_candidates,
-    "winner_references": symbol_debug.get("winner_references", []),
-    "runner_up": symbol_debug.get("runner_up"),
-    "mode": "icon_card_refs"
-}
+    symbol_sig = {
+        "mean": float(np.mean(gray)),
+        "std": float(np.std(gray)),
+        "name": symbol_name,
+        "raw_name": raw_symbol_name,
+        "score": float(symbol_score),
+        "gap": float(symbol_gap),
+        "top_candidates": top_candidates,
+        "winner_references": symbol_debug.get("winner_references", []),
+        "runner_up": symbol_debug.get("runner_up"),
+        "mode": "icon_card_refs"
+    }
 
     # -------------------------------------------------
     # BOTTOM
