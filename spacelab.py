@@ -1705,7 +1705,7 @@ def compute_signature(img):
     if symbol_score < 0.58 or symbol_gap < 0.025:
         symbol_name = None
 
-  symbol_sig = {
+   symbol_sig = {
     "mean": float(np.mean(gray)),
     "std": float(np.std(gray)),
     "name": symbol_name,
@@ -1715,7 +1715,7 @@ def compute_signature(img):
     "winner": top_candidates[0] if top_candidates else None,
     "winner_references": symbol_debug.get("winner_references", []),
     "mode": "icon_card_refs"
- }
+  }
 
     # -------------------------------------------------
     # BOTTOM
