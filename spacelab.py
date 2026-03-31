@@ -2311,19 +2311,19 @@ def symbol_test():
     if warped is None or warped.size == 0:
         warped = img.copy()
 
-    warped = cv2.resize(warped, (200, 300))
+   warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
     scan_mask, panel = _normalize_symbol_scan(zone)
- raw_name, score, gap, symbol_debug = detect_symbol(zone)
+    raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
-pretty_json = json.dumps({
-    "raw_name": raw_name,
-    "score": score,
-    "gap": gap,
-    "top_candidates": symbol_debug.get("top_candidates", []),
-    "winner_references": symbol_debug.get("winner_references", []),
-    "runner_up": symbol_debug.get("runner_up")
-}, indent=2, ensure_ascii=False)
+    pretty_json = json.dumps({
+        "raw_name": raw_name,
+        "score": score,
+        "gap": gap,
+        "top_candidates": symbol_debug.get("top_candidates", []),
+        "winner_references": symbol_debug.get("winner_references", []),
+        "runner_up": symbol_debug.get("runner_up")
+    }, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
