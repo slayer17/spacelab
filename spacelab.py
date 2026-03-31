@@ -2316,6 +2316,10 @@ def symbol_test():
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
+
+
+    top_candidates = symbol_debug.get("top_candidates") or []
+    winner = top_candidates[0] if top_candidates else None
     pretty_json = json.dumps({
         "raw_name": raw_name,
         "score": score,
