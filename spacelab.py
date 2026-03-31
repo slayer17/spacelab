@@ -2315,97 +2315,29 @@ def symbol_test():
     zone = _extract_symbol_zone_from_card(warped)
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
+
     zone_ok = zone is not None and zone.size != 0
     panel_ok = panel is not None and panel.size != 0
     mask_ok = scan_mask is not None and scan_mask.size != 0 and np.count_nonzero(scan_mask) > 0
 
-
-top_candidates = symbol_debug.get("top_candidates") or []
-winner = top_candidates[0] if top_candidates else None
-winner_references = symbol_debug.get("winner_references") or []
-
-pretty_json = json.dumps({
-    "raw_name": raw_name,
-    "score": score,
-    "gap": gap,
-    "winner": winner,
-    "winner_references": winner_references,
-    "debug": {
-        "zone_ok": zone_ok,
-        "panel_ok": panel_ok,
-        "mask_ok": mask_ok,
-        "zone_shape": list(zone.shape) if zone is not None else None,
-        "panel_shape": list(panel.shape) if panel is not None else None,
-        "mask_nonzero": int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
-    }
-}, indent=2, ensure_ascii=False)
-
-    overlay = warped.copy()
-    h, w = warped.shape[:2]
-    x1 = int(w * 0.02)
-    x2 = int(w * 0.24)
-    y1 = int(h * 0.16)
-    y2 = int(h * 0.34)
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-    return f"""
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>Symbol Test</title>
-    </head>
-    <body style="font-family:Arial,sans-serif; padding:20px;">
-      <h1>Résultat du test symbole</h1>
-      <p><a href="/symbol-test">← Revenir au formulaire</a></p>
-      <h2>Résultat JSON</h2>
-      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
-      {_html_img_block("Carte redressée", _img_to_base64(warped))}
-      {_html_img_block("Overlay ROI symbole", _img_to_base64(overlay))}
-      {_html_img_block("Zone symbole", _img_to_base64(zone))}
-      {_html_img_block("Panel interne", _img_to_base64(panel))}
-      {_html_img_block("Masque symbole", _img_to_base64(scan_mask))}
-    </body>
-    </html>
-    """
-
-    if "image" not in request.files:
-        return "Aucun fichier envoyé", 400
-
-    file = request.files["image"]
-    if not file or file.filename == "":
-        return "Fichier vide", 400
-
-    data = file.read()
-    if not data:
-        return "Impossible de lire le fichier", 400
-
-    np_arr = np.frombuffer(data, np.uint8)
-    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    if img is None:
-        return "Image invalide", 400
-
-    rect = detect_main_card(img)
-    warped = None
-
-    if rect is not None:
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
-    if warped is None or warped.size == 0:
-        warped = img.copy()
-
-    warped = cv2.resize(warped, (200, 300))
-    zone = _extract_symbol_zone_from_card(warped)
-    scan_mask, panel = _normalize_symbol_scan(zone)
-    raw_name, score, gap, symbol_debug = detect_symbol(zone)
+    top_candidates = symbol_debug.get("top_candidates") or []
+    winner = top_candidates[0] if top_candidates else None
+    winner_references = symbol_debug.get("winner_references") or []
 
     pretty_json = json.dumps({
         "raw_name": raw_name,
         "score": score,
         "gap": gap,
-        "top_candidates": symbol_debug.get("top_candidates", []),
-        "winner_references": symbol_debug.get("winner_references", []),
-        "runner_up": symbol_debug.get("runner_up")
+        "winner": winner,
+        "winner_references": winner_references,
+        "debug": {
+            "zone_ok": zone_ok,
+            "panel_ok": panel_ok,
+            "mask_ok": mask_ok,
+            "zone_shape": list(zone.shape) if zone is not None else None,
+            "panel_shape": list(panel.shape) if panel is not None else None,
+            "mask_nonzero": int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
+        }
     }, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
@@ -2435,7 +2367,6 @@ pretty_json = json.dumps({
     </body>
     </html>
     """
-
 
 # =====================================================
 # BOTTOM TEST
