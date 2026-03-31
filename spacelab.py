@@ -460,14 +460,21 @@ def _load_symbol_references():
 def detect_symbol(zone):
     refs = _load_symbol_references()
 
+    empty_debug = {
+        "top_candidates": [],
+        "winner_references": [],
+        "runner_up": None
+    }
+
     if zone is None or zone.size == 0:
-        return None, 0.0, 0.0, []
+        return None, 0.0, 0.0, empty_debug
 
     variants = _extract_symbol_zone_variants(zone)
     if not variants:
-        return None, 0.0, 0.0, []
+        return None, 0.0, 0.0, empty_debug
 
     best_result = None
+    best_scan_mask = None
 
     for variant in variants:
         scan_mask, _ = _normalize_symbol_scan(variant)
@@ -485,6 +492,7 @@ def detect_symbol(zone):
                 ref_mask = card_ref.get("mask")
                 if ref_mask is None:
                     continue
+
                 s = _score_symbol_masks(scan_mask, ref_mask)
                 card_scores.append((float(s), card_ref.get("id")))
 
@@ -519,57 +527,64 @@ def detect_symbol(zone):
         second = ranked[1] if len(ranked) > 1 else None
         gap = float(best["score"] - (second["score"] if second else 0.0))
 
-    winner_name = best["name"]
+        winner_name = best["name"]
 
-winner_card_scores = []
-for card_ref in refs["cards"].get(winner_name, []):
-    ref_mask = card_ref.get("mask")
-    if ref_mask is None:
-        continue
-    s = _score_symbol_masks(scan_mask, ref_mask)
-    winner_card_scores.append({
-        "card_id": card_ref.get("id"),
-        "score": float(s)
-    })
+        winner_card_scores = []
+        for card_ref in refs["cards"].get(winner_name, []):
+            ref_mask = card_ref.get("mask")
+            if ref_mask is None:
+                continue
 
-winner_card_scores.sort(key=lambda d: d["score"], reverse=True)
+            s = _score_symbol_masks(scan_mask, ref_mask)
+            winner_card_scores.append({
+                "card_id": card_ref.get("id"),
+                "score": float(s)
+            })
 
-result = {
-    "raw_name": winner_name,
-    "score": float(best["score"]),
-    "gap": gap,
-    "top_candidates": [
-        {
-            "best_kind": "card" if best["best_source"] else "icon",
-            "best_source": best["best_source"] or best["name"].lower(),
-            "name": best["name"],
+        winner_card_scores.sort(key=lambda d: d["score"], reverse=True)
+
+        result = {
+            "raw_name": winner_name,
             "score": float(best["score"]),
-            "support": int(best["support"])
+            "gap": gap,
+            "top_candidates": [
+                {
+                    "best_kind": "card" if best["best_source"] else "icon",
+                    "best_source": best["best_source"] or best["name"].lower(),
+                    "name": best["name"],
+                    "score": float(best["score"]),
+                    "support": int(best["support"])
+                }
+            ],
+            "winner_references": winner_card_scores[:5],
+            "runner_up": {
+                "name": second["name"],
+                "score": float(second["score"])
+            } if second else None
         }
-    ],
-    "winner_references": winner_card_scores[:5],
-    "runner_up": {
-        "name": second["name"],
-        "score": float(second["score"])
-    } if second else None
-}
 
         if best_result is None:
             best_result = result
+            best_scan_mask = scan_mask
         else:
             prev = (best_result["score"], best_result["gap"])
             cur = (result["score"], result["gap"])
             if cur > prev:
                 best_result = result
+                best_scan_mask = scan_mask
 
     if best_result is None:
-        return None, 0.0, 0.0, []
+        return None, 0.0, 0.0, empty_debug
 
     return (
         best_result["raw_name"],
         float(best_result["score"]),
         float(best_result["gap"]),
-        best_result["top_candidates"]
+        {
+            "top_candidates": best_result.get("top_candidates", []),
+            "winner_references": best_result.get("winner_references", []),
+            "runner_up": best_result.get("runner_up")
+        }
     )
 
 # =====================================================
