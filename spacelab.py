@@ -201,7 +201,7 @@ def _extract_symbol_panel(zone):
 
 def _normalize_symbol_scan(zone):
     if zone is None or zone.size == 0:
-        return None, None
+        return None, None, None
 
     panel = _extract_symbol_panel(zone)
 
@@ -232,18 +232,17 @@ def _normalize_symbol_scan(zone):
 
         return canvas
 
-    # 1) logique actuelle
     canvas = build_canvas(cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     if canvas is not None:
-        return canvas, panel
+        return canvas, panel, "binary"
 
-    # 2) fallback si masque vide
     canvas = build_canvas(cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     if canvas is not None:
-        return canvas, panel
+        return canvas, panel, "binary_inv"
 
-    return None, panel
-
+    return None, panel, None
+    
+    
 def _normalize_symbol_template(img):
     if img is None or img.size == 0:
         return None
