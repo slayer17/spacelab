@@ -2316,9 +2316,10 @@ def symbol_test():
     scan_mask, panel = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
-    zone_ok = zone is not None and zone.size != 0
-    panel_ok = panel is not None and panel.size != 0
-    mask_ok = scan_mask is not None and scan_mask.size != 0 and np.count_nonzero(scan_mask) > 0
+    zone_ok = bool(zone is not None and zone.size != 0)
+    panel_ok = bool(panel is not None and panel.size != 0)
+    mask_nonzero = int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
+    mask_ok = bool(scan_mask is not None and scan_mask.size != 0 and mask_nonzero > 0)
 
     top_candidates = symbol_debug.get("top_candidates") or []
     winner = top_candidates[0] if top_candidates else None
@@ -2326,8 +2327,8 @@ def symbol_test():
 
     pretty_json = json.dumps({
         "raw_name": raw_name,
-        "score": score,
-        "gap": gap,
+        "score": float(score),
+        "gap": float(gap),
         "winner": winner,
         "winner_references": winner_references,
         "debug": {
@@ -2336,7 +2337,7 @@ def symbol_test():
             "mask_ok": mask_ok,
             "zone_shape": list(zone.shape) if zone is not None else None,
             "panel_shape": list(panel.shape) if panel is not None else None,
-            "mask_nonzero": int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
+            "mask_nonzero": mask_nonzero
         }
     }, indent=2, ensure_ascii=False)
 
