@@ -212,18 +212,37 @@ def _normalize_symbol_scan(zone):
 
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    bin_img = _remove_border_touching_components(bin_img, min_area=3)
+    def build_canvas(thresh_flag):
+        _, bin_img = cv2.threshold(gray, 0, 255, thresh_flag)
 
-    if np.count_nonzero(bin_img) == 0:
-        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        cleaned = _remove_border_touching_components(bin_img, min_area=3)
+        if np.count_nonzero(cleaned) == 0:
+            cleaned = bin_img.copy()
 
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
-    bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
-    bin_img = _keep_main_components(bin_img, max_components=8, min_ratio=0.07)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
+        cleaned = _keep_main_components(cleaned, max_components=8, min_ratio=0.07)
 
-    return _normalize_binary_to_canvas(bin_img), panel
+        canvas = _normalize_binary_to_canvas(cleaned)
+        if canvas is None:
+            return None
 
+        if int(np.count_nonzero(canvas)) == 0:
+            return None
+
+        return canvas
+
+    # 1) logique actuelle
+    canvas = build_canvas(cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if canvas is not None:
+        return canvas, panel
+
+    # 2) fallback si masque vide
+    canvas = build_canvas(cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    if canvas is not None:
+        return canvas, panel
+
+    return None, panel
 
 def _normalize_symbol_template(img):
     if img is None or img.size == 0:
