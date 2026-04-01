@@ -2289,23 +2289,22 @@ def symbol_test():
         return """
         <html>
         <head>
-          <meta charset="utf-8" />
-          <title>Symbol Test</title>
+            <meta charset="utf-8" />
+            <title>Symbol Test</title>
         </head>
         <body style="font-family:Arial,sans-serif; padding:20px;">
-          <h1>Test du symbole</h1>
-          <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
-          <form method="post" enctype="multipart/form-data">
-            <input type="file" name="image" accept="image/*" required />
-            <button type="submit">Analyser</button>
-          </form>
+            <h1>Test du symbole</h1>
+            <p>Choisis une image de carte complète, puis clique sur Analyser.</p>
+            <form method="post" enctype="multipart/form-data">
+                <input type="file" name="image" accept="image/*" required />
+                <button type="submit">Analyser</button>
+            </form>
         </body>
         </html>
         """
 
     if "image" not in request.files:
         return "Aucun fichier envoyé", 400
-
     file = request.files["image"]
     if not file or file.filename == "":
         return "Fichier vide", 400
@@ -2321,7 +2320,6 @@ def symbol_test():
 
     rect = detect_main_card(img)
     warped = None
-
     if rect is not None:
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
@@ -2331,6 +2329,8 @@ def symbol_test():
 
     warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
+    
+    # Mise à jour ici pour capter les 3 valeurs de retour
     scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
@@ -2343,22 +2343,22 @@ def symbol_test():
     winner = top_candidates[0] if top_candidates else None
     winner_references = symbol_debug.get("winner_references") or []
 
-pretty_json = json.dumps({
-    "raw_name": raw_name,
-    "score": float(score),
-    "gap": float(gap),
-    "winner": winner,
-    "winner_references": winner_references,
-    "debug": {
-        "zone_ok": zone_ok,
-        "panel_ok": panel_ok,
-        "mask_ok": mask_ok,
-        "zone_shape": list(zone.shape) if zone is not None else None,
-        "panel_shape": list(panel.shape) if panel is not None else None,
-        "mask_nonzero": mask_nonzero,
-        "threshold_mode": threshold_mode
-    }
-}, indent=2, ensure_ascii=False)
+    pretty_json = json.dumps({
+        "raw_name": raw_name,
+        "score": float(score),
+        "gap": float(gap),
+        "winner": winner,
+        "winner_references": winner_references,
+        "debug": {
+            "zone_ok": zone_ok,
+            "panel_ok": panel_ok,
+            "mask_ok": mask_ok,
+            "zone_shape": list(zone.shape) if zone is not None else None,
+            "panel_shape": list(panel.shape) if panel is not None else None,
+            "mask_nonzero": mask_nonzero,
+            "threshold_mode": threshold_mode
+        }
+    }, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
@@ -2371,19 +2371,19 @@ pretty_json = json.dumps({
     return f"""
     <html>
     <head>
-      <meta charset="utf-8" />
-      <title>Symbol Test</title>
+        <meta charset="utf-8" />
+        <title>Symbol Test</title>
     </head>
     <body style="font-family:Arial,sans-serif; padding:20px;">
-      <h1>Résultat du test symbole</h1>
-      <p><a href="/symbol-test">← Revenir au formulaire</a></p>
-      <h2>Résultat JSON</h2>
-      <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
-      {_html_img_block("Carte redressée", _img_to_base64(warped))}
-      {_html_img_block("Overlay ROI symbole", _img_to_base64(overlay))}
-      {_html_img_block("Zone symbole", _img_to_base64(zone))}
-      {_html_img_block("Panel interne", _img_to_base64(panel))}
-      {_html_img_block("Masque symbole", _img_to_base64(scan_mask))}
+        <h1>Résultat du test symbole</h1>
+        <p><a href="/symbol-test">← Revenir au formulaire</a></p>
+        <h2>Résultat JSON</h2>
+        <pre style="background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto;">{pretty_json}</pre>
+        {_html_img_block("Carte redressée", _img_to_base64(warped))}
+        {_html_img_block("Overlay ROI symbole", _img_to_base64(overlay))}
+        {_html_img_block("Zone symbole", _img_to_base64(zone))}
+        {_html_img_block("Panel interne", _img_to_base64(panel))}
+        {_html_img_block("Masque symbole", _img_to_base64(scan_mask))}
     </body>
     </html>
     """
