@@ -2093,9 +2093,6 @@ def index():
     return send_from_directory(BASE_DIR, "index.html")
 
 
-@app.route("/<path:path>")
-def static_files(path):
-    return send_from_directory(BASE_DIR, path)
 
 
 # =====================================================
@@ -2277,6 +2274,8 @@ def build_signatures():
             "ok": False,
             "error": str(e)
         }), 500
+        
+
 
 
 # =====================================================
@@ -2755,7 +2754,9 @@ def verify_cards_integrity():
         
       
         
-
+@app.route("/<path:path>")
+def static_files(path):
+    return send_from_directory(BASE_DIR, path)
 
 # =====================================================
 # RUN
