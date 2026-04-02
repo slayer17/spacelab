@@ -2387,6 +2387,180 @@ def symbol_test():
     </body>
     </html>
     """
+
+
+# =====================================================
+# SYMBOL BATCH TEST
+# =====================================================
+
+@app.route("/symbol-batch-test", methods=["GET", "POST"])
+def symbol_batch_test():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Symbol Batch Test</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background: #f5f5f5; }
+            .ok { color: #0a7a28; font-weight: bold; }
+            .ko { color: #b00020; font-weight: bold; }
+            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+          </style>
+        </head>
+        <body>
+          <h1>Test batch symbole</h1>
+          <p>Envoie plusieurs images de cartes complètes. Optionnel : mets un nom de fichier parlant comme JAUNE_7.jpg.</p>
+          <form method="post" enctype="multipart/form-data">
+            <p><input type="file" name="images" accept="image/*" multiple required /></p>
+            <p><button type="submit">Analyser le lot</button></p>
+          </form>
+        </body>
+        </html>
+        """
+
+    files = request.files.getlist("images")
+    if not files:
+        return "Aucun fichier envoyé", 400
+
+    results = []
+
+    for file in files:
+        filename = file.filename or "unknown"
+        data = file.read()
+        if not data:
+            results.append({
+                "file": filename,
+                "error": "empty_file"
+            })
+            continue
+
+        np_arr = np.frombuffer(data, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is None:
+            results.append({
+                "file": filename,
+                "error": "invalid_image"
+            })
+            continue
+
+        rect = detect_main_card(img)
+        warped = None
+
+        if rect is not None:
+            quad = np.array(rect["quad"], dtype="float32")
+            warped = warp_quad(img, quad)
+
+        if warped is None or warped.size == 0:
+            warped = img.copy()
+
+        warped = cv2.resize(warped, (200, 300))
+        zone = _extract_symbol_zone_from_card(warped)
+        scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
+        raw_name, score, gap, symbol_debug = detect_symbol(zone)
+
+        zone_ok = bool(zone is not None and zone.size != 0)
+        panel_ok = bool(panel is not None and panel.size != 0)
+        mask_nonzero = int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
+        mask_ok = bool(scan_mask is not None and scan_mask.size != 0 and mask_nonzero > 0)
+
+        top_candidates = symbol_debug.get("top_candidates") or []
+        winner = top_candidates[0] if top_candidates else None
+        winner_references = symbol_debug.get("winner_references") or []
+
+        results.append({
+            "file": filename,
+            "raw_name": raw_name,
+            "score": float(score),
+            "gap": float(gap),
+            "winner": winner,
+            "winner_references": winner_references,
+            "debug": {
+                "zone_ok": zone_ok,
+                "panel_ok": panel_ok,
+                "mask_ok": mask_ok,
+                "zone_shape": list(zone.shape) if zone is not None else None,
+                "panel_shape": list(panel.shape) if panel is not None else None,
+                "mask_nonzero": mask_nonzero,
+                "threshold_mode": threshold_mode,
+            }
+        })
+
+    pretty_json = json.dumps(results, indent=2, ensure_ascii=False)
+
+    rows = []
+    for item in results:
+        if item.get("error"):
+            rows.append(f"<tr><td>{item['file']}</td><td colspan='6' class='ko'>ERREUR: {item['error']}</td></tr>")
+            continue
+
+        raw_name = item.get("raw_name")
+        score = item.get("score", 0.0)
+        gap = item.get("gap", 0.0)
+        winner = item.get("winner") or {}
+        winner_name = winner.get("name")
+        winner_source = winner.get("best_source")
+        threshold_mode = (item.get("debug") or {}).get("threshold_mode")
+        status = "OK" if raw_name else "KO"
+        status_cls = "ok" if raw_name else "ko"
+
+        rows.append(
+            "<tr>"
+            f"<td>{item['file']}</td>"
+            f"<td>{raw_name}</td>"
+            f"<td>{score:.3f}</td>"
+            f"<td>{gap:.3f}</td>"
+            f"<td>{winner_source}</td>"
+            f"<td>{threshold_mode}</td>"
+            f"<td class='{status_cls}'>{status}</td>"
+            "</tr>"
+        )
+
+    html_rows = "\n".join(rows)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Symbol Batch Test</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background: #f5f5f5; }}
+        .ok {{ color: #0a7a28; font-weight: bold; }}
+        .ko {{ color: #b00020; font-weight: bold; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat batch symbole</h1>
+      <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
+      <table>
+        <thead>
+          <tr>
+            <th>Fichier</th>
+            <th>Symbole</th>
+            <th>Score</th>
+            <th>Gap</th>
+            <th>Meilleure ref</th>
+            <th>Mode seuil</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          {html_rows}
+        </tbody>
+      </table>
+      <h2>JSON complet</h2>
+      <pre>{pretty_json}</pre>
+    </body>
+    </html>
+    """
+
 # =====================================================
 # BOTTOM TEST
 # =====================================================
