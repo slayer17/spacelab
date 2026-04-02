@@ -2393,7 +2393,7 @@ def symbol_test():
 # SYMBOL BATCH TEST
 # =====================================================
 
-app.route("/symbol-batch-test", methods=["GET", "POST"])
+@app.route("/symbol-batch-test", methods=["GET", "POST"])
 def symbol_batch_test():
     if request.method == "GET":
         return """
