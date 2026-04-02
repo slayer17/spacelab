@@ -242,10 +242,7 @@ def _normalize_symbol_scan(zone):
 
     return None, panel, None
     
-  
-
-
-  
+    
 def _normalize_symbol_template(img):
     if img is None or img.size == 0:
         return None
@@ -465,7 +462,7 @@ def _load_symbol_references():
         if zone is None or zone.size == 0:
             continue
 
-        mask, _, _ = _normalize_symbol_scan(zone)
+        mask, _ = _normalize_symbol_scan(zone)
         if mask is None:
             continue
 
@@ -498,7 +495,7 @@ def detect_symbol(zone):
     best_scan_mask = None
 
     for variant in variants:
-        scan_mask, _, _ = _normalize_symbol_scan(variant)
+        scan_mask, _ = _normalize_symbol_scan(variant)
         if scan_mask is None:
             continue
 
@@ -2334,7 +2331,7 @@ def symbol_test():
 
     warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
-    scan_mask, panel = _normalize_symbol_scan(zone)
+    scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
     raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
     zone_ok = bool(zone is not None and zone.size != 0)
@@ -2347,21 +2344,21 @@ def symbol_test():
     winner_references = symbol_debug.get("winner_references") or []
 
     pretty_json = json.dumps({
-    "raw_name": raw_name,
-    "score": float(score),
-    "gap": float(gap),
-    "winner": winner,
-    "winner_references": winner_references,
-    "debug": {
-        "zone_ok": zone_ok,
-        "panel_ok": panel_ok,
-        "mask_ok": mask_ok,
-        "zone_shape": list(zone.shape) if zone is not None else None,
-        "panel_shape": list(panel.shape) if panel is not None else None,
-        "mask_nonzero": mask_nonzero,
-        "threshold_mode": threshold_mode
-    }
-}, indent=2, ensure_ascii=False)
+        "raw_name": raw_name,
+        "score": float(score),
+        "gap": float(gap),
+        "winner": winner,
+        "winner_references": winner_references,
+        "debug": {
+            "zone_ok": zone_ok,
+            "panel_ok": panel_ok,
+            "mask_ok": mask_ok,
+            "zone_shape": list(zone.shape) if zone is not None else None,
+            "panel_shape": list(panel.shape) if panel is not None else None,
+            "mask_nonzero": mask_nonzero,
+            "threshold_mode": threshold_mode
+        }
+    }, indent=2, ensure_ascii=False)
 
     overlay = warped.copy()
     h, w = warped.shape[:2]
@@ -2390,7 +2387,6 @@ def symbol_test():
     </body>
     </html>
     """
-
 # =====================================================
 # BOTTOM TEST
 # =====================================================
