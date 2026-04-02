@@ -2521,45 +2521,128 @@ def symbol_batch_test():
 
     html_rows = "\n".join(rows)
 
-    return f"""
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>Symbol Batch Test</title>
-      <style>
-        body {{ font-family: Arial, sans-serif; padding: 20px; }}
-        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-        th {{ background: #f5f5f5; }}
-        .ok {{ color: #0a7a28; font-weight: bold; }}
-        .ko {{ color: #b00020; font-weight: bold; }}
-        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
-      </style>
-    </head>
-    <body>
-      <h1>Résultat batch symbole</h1>
-      <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
-      <table>
-        <thead>
-          <tr>
-            <th>Fichier</th>
-            <th>Symbole</th>
-            <th>Score</th>
-            <th>Gap</th>
-            <th>Meilleure ref</th>
-            <th>Mode seuil</th>
-            <th>Statut</th>
-          </tr>
-        </thead>
-        <tbody>
-          {html_rows}
-        </tbody>
-      </table>
-      <h2>JSON complet</h2>
-      <pre>{pretty_json}</pre>
-    </body>
-    </html>
-    """
+ return f"""
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Résultats batch symbole</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; padding: 20px; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+    th {{ background: #f5f5f5; }}
+    .ok {{ color: #0a7a28; font-weight: bold; }}
+    .ko {{ color: #b00020; font-weight: bold; }}
+    pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+  </style>
+</head>
+<body>
+  <h1>Résultats batch symbole</h1>
+  <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
+
+  <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
+    <button type="button" onclick="exportBatchJson()">Exporter JSON</button>
+    <button type="button" onclick="exportBatchTxt()">Exporter TXT</button>
+    <button type="button" onclick="exportBatchHtml()">Exporter HTML</button>
+    <button type="button" onclick="copyBatchJson()">Copier JSON</button>
+  </div>
+
+  <table id="batch-results-table">
+    <thead>
+      <tr>
+        <th>Fichier</th>
+        <th>Résultat</th>
+        <th>Score</th>
+        <th>Gap</th>
+        <th>Winner</th>
+        <th>Mode</th>
+        <th>Statut</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+
+  <h2>JSON complet</h2>
+  <pre id="batch-json">{pretty_json}</pre>
+
+  <script>
+  function downloadTextFile(filename, content, contentType = "text/plain;charset=utf-8") {{
+    const blob = new Blob([content], {{ type: contentType }});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }}
+
+  function getBatchJsonText() {{
+    const pre = document.getElementById("batch-json");
+    return pre ? pre.textContent : "";
+  }}
+
+  function exportBatchJson() {{
+    const jsonText = getBatchJsonText();
+    downloadTextFile("symbol_batch_results.json", jsonText, "application/json;charset=utf-8");
+  }}
+
+  function exportBatchTxt() {{
+    const jsonText = getBatchJsonText();
+    downloadTextFile("symbol_batch_results.txt", jsonText, "text/plain;charset=utf-8");
+  }}
+
+  function exportBatchHtml() {{
+    const table = document.getElementById("batch-results-table");
+    const jsonText = getBatchJsonText();
+
+    const html = `
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Export résultats symbol batch</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; padding: 24px; }}
+    table {{ border-collapse: collapse; width: 100%; margin-bottom: 24px; }}
+    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }}
+    th {{ background: #f3f3f3; }}
+    pre {{ background: #f5f5f5; padding: 12px; border: 1px solid #ddd; overflow: auto; white-space: pre-wrap; }}
+  </style>
+</head>
+<body>
+  <h1>Résultats batch symbole</h1>
+  <h2>Tableau</h2>
+  ${{table ? table.outerHTML : "<p>Tableau absent</p>"}}
+  <h2>JSON</h2>
+  <pre>${{escapeHtml(jsonText)}}</pre>
+</body>
+</html>
+    `.trim();
+
+    downloadTextFile("symbol_batch_results.html", html, "text/html;charset=utf-8");
+  }}
+
+  function copyBatchJson() {{
+    const jsonText = getBatchJsonText();
+    navigator.clipboard.writeText(jsonText)
+      .then(() => alert("JSON copié"))
+      .catch(() => alert("Copie impossible"));
+  }}
+
+  function escapeHtml(str) {{
+    return str
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }}
+  </script>
+</body>
+</html>
+"""
 
 # =====================================================
 # BOTTOM TEST
