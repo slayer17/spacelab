@@ -2393,7 +2393,7 @@ def symbol_test():
 # SYMBOL BATCH TEST
 # =====================================================
 
-@app.route("/symbol-batch-test", methods=["GET", "POST"])
+app.route("/symbol-batch-test", methods=["GET", "POST"])
 def symbol_batch_test():
     if request.method == "GET":
         return """
@@ -2413,7 +2413,7 @@ def symbol_batch_test():
         </head>
         <body>
           <h1>Test batch symbole</h1>
-          <p>Envoie plusieurs images de cartes complètes. Optionnel : mets un nom de fichier parlant comme JAUNE_7.jpg.</p>
+          <p>Envoie plusieurs images de cartes complètes.</p>
           <form method="post" enctype="multipart/form-data">
             <p><input type="file" name="images" accept="image/*" multiple required /></p>
             <p><button type="submit">Analyser le lot</button></p>
@@ -2426,223 +2426,199 @@ def symbol_batch_test():
     if not files:
         return "Aucun fichier envoyé", 400
 
-    results = []
+    rows = []
+    batch_results = []
 
     for file in files:
         filename = file.filename or "unknown"
-        data = file.read()
-        if not data:
-            results.append({
+
+        try:
+            data = file.read()
+            if not data:
+                batch_results.append({
+                    "file": filename,
+                    "error": "empty_file"
+                })
+                rows.append(
+                    f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Fichier vide</span></td></tr>"
+                )
+                continue
+
+            np_arr = np.frombuffer(data, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if img is None:
+                batch_results.append({
+                    "file": filename,
+                    "error": "invalid_image"
+                })
+                rows.append(
+                    f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Image invalide</span></td></tr>"
+                )
+                continue
+
+            rect = detect_main_card(img)
+            warped = None
+
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+
+            if warped is None or warped.size == 0:
+                warped = img.copy()
+
+            warped = cv2.resize(warped, (200, 300))
+            zone = _extract_symbol_zone_from_card(warped)
+            scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
+            raw_name, score, gap, symbol_debug = detect_symbol(zone)
+
+            top_candidates = symbol_debug.get("top_candidates") or []
+            winner = top_candidates[0] if top_candidates else None
+            winner_references = symbol_debug.get("winner_references") or []
+
+            zone_ok = bool(zone is not None and zone.size != 0)
+            panel_ok = bool(panel is not None and panel.size != 0)
+            mask_nonzero = int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
+            mask_ok = bool(scan_mask is not None and scan_mask.size != 0 and mask_nonzero > 0)
+
+            item = {
                 "file": filename,
-                "error": "empty_file"
-            })
-            continue
-
-        np_arr = np.frombuffer(data, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if img is None:
-            results.append({
-                "file": filename,
-                "error": "invalid_image"
-            })
-            continue
-
-        rect = detect_main_card(img)
-        warped = None
-
-        if rect is not None:
-            quad = np.array(rect["quad"], dtype="float32")
-            warped = warp_quad(img, quad)
-
-        if warped is None or warped.size == 0:
-            warped = img.copy()
-
-        warped = cv2.resize(warped, (200, 300))
-        zone = _extract_symbol_zone_from_card(warped)
-        scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
-        raw_name, score, gap, symbol_debug = detect_symbol(zone)
-
-        zone_ok = bool(zone is not None and zone.size != 0)
-        panel_ok = bool(panel is not None and panel.size != 0)
-        mask_nonzero = int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
-        mask_ok = bool(scan_mask is not None and scan_mask.size != 0 and mask_nonzero > 0)
-
-        top_candidates = symbol_debug.get("top_candidates") or []
-        winner = top_candidates[0] if top_candidates else None
-        winner_references = symbol_debug.get("winner_references") or []
-
-        results.append({
-            "file": filename,
-            "raw_name": raw_name,
-            "score": float(score),
-            "gap": float(gap),
-            "winner": winner,
-            "winner_references": winner_references,
-            "debug": {
-                "zone_ok": zone_ok,
-                "panel_ok": panel_ok,
-                "mask_ok": mask_ok,
-                "zone_shape": list(zone.shape) if zone is not None else None,
-                "panel_shape": list(panel.shape) if panel is not None else None,
-                "mask_nonzero": mask_nonzero,
-                "threshold_mode": threshold_mode,
+                "raw_name": raw_name,
+                "score": float(score),
+                "gap": float(gap),
+                "winner": winner,
+                "winner_references": winner_references,
+                "debug": {
+                    "zone_ok": zone_ok,
+                    "panel_ok": panel_ok,
+                    "mask_ok": mask_ok,
+                    "zone_shape": list(zone.shape) if zone is not None else None,
+                    "panel_shape": list(panel.shape) if panel is not None else None,
+                    "mask_nonzero": mask_nonzero,
+                    "threshold_mode": threshold_mode
+                }
             }
-        })
+            batch_results.append(item)
 
-    pretty_json = json.dumps(results, indent=2, ensure_ascii=False)
+            winner_source = winner.get("best_source", "") if winner else ""
+            status_class = "ok" if raw_name else "ko"
+            status_text = "OK" if raw_name else "KO"
 
-    rows = []
-    for item in results:
-        if item.get("error"):
-            rows.append(f"<tr><td>{item['file']}</td><td colspan='6' class='ko'>ERREUR: {item['error']}</td></tr>")
-            continue
+            rows.append(
+                f"""
+                <tr>
+                  <td>{filename}</td>
+                  <td>{raw_name or ''}</td>
+                  <td>{float(score):.4f}</td>
+                  <td>{float(gap):.4f}</td>
+                  <td>{winner_source}</td>
+                  <td>{threshold_mode or ''}</td>
+                  <td><span class="{status_class}">{status_text}</span></td>
+                </tr>
+                """
+            )
 
-        raw_name = item.get("raw_name")
-        score = item.get("score", 0.0)
-        gap = item.get("gap", 0.0)
-        winner = item.get("winner") or {}
-        winner_name = winner.get("name")
-        winner_source = winner.get("best_source")
-        threshold_mode = (item.get("debug") or {}).get("threshold_mode")
-        status = "OK" if raw_name else "KO"
-        status_cls = "ok" if raw_name else "ko"
+        except Exception as e:
+            batch_results.append({
+                "file": filename,
+                "error": str(e)
+            })
+            rows.append(
+                f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Erreur: {str(e)}</span></td></tr>"
+            )
 
-        rows.append(
-            "<tr>"
-            f"<td>{item['file']}</td>"
-            f"<td>{raw_name}</td>"
-            f"<td>{score:.3f}</td>"
-            f"<td>{gap:.3f}</td>"
-            f"<td>{winner_source}</td>"
-            f"<td>{threshold_mode}</td>"
-            f"<td class='{status_cls}'>{status}</td>"
-            "</tr>"
-        )
-
+    pretty_json = json.dumps(batch_results, indent=2, ensure_ascii=False)
     html_rows = "\n".join(rows)
 
- return f"""
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Résultats batch symbole</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; padding: 20px; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
-    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-    th {{ background: #f5f5f5; }}
-    .ok {{ color: #0a7a28; font-weight: bold; }}
-    .ko {{ color: #b00020; font-weight: bold; }}
-    pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
-  </style>
-</head>
-<body>
-  <h1>Résultats batch symbole</h1>
-  <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Symbol Batch Test</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background: #f5f5f5; }}
+        .ok {{ color: #0a7a28; font-weight: bold; }}
+        .ko {{ color: #b00020; font-weight: bold; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat batch symbole</h1>
+      <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
 
-  <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
-    <button type="button" onclick="exportBatchJson()">Exporter JSON</button>
-    <button type="button" onclick="exportBatchTxt()">Exporter TXT</button>
-    <button type="button" onclick="exportBatchHtml()">Exporter HTML</button>
-    <button type="button" onclick="copyBatchJson()">Copier JSON</button>
-  </div>
+      <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="button" onclick="exportBatchJson()">Exporter JSON</button>
+        <button type="button" onclick="exportBatchTxt()">Exporter TXT</button>
+        <button type="button" onclick="exportBatchHtml()">Exporter HTML</button>
+        <button type="button" onclick="copyBatchJson()">Copier JSON</button>
+      </div>
 
-  <table id="batch-results-table">
-    <thead>
-      <tr>
-        <th>Fichier</th>
-        <th>Résultat</th>
-        <th>Score</th>
-        <th>Gap</th>
-        <th>Winner</th>
-        <th>Mode</th>
-        <th>Statut</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows_html}
-    </tbody>
-  </table>
+      <table id="batch-results-table">
+        <thead>
+          <tr>
+            <th>Fichier</th>
+            <th>Symbole</th>
+            <th>Score</th>
+            <th>Gap</th>
+            <th>Meilleure ref</th>
+            <th>Mode seuil</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          {html_rows}
+        </tbody>
+      </table>
 
-  <h2>JSON complet</h2>
-  <pre id="batch-json">{pretty_json}</pre>
+      <h2>JSON complet</h2>
+      <pre id="batch-json">{pretty_json}</pre>
 
-  <script>
-  function downloadTextFile(filename, content, contentType = "text/plain;charset=utf-8") {{
-    const blob = new Blob([content], {{ type: contentType }});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }}
+      <script>
+      function downloadTextFile(filename, content, contentType) {{
+        const blob = new Blob([content], {{ type: contentType }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }}
 
-  function getBatchJsonText() {{
-    const pre = document.getElementById("batch-json");
-    return pre ? pre.textContent : "";
-  }}
+      function getBatchJsonText() {{
+        const pre = document.getElementById("batch-json");
+        return pre ? pre.textContent : "";
+      }}
 
-  function exportBatchJson() {{
-    const jsonText = getBatchJsonText();
-    downloadTextFile("symbol_batch_results.json", jsonText, "application/json;charset=utf-8");
-  }}
+      function exportBatchJson() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("symbol_batch_results.json", jsonText, "application/json;charset=utf-8");
+      }}
 
-  function exportBatchTxt() {{
-    const jsonText = getBatchJsonText();
-    downloadTextFile("symbol_batch_results.txt", jsonText, "text/plain;charset=utf-8");
-  }}
+      function exportBatchTxt() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("symbol_batch_results.txt", jsonText, "text/plain;charset=utf-8");
+      }}
 
-  function exportBatchHtml() {{
-    const table = document.getElementById("batch-results-table");
-    const jsonText = getBatchJsonText();
+      function exportBatchHtml() {{
+        const html = document.documentElement.outerHTML;
+        downloadTextFile("symbol_batch_results.html", html, "text/html;charset=utf-8");
+      }}
 
-    const html = `
-<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8" />
-  <title>Export résultats symbol batch</title>
-  <style>
-    body {{ font-family: Arial, sans-serif; padding: 24px; }}
-    table {{ border-collapse: collapse; width: 100%; margin-bottom: 24px; }}
-    th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }}
-    th {{ background: #f3f3f3; }}
-    pre {{ background: #f5f5f5; padding: 12px; border: 1px solid #ddd; overflow: auto; white-space: pre-wrap; }}
-  </style>
-</head>
-<body>
-  <h1>Résultats batch symbole</h1>
-  <h2>Tableau</h2>
-  ${{table ? table.outerHTML : "<p>Tableau absent</p>"}}
-  <h2>JSON</h2>
-  <pre>${{escapeHtml(jsonText)}}</pre>
-</body>
-</html>
-    `.trim();
-
-    downloadTextFile("symbol_batch_results.html", html, "text/html;charset=utf-8");
-  }}
-
-  function copyBatchJson() {{
-    const jsonText = getBatchJsonText();
-    navigator.clipboard.writeText(jsonText)
-      .then(() => alert("JSON copié"))
-      .catch(() => alert("Copie impossible"));
-  }}
-
-  function escapeHtml(str) {{
-    return str
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }}
-  </script>
-</body>
-</html>
-"""
+      function copyBatchJson() {{
+        const jsonText = getBatchJsonText();
+        navigator.clipboard.writeText(jsonText)
+          .then(() => alert("JSON copié"))
+          .catch(() => alert("Copie impossible"));
+      }}
+      </script>
+    </body>
+    </html>
+    """
 
 # =====================================================
 # BOTTOM TEST
