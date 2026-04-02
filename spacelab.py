@@ -462,7 +462,7 @@ def _load_symbol_references():
         if zone is None or zone.size == 0:
             continue
 
-        mask, _ = _normalize_symbol_scan(zone)
+        mask, _, _ = _normalize_symbol_scan(zone)
         if mask is None:
             continue
 
@@ -495,7 +495,7 @@ def detect_symbol(zone):
     best_scan_mask = None
 
     for variant in variants:
-        scan_mask, _ = _normalize_symbol_scan(variant)
+        scan_mask, _, _ = _normalize_symbol_scan(variant)
         if scan_mask is None:
             continue
 
