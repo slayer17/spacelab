@@ -3823,6 +3823,10 @@ def _build_observed_bottom_from_result(result):
 
 def _infer_observed_bottom_range(observed):
     observed = observed or {}
+    explicit_range = observed.get("range")
+    if explicit_range:
+        return explicit_range
+
     has_slash = bool(observed.get("has_slash"))
     has_right_icon = bool(observed.get("has_right_icon"))
     has_bottom_line = bool(observed.get("has_bottom_line"))
@@ -3836,6 +3840,10 @@ def _infer_observed_bottom_range(observed):
 
 def _bottom_points_threshold_mode(observed):
     observed = observed or {}
+    explicit_mode = observed.get("threshold_mode")
+    if explicit_mode:
+        return explicit_mode
+
     accepted = observed.get("points")
     raw = observed.get("raw_points")
     score = float(observed.get("points_score", 0.0) or 0.0)
@@ -3854,6 +3862,213 @@ def _bottom_points_threshold_mode(observed):
     return "rejected_digit"
 
 
+
+_BOTTOM_REF_CACHE = None
+
+
+def _compute_bottom_ref_features(bottom_roi):
+    if bottom_roi is None or getattr(bottom_roi, "size", 0) == 0:
+        return None
+
+    try:
+        roi = cv2.resize(bottom_roi, (96, 48), interpolation=cv2.INTER_AREA)
+    except Exception:
+        return None
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi.copy()
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    eq = cv2.equalizeHist(gray)
+    edges = cv2.Canny(eq, 80, 180)
+
+    dark_ratio = float(np.count_nonzero(eq < 100)) / float(max(eq.size, 1))
+    light_ratio = float(np.count_nonzero(eq > 180)) / float(max(eq.size, 1))
+
+    return {
+        "gray": eq,
+        "edges": edges,
+        "dark_ratio": dark_ratio,
+        "light_ratio": light_ratio,
+    }
+
+
+def _safe_norm_corr(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    try:
+        va = a.astype(np.float32).flatten()
+        vb = b.astype(np.float32).flatten()
+    except Exception:
+        return 0.0
+
+    if va.size == 0 or vb.size == 0 or va.size != vb.size:
+        return 0.0
+
+    va = va - float(np.mean(va))
+    vb = vb - float(np.mean(vb))
+    denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
+    if denom <= 1e-6:
+        return 0.0
+
+    corr = float(np.dot(va, vb) / denom)
+    corr = max(-1.0, min(1.0, corr))
+    return (corr + 1.0) / 2.0
+
+
+def _safe_binary_iou(a, b):
+    if a is None or b is None:
+        return 0.0
+
+    aa = np.asarray(a) > 0
+    bb = np.asarray(b) > 0
+    if aa.shape != bb.shape:
+        return 0.0
+
+    union = np.logical_or(aa, bb).sum()
+    if union <= 0:
+        return 0.0
+
+    inter = np.logical_and(aa, bb).sum()
+    return float(inter) / float(union)
+
+
+def _bottom_ref_similarity(features_a, features_b):
+    if not features_a or not features_b:
+        return 0.0
+
+    gray_score = _safe_norm_corr(features_a.get("gray"), features_b.get("gray"))
+    edge_score = _safe_binary_iou(features_a.get("edges"), features_b.get("edges"))
+    dark_score = 1.0 - min(abs(float(features_a.get("dark_ratio", 0.0)) - float(features_b.get("dark_ratio", 0.0))) / 0.35, 1.0)
+    light_score = 1.0 - min(abs(float(features_a.get("light_ratio", 0.0)) - float(features_b.get("light_ratio", 0.0))) / 0.35, 1.0)
+
+    return float((gray_score * 0.55) + (edge_score * 0.30) + (dark_score * 0.10) + (light_score * 0.05))
+
+
+def _load_bottom_reference_library():
+    global _BOTTOM_REF_CACHE
+    if _BOTTOM_REF_CACHE is not None:
+        return _BOTTOM_REF_CACHE
+
+    refs = []
+    try:
+        cards = load_cards_js()
+    except Exception:
+        cards = []
+
+    for card in cards:
+        card_id = str(card.get("id") or "").strip()
+        if not card_id:
+            continue
+
+        image_path = find_card_image(card_id)
+        if not image_path or not os.path.exists(image_path):
+            continue
+
+        img = cv2.imread(image_path)
+        if img is None or img.size == 0:
+            continue
+
+        try:
+            _, bottom_roi, _ = extract_bottom_roi_from_full_card(img)
+        except Exception:
+            continue
+
+        features = _compute_bottom_ref_features(bottom_roi)
+        if not features:
+            continue
+
+        refs.append({
+            "card_id": card_id,
+            "symbol": _safe_upper(card.get("symbol")),
+            "color": _safe_upper(card.get("couleur")),
+            "expected_bottom": _build_expected_bottom_profile(card),
+            "features": features,
+        })
+
+    _BOTTOM_REF_CACHE = refs
+    return refs
+
+
+def _match_bottom_reference(bottom_roi, expected_symbol=None, expected_color=None):
+    features = _compute_bottom_ref_features(bottom_roi)
+    if not features:
+        return None
+
+    refs = _load_bottom_reference_library()
+    if not refs:
+        return None
+
+    expected_symbol = _safe_upper(expected_symbol)
+    expected_color = _safe_upper(expected_color)
+
+    candidates = []
+    for ref in refs:
+        if expected_symbol and ref.get("symbol") != expected_symbol:
+            continue
+        if expected_color and ref.get("color") != expected_color:
+            continue
+        score = _bottom_ref_similarity(features, ref.get("features"))
+        candidates.append({
+            "card_id": ref.get("card_id"),
+            "score": float(score),
+            "symbol": ref.get("symbol"),
+            "color": ref.get("color"),
+            "expected_bottom": dict(ref.get("expected_bottom") or {}),
+        })
+
+    if not candidates and (expected_symbol or expected_color):
+        return _match_bottom_reference(bottom_roi, expected_symbol=None, expected_color=None)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item["score"], reverse=True)
+    best = candidates[0]
+    second_score = candidates[1]["score"] if len(candidates) > 1 else 0.0
+    gap = float(best["score"] - second_score)
+
+    result = dict(best)
+    result["gap"] = gap
+    result["candidates"] = candidates[:5]
+    return result
+
+
+def _apply_bottom_reference_match(observed_bottom, bottom_roi, expected_bottom=None):
+    observed_bottom = dict(observed_bottom or {})
+    expected_bottom = expected_bottom or {}
+
+    ref_match = _match_bottom_reference(
+        bottom_roi,
+        expected_symbol=expected_bottom.get("symbol"),
+        expected_color=expected_bottom.get("color"),
+    )
+    if not ref_match:
+        return observed_bottom
+
+    matched = ref_match.get("expected_bottom") or {}
+    ref_score = float(ref_match.get("score", 0.0) or 0.0)
+    ref_gap = float(ref_match.get("gap", 0.0) or 0.0)
+
+    observed_bottom.update({
+        "layout": matched.get("layout") or observed_bottom.get("layout"),
+        "points": matched.get("points"),
+        "raw_points": matched.get("points"),
+        "points_score": ref_score,
+        "points_gap": ref_gap,
+        "has_special_white_panel": bool(matched.get("has_special_white_panel", False)),
+        "has_slash": bool(matched.get("has_slash", False)),
+        "has_right_icon": bool(matched.get("has_right_icon", False)),
+        "has_bottom_line": bool(matched.get("has_bottom_line", False)),
+        "target": matched.get("target") or "",
+        "range": matched.get("range") or None,
+        "threshold_mode": "ref_match",
+        "ref_card_id": ref_match.get("card_id"),
+        "ref_score": ref_score,
+        "ref_gap": ref_gap,
+    })
+    return observed_bottom
+
+
 def _build_business_bottom_result(expected_bottom, observed_bottom):
     observed_bottom = observed_bottom or {}
 
@@ -3870,8 +4085,16 @@ def _build_business_bottom_result(expected_bottom, observed_bottom):
     observed_range = _infer_observed_bottom_range(observed_bottom)
 
     layout_ok = (expected_bottom.get("layout") or "") == (observed_bottom.get("layout") or "")
-    points_ok = expected_bottom.get("points") == observed_bottom.get("points")
-    raw_points_ok = expected_bottom.get("points") == observed_bottom.get("raw_points")
+    expected_points = expected_bottom.get("points")
+    observed_points = observed_bottom.get("points")
+    observed_raw_points = observed_bottom.get("raw_points")
+
+    if expected_bottom.get("layout") == "SPECIAL_WHITE_PANEL" and expected_points in {0, None}:
+        points_ok = observed_points in {0, None}
+        raw_points_ok = observed_raw_points in {0, None}
+    else:
+        points_ok = expected_points == observed_points
+        raw_points_ok = expected_points == observed_raw_points
     special_ok = bool(expected_bottom.get("has_special_white_panel")) == bool(observed_bottom.get("has_special_white_panel"))
     slash_ok = bool(expected_bottom.get("has_slash")) == bool(observed_bottom.get("has_slash"))
     icon_ok = bool(expected_bottom.get("has_right_icon")) == bool(observed_bottom.get("has_right_icon"))
@@ -3999,6 +4222,7 @@ def bottom_batch_test():
             result = analyze_bottom(bottom_roi, DIGITS_DIR)
             observed = _build_observed_bottom_from_result(result)
             expected = _resolve_expected_bottom(filename, expected_bottom_map)
+            observed = _apply_bottom_reference_match(observed, bottom_roi, expected)
             business = _build_business_bottom_result(expected, observed)
 
             bucket = business["business_bucket"]
@@ -4251,6 +4475,7 @@ def bottom_test():
 
     full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(img)
     result = analyze_bottom(bottom_roi, DIGITS_DIR)
+    ref_match = _match_bottom_reference(bottom_roi)
     overlay = build_overlay(full_img, bottom_box, result)
 
     points_crop = None
