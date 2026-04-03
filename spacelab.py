@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify, send_from_directory
 import base64
 import shutil
 import html
+import re
 from datetime import datetime
 
 
@@ -45,6 +46,12 @@ SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
 DIGITS_DIR = os.path.join(BASE_DIR, "digits")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
+
+
+def _natural_sort_key(value):
+    value = (value or "").lower()
+    parts = re.split(r"(\d+)", value)
+    return [int(part) if part.isdigit() else part for part in parts]
 
 
 
@@ -2771,7 +2778,7 @@ def symbol_batch_test():
 
     files = sorted(
         request.files.getlist("images"),
-        key=lambda f: (f.filename or "").lower()
+        key=lambda f: _natural_sort_key(f.filename or "")
     )
     if not files:
         return "Aucun fichier envoyé", 400
