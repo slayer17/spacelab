@@ -5,6 +5,7 @@ import numpy as np
 from flask import Flask, request, jsonify, send_from_directory
 import base64
 import shutil
+import html
 from datetime import datetime
 
 
@@ -1661,6 +1662,78 @@ def analyze_bottom_layout(bottom_zone):
     return result
 
 
+def _apply_symbol_acceptance(raw_name, score, gap):
+    accepted_name = None
+
+    if raw_name and score >= 0.55 and gap >= 0.025:
+        accepted_name = raw_name
+
+    if accepted_name is not None:
+        threshold_mode = "accepted"
+    elif not raw_name:
+        threshold_mode = "no_match"
+    elif score < 0.55 and gap < 0.025:
+        threshold_mode = "rejected_score_gap"
+    elif score < 0.55:
+        threshold_mode = "rejected_score"
+    else:
+        threshold_mode = "rejected_gap"
+
+    return accepted_name, threshold_mode
+
+
+def _get_expected_symbol_map():
+    try:
+        cards = load_cards_js()
+    except Exception:
+        cards = []
+
+    expected = {}
+    for card in cards:
+        card_id = str(card.get("id") or "").strip().lower()
+        symbol_name = str(card.get("symbol") or "").strip()
+        if not card_id or not symbol_name:
+            continue
+        expected[card_id] = symbol_name
+
+    return expected
+
+
+def _resolve_expected_symbol(filename, expected_symbol_map):
+    stem = os.path.splitext(os.path.basename(filename or ""))[0].strip().lower()
+    if not stem:
+        return None
+    return expected_symbol_map.get(stem)
+
+
+def _build_business_symbol_result(filename, raw_name, score, gap, expected_symbol):
+    accepted_name, threshold_mode = _apply_symbol_acceptance(raw_name, score, gap)
+
+    if not expected_symbol:
+        business_status = "N/A"
+        business_bucket = "sans_attendu"
+    elif accepted_name == expected_symbol:
+        business_status = "OK"
+        business_bucket = "correcte"
+    elif accepted_name is not None:
+        business_status = "KO"
+        business_bucket = "fausse"
+    elif raw_name == expected_symbol:
+        business_status = "KO"
+        business_bucket = "fragile"
+    else:
+        business_status = "KO"
+        business_bucket = "rejetee"
+
+    return {
+        "expected_symbol": expected_symbol,
+        "accepted_name": accepted_name,
+        "threshold_mode": threshold_mode,
+        "business_status": business_status,
+        "business_bucket": business_bucket,
+    }
+
+
 def compute_signature(img):
     rois = []
 
@@ -1719,9 +1792,11 @@ def compute_signature(img):
     raw_symbol_name, symbol_score, symbol_gap, symbol_debug = detect_symbol(zone)
     top_candidates = symbol_debug.get("top_candidates", [])
 
-    symbol_name = raw_symbol_name
-    if symbol_score < 0.55 or symbol_gap < 0.025:
-        symbol_name = None
+    symbol_name, symbol_threshold_mode = _apply_symbol_acceptance(
+        raw_symbol_name,
+        symbol_score,
+        symbol_gap
+    )
 
     symbol_sig = {
         "mean": float(np.mean(gray)),
@@ -1730,6 +1805,7 @@ def compute_signature(img):
         "raw_name": raw_symbol_name,
         "score": float(symbol_score),
         "gap": float(symbol_gap),
+        "threshold_mode": symbol_threshold_mode,
         "top_candidates": top_candidates,
         "winner_references": symbol_debug.get("winner_references", []),
         "runner_up": symbol_debug.get("runner_up"),
@@ -2407,6 +2483,11 @@ def symbol_batch_test():
             th { background: #f5f5f5; }
             .ok { color: #0a7a28; font-weight: bold; }
             .ko { color: #b00020; font-weight: bold; }
+            .fragile { color: #b26b00; font-weight: bold; }
+            .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }
+            .summary-card { border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }
+            .summary-card .label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }
+            .summary-card .value { font-size:28px; font-weight:bold; margin-top:6px; }
             pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
           </style>
         </head>
@@ -2421,25 +2502,43 @@ def symbol_batch_test():
         </html>
         """
 
-    files = request.files.getlist("images")
+    files = sorted(
+        request.files.getlist("images"),
+        key=lambda f: (f.filename or "").lower()
+    )
     if not files:
         return "Aucun fichier envoyé", 400
 
+    expected_symbol_map = _get_expected_symbol_map()
+
     rows = []
     batch_results = []
+    summary = {
+        "total": 0,
+        "with_expected": 0,
+        "correctes": 0,
+        "fausses": 0,
+        "fragiles": 0,
+        "rejetees": 0,
+        "sans_attendu": 0,
+        "errors": 0,
+    }
 
     for file in files:
         filename = file.filename or "unknown"
+        safe_filename = html.escape(filename)
+        summary["total"] += 1
 
         try:
             data = file.read()
             if not data:
+                summary["errors"] += 1
                 batch_results.append({
                     "file": filename,
                     "error": "empty_file"
                 })
                 rows.append(
-                    f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Fichier vide</span></td></tr>"
+                    f"<tr><td>{safe_filename}</td><td colspan='7'><span class='ko'>Fichier vide</span></td></tr>"
                 )
                 continue
 
@@ -2447,12 +2546,13 @@ def symbol_batch_test():
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
             if img is None:
+                summary["errors"] += 1
                 batch_results.append({
                     "file": filename,
                     "error": "invalid_image"
                 })
                 rows.append(
-                    f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Image invalide</span></td></tr>"
+                    f"<tr><td>{safe_filename}</td><td colspan='7'><span class='ko'>Image invalide</span></td></tr>"
                 )
                 continue
 
@@ -2468,7 +2568,7 @@ def symbol_batch_test():
 
             warped = cv2.resize(warped, (200, 300))
             zone = _extract_symbol_zone_from_card(warped)
-            scan_mask, panel, threshold_mode = _normalize_symbol_scan(zone)
+            scan_mask, panel, scan_threshold_mode = _normalize_symbol_scan(zone)
             raw_name, score, gap, symbol_debug = detect_symbol(zone)
 
             top_candidates = symbol_debug.get("top_candidates") or []
@@ -2480,13 +2580,41 @@ def symbol_batch_test():
             mask_nonzero = int(np.count_nonzero(scan_mask)) if scan_mask is not None else 0
             mask_ok = bool(scan_mask is not None and scan_mask.size != 0 and mask_nonzero > 0)
 
+            expected_symbol = _resolve_expected_symbol(filename, expected_symbol_map)
+            business = _build_business_symbol_result(
+                filename=filename,
+                raw_name=raw_name,
+                score=score,
+                gap=gap,
+                expected_symbol=expected_symbol,
+            )
+
+            bucket = business["business_bucket"]
+            if expected_symbol:
+                summary["with_expected"] += 1
+                if bucket == "correcte":
+                    summary["correctes"] += 1
+                elif bucket == "fausse":
+                    summary["fausses"] += 1
+                elif bucket == "fragile":
+                    summary["fragiles"] += 1
+                elif bucket == "rejetee":
+                    summary["rejetees"] += 1
+            else:
+                summary["sans_attendu"] += 1
+
             item = {
                 "file": filename,
+                "expected_symbol": expected_symbol,
                 "raw_name": raw_name,
+                "accepted_name": business["accepted_name"],
                 "score": float(score),
                 "gap": float(gap),
                 "winner": winner,
                 "winner_references": winner_references,
+                "business_status": business["business_status"],
+                "business_bucket": business["business_bucket"],
+                "threshold_mode": business["threshold_mode"],
                 "debug": {
                     "zone_ok": zone_ok,
                     "panel_ok": panel_ok,
@@ -2494,39 +2622,47 @@ def symbol_batch_test():
                     "zone_shape": list(zone.shape) if zone is not None else None,
                     "panel_shape": list(panel.shape) if panel is not None else None,
                     "mask_nonzero": mask_nonzero,
-                    "threshold_mode": threshold_mode
+                    "scan_threshold_mode": scan_threshold_mode
                 }
             }
             batch_results.append(item)
 
-            winner_source = winner.get("best_source", "") if winner else ""
-            status_class = "ok" if raw_name else "ko"
-            status_text = "OK" if raw_name else "KO"
+            if business["business_status"] == "OK":
+                status_class = "ok"
+            elif business["business_bucket"] == "fragile":
+                status_class = "fragile"
+            else:
+                status_class = "ko"
 
             rows.append(
                 f"""
                 <tr>
-                  <td>{filename}</td>
-                  <td>{raw_name or ''}</td>
+                  <td>{safe_filename}</td>
+                  <td>{html.escape(expected_symbol or '')}</td>
+                  <td>{html.escape(raw_name or '')}</td>
+                  <td>{html.escape(business['accepted_name'] or '')}</td>
                   <td>{float(score):.4f}</td>
                   <td>{float(gap):.4f}</td>
-                  <td>{winner_source}</td>
-                  <td>{threshold_mode or ''}</td>
-                  <td><span class="{status_class}">{status_text}</span></td>
+                  <td>{html.escape(business['threshold_mode'])}</td>
+                  <td><span class="{status_class}">{html.escape(business['business_status'])}</span></td>
                 </tr>
                 """
             )
 
         except Exception as e:
+            summary["errors"] += 1
             batch_results.append({
                 "file": filename,
                 "error": str(e)
             })
             rows.append(
-                f"<tr><td>{filename}</td><td colspan='6'><span class='ko'>Erreur: {str(e)}</span></td></tr>"
+                f"<tr><td>{safe_filename}</td><td colspan='7'><span class='ko'>Erreur: {html.escape(str(e))}</span></td></tr>"
             )
 
-    pretty_json = json.dumps(batch_results, indent=2, ensure_ascii=False)
+    pretty_json = json.dumps({
+        "summary": summary,
+        "results": batch_results
+    }, indent=2, ensure_ascii=False)
     html_rows = "\n".join(rows)
 
     return f"""
@@ -2541,12 +2677,44 @@ def symbol_batch_test():
         th {{ background: #f5f5f5; }}
         .ok {{ color: #0a7a28; font-weight: bold; }}
         .ko {{ color: #b00020; font-weight: bold; }}
+        .fragile {{ color: #b26b00; font-weight: bold; }}
+        .summary-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }}
+        .summary-card {{ border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }}
+        .summary-card .label {{ font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }}
+        .summary-card .value {{ font-size:28px; font-weight:bold; margin-top:6px; }}
         pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
       </style>
     </head>
     <body>
       <h1>Résultat batch symbole</h1>
       <p><a href="/symbol-batch-test">← Revenir au formulaire</a></p>
+
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">Correctes</div>
+          <div class="value">{summary['correctes']} / {summary['with_expected']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Fausses</div>
+          <div class="value">{summary['fausses']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Fragiles</div>
+          <div class="value">{summary['fragiles']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Rejetées</div>
+          <div class="value">{summary['rejetees']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Sans attendu</div>
+          <div class="value">{summary['sans_attendu']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Erreurs</div>
+          <div class="value">{summary['errors']}</div>
+        </div>
+      </div>
 
       <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
         <button type="button" onclick="exportBatchJson()">Exporter JSON</button>
@@ -2559,12 +2727,13 @@ def symbol_batch_test():
         <thead>
           <tr>
             <th>Fichier</th>
-            <th>Symbole</th>
+            <th>Attendu</th>
+            <th>Raw</th>
+            <th>Accepté</th>
             <th>Score</th>
             <th>Gap</th>
-            <th>Meilleure ref</th>
             <th>Mode seuil</th>
-            <th>Statut</th>
+            <th>Statut métier</th>
           </tr>
         </thead>
         <tbody>
