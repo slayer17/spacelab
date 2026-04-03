@@ -40,6 +40,31 @@ def _html_img_block(title, img_b64):
       <img src="data:image/png;base64,{img_b64}" style="max-width:100%; border:1px solid #ccc;" />
     </div>
     """
+
+
+def _natural_sort_key(text):
+    parts = re.split(r"(\d+)", (text or "").lower())
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part))
+    return key
+
+
+def _safe_upper(value):
+    return str(value or "").strip().upper()
+
+
+def _safe_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except Exception:
+        return None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CARDS_DIR = os.path.join(BASE_DIR, "cards")
 SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
@@ -48,18 +73,13 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
 
-def _natural_sort_key(value):
-    value = (value or "").lower()
-    parts = re.split(r"(\d+)", value)
-    return [int(part) if part.isdigit() else part for part in parts]
-
-
 
 # =====================================================
 # SYMBOL DETECTION
 # =====================================================
 
 _SYMBOL_REFS_CACHE = None
+_CARD_MATCH_REF_CACHE = None
 _HOG_DESCRIPTOR = None
 
 
@@ -2302,6 +2322,387 @@ def crop_percent(img, x1, y1, x2, y2):
 
 
 
+
+def _build_card_match_ref_cache(cards=None):
+    global _CARD_MATCH_REF_CACHE
+
+    if _CARD_MATCH_REF_CACHE is not None:
+        return _CARD_MATCH_REF_CACHE
+
+    if cards is None:
+        try:
+            cards = load_cards_js()
+        except Exception:
+            cards = []
+
+    cache = {}
+    for card in cards:
+        card_id = str(card.get("id") or "").strip()
+        if not card_id:
+            continue
+
+        scan_sig = ((card.get("signature") or {}).get("scan") or {})
+        has_bottom = bool(((scan_sig.get("bottom") or {}).get("vector") or []))
+        has_global = bool(((scan_sig.get("global") or {}).get("vector") or []))
+        has_symbol = bool(((scan_sig.get("symbol") or {}).get("name")) or ((scan_sig.get("symbol") or {}).get("raw_name")))
+        has_bottom_layout = bool(scan_sig.get("bottom_layout"))
+
+        if has_bottom and has_global and has_symbol and has_bottom_layout:
+            cache[card_id] = scan_sig
+            continue
+
+        try:
+            image_path = find_card_image(card_id)
+            if image_path and os.path.exists(image_path):
+                ref_img = cv2.imread(image_path)
+                if ref_img is not None and ref_img.size != 0:
+                    ref_img = cv2.resize(ref_img, (200, 300))
+                    ref_sig, _ = compute_signature(ref_img)
+                    if ref_sig is not None:
+                        cache[card_id] = ref_sig
+                        continue
+        except Exception:
+            pass
+
+        cache[card_id] = scan_sig
+
+    _CARD_MATCH_REF_CACHE = cache
+    return cache
+
+
+def _get_card_scan_signature(card):
+    card_id = str(card.get("id") or "").strip()
+    if not card_id:
+        return ((card.get("signature") or {}).get("scan") or {})
+    cache = _build_card_match_ref_cache()
+    return cache.get(card_id) or ((card.get("signature") or {}).get("scan") or {})
+
+
+def _resolve_expected_card_id(filename, cards=None):
+    stem = os.path.splitext(os.path.basename(filename or ""))[0].strip().lower()
+    if not stem:
+        return None
+
+    if cards is None:
+        try:
+            cards = load_cards_js()
+        except Exception:
+            cards = []
+
+    for card in cards:
+        card_id = str(card.get("id") or "").strip()
+        if card_id.lower() == stem:
+            return card_id
+    return None
+
+
+def _build_expected_bottom_profile(card):
+    effect = bool(card.get("effet", False))
+    points = _safe_int(card.get("points"))
+    target = _safe_upper(card.get("cible"))
+    range_name = _safe_upper(card.get("portee"))
+
+    has_target = bool(target)
+    has_bottom_line = range_name == "LIGNE"
+
+    if effect:
+        layout = "SPECIAL_WHITE_PANEL"
+    elif points is not None and has_target and has_bottom_line:
+        layout = "NUMBER_ICON_LINE"
+    elif points is not None and has_target:
+        layout = "NUMBER_ICON"
+    elif points is not None:
+        layout = "NUMBER_ONLY"
+    else:
+        layout = "BLACK_PANEL"
+
+    return {
+        "layout": layout,
+        "points": points,
+        "has_special_white_panel": effect,
+        "has_slash": has_target,
+        "has_right_icon": has_target,
+        "has_bottom_line": has_bottom_line,
+        "target": target,
+        "range": range_name,
+    }
+
+
+def _build_observed_bottom_profile(scan_sig):
+    bottom_layout = scan_sig.get("bottom_layout") or {}
+    points_sig = scan_sig.get("points") or {}
+
+    layout = str(bottom_layout.get("layout") or "UNKNOWN")
+    points = _safe_int(bottom_layout.get("points"))
+    raw_points = _safe_int(bottom_layout.get("raw_points"))
+    if points is None:
+        points = _safe_int(points_sig.get("digit"))
+    if raw_points is None:
+        raw_points = _safe_int(points_sig.get("raw_digit"))
+
+    return {
+        "layout": layout,
+        "points": points,
+        "raw_points": raw_points,
+        "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False)),
+        "has_slash": bool(bottom_layout.get("has_slash", False)),
+        "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
+        "has_bottom_line": bool(bottom_layout.get("has_bottom_line", False)),
+    }
+
+
+def _patch_vector_similarity(a, b):
+    if not a or not b:
+        return 0.0
+
+    try:
+        va = np.array(a, dtype=np.float32).flatten()
+        vb = np.array(b, dtype=np.float32).flatten()
+    except Exception:
+        return 0.0
+
+    if va.size == 0 or vb.size == 0:
+        return 0.0
+
+    size = min(va.size, vb.size)
+    va = va[:size]
+    vb = vb[:size]
+
+    mean_abs = float(np.mean(np.abs(va - vb)))
+    diff_score = max(0.0, 1.0 - (mean_abs / 255.0))
+
+    std_a = float(np.std(va))
+    std_b = float(np.std(vb))
+    if std_a > 1e-6 and std_b > 1e-6:
+        corr = float(np.corrcoef(va, vb)[0, 1])
+        if np.isnan(corr):
+            corr = 0.0
+        corr_score = max(0.0, min(1.0, (corr + 1.0) / 2.0))
+    else:
+        corr_score = diff_score
+
+    return float((diff_score * 0.6) + (corr_score * 0.4))
+
+
+def _score_bottom_profile(expected, observed):
+    score = 0.0
+    details = []
+
+    exp_layout = expected.get("layout")
+    obs_layout = observed.get("layout")
+
+    if exp_layout == obs_layout:
+        score += 6.0
+        details.append("layout_exact")
+    elif exp_layout == "NUMBER_ICON_LINE" and obs_layout == "NUMBER_ICON":
+        score += 3.5
+        details.append("layout_line_missing")
+    elif exp_layout == "NUMBER_ICON" and obs_layout == "NUMBER_ICON_LINE":
+        score += 4.5
+        details.append("layout_line_extra")
+    elif exp_layout == "NUMBER_ONLY" and obs_layout == "BLACK_PANEL":
+        score += 1.0
+        details.append("layout_number_uncertain")
+    else:
+        score -= 4.0
+        details.append("layout_mismatch")
+
+    exp_points = expected.get("points")
+    obs_points = observed.get("points")
+    obs_raw_points = observed.get("raw_points")
+
+    if exp_points is None and expected.get("has_special_white_panel"):
+        score += 2.0 if observed.get("has_special_white_panel") else -2.0
+        details.append("special_panel")
+    elif exp_points is not None:
+        if obs_points == exp_points:
+            score += 8.0
+            details.append("points_exact")
+        elif obs_raw_points == exp_points:
+            score += 4.0
+            details.append("points_raw")
+        else:
+            score -= 5.0
+            details.append("points_mismatch")
+
+    for field, weight in [
+        ("has_special_white_panel", 2.5),
+        ("has_slash", 1.5),
+        ("has_right_icon", 1.5),
+        ("has_bottom_line", 2.0),
+    ]:
+        exp_val = expected.get(field)
+        obs_val = observed.get(field)
+        if bool(exp_val) == bool(obs_val):
+            score += weight
+            details.append(f"{field}_ok")
+        else:
+            score -= weight
+            details.append(f"{field}_mismatch")
+
+    return float(score), details
+
+
+def resolve_final_card(scan_sig, cards=None):
+    if cards is None:
+        try:
+            cards = load_cards_js()
+        except Exception:
+            cards = []
+
+    if not cards:
+        return {
+            "color_name": None,
+            "symbol_name": None,
+            "symbol_source": "none",
+            "bottom_layout": None,
+            "points": None,
+            "candidate_cards": [],
+            "final_card_id": None,
+            "final_score": 0.0,
+            "final_gap": 0.0,
+            "final_status": "rejected",
+            "reason": "no_cards_reference",
+        }
+
+    color_name = _safe_upper((scan_sig.get("color") or {}).get("detected"))
+    symbol_sig = scan_sig.get("symbol") or {}
+    accepted_symbol = _safe_upper(symbol_sig.get("name"))
+    raw_symbol = _safe_upper(symbol_sig.get("raw_name"))
+
+    if accepted_symbol:
+        symbol_name = accepted_symbol
+        symbol_source = "accepted"
+    elif raw_symbol:
+        symbol_name = raw_symbol
+        symbol_source = "raw"
+    else:
+        symbol_name = None
+        symbol_source = "none"
+
+    observed_bottom = _build_observed_bottom_profile(scan_sig)
+    bottom_layout_name = observed_bottom.get("layout")
+    points_value = observed_bottom.get("points")
+    bottom_patch = (scan_sig.get("bottom") or {}).get("vector") or []
+    global_patch = (scan_sig.get("global") or {}).get("vector") or []
+
+    color_candidates = [
+        card for card in cards
+        if not color_name or _safe_upper(card.get("couleur")) == color_name
+    ]
+    if not color_candidates:
+        color_candidates = list(cards)
+
+    symbol_candidates = [
+        card for card in color_candidates
+        if not symbol_name or _safe_upper(card.get("symbol")) == symbol_name
+    ]
+    if not symbol_candidates:
+        symbol_candidates = list(color_candidates)
+
+    scored = []
+    for card in symbol_candidates:
+        expected_bottom = _build_expected_bottom_profile(card)
+        semantic_score, semantic_details = _score_bottom_profile(expected_bottom, observed_bottom)
+
+        ref_scan = _get_card_scan_signature(card)
+        ref_bottom = ((ref_scan.get("bottom") or {}).get("vector") or [])
+        ref_global = ((ref_scan.get("global") or {}).get("vector") or [])
+
+        bottom_visual = _patch_vector_similarity(bottom_patch, ref_bottom)
+        global_visual = _patch_vector_similarity(global_patch, ref_global)
+
+        total_score = 0.0
+        details = []
+
+        if color_name and _safe_upper(card.get("couleur")) == color_name:
+            total_score += 5.0
+            details.append("color_exact")
+
+        if symbol_name and _safe_upper(card.get("symbol")) == symbol_name:
+            total_score += 7.0 if symbol_source == "accepted" else 5.0
+            details.append(f"symbol_{symbol_source}")
+
+        total_score += semantic_score
+        details.extend(semantic_details)
+
+        total_score += bottom_visual * 6.0
+        total_score += global_visual * 1.5
+
+        details.append(f"bottom_visual={bottom_visual:.3f}")
+        details.append(f"global_visual={global_visual:.3f}")
+
+        scored.append({
+            "card_id": str(card.get("id") or ""),
+            "score": float(total_score),
+            "bottom_visual": float(bottom_visual),
+            "global_visual": float(global_visual),
+            "expected_bottom": expected_bottom,
+            "details": details[:12],
+        })
+
+    scored.sort(key=lambda item: item["score"], reverse=True)
+
+    best = scored[0] if scored else None
+    runner_up = scored[1] if len(scored) > 1 else None
+    final_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
+
+    if best is None:
+        final_status = "rejected"
+        final_card_id = None
+        reason = "no_candidate"
+    elif final_gap >= 1.0 and best["score"] >= 18.0:
+        final_status = "accepted"
+        final_card_id = best["card_id"]
+        reason = "strong_unique_match"
+    elif final_gap >= 0.35 and best["score"] >= 16.0:
+        final_status = "fragile"
+        final_card_id = best["card_id"]
+        reason = "usable_but_close"
+    else:
+        final_status = "rejected"
+        final_card_id = None
+        reason = "bottom_not_discriminant_enough"
+
+    return {
+        "color_name": color_name or None,
+        "symbol_name": symbol_name or None,
+        "symbol_source": symbol_source,
+        "bottom_layout": bottom_layout_name,
+        "points": points_value,
+        "candidate_cards": scored[:8],
+        "final_card_id": final_card_id,
+        "final_score": float(best["score"]) if best else 0.0,
+        "final_gap": final_gap,
+        "final_status": final_status,
+        "reason": reason,
+    }
+
+
+def _build_business_card_result(filename, final_card_id, final_status, expected_card_id):
+    if not expected_card_id:
+        business_status = "N/A"
+        business_bucket = "sans_attendu"
+    elif final_card_id == expected_card_id and final_status == "accepted":
+        business_status = "OK"
+        business_bucket = "correcte"
+    elif final_card_id == expected_card_id and final_status == "fragile":
+        business_status = "KO"
+        business_bucket = "fragile"
+    elif final_card_id:
+        business_status = "KO"
+        business_bucket = "fausse"
+    else:
+        business_status = "KO"
+        business_bucket = "rejetee"
+
+    return {
+        "expected_card_id": expected_card_id,
+        "business_status": business_status,
+        "business_bucket": business_bucket,
+    }
+
+
 # =====================================================
 # CARDS.JS HELPERS
 # =====================================================
@@ -2492,6 +2893,12 @@ def upload():
             cv2.imwrite(WARP_PATH, warped)
             sig, rois = compute_signature(warped)
 
+        if sig is not None:
+            try:
+                sig["card_match"] = resolve_final_card(sig)
+            except Exception:
+                pass
+
         return jsonify({
             "rects": [rect],
             "signature": sig,
@@ -2530,6 +2937,8 @@ def build_signatures():
 
         global _SYMBOL_REFS_CACHE, _HOG_DESCRIPTOR
         _SYMBOL_REFS_CACHE = None
+        global _CARD_MATCH_REF_CACHE
+        _CARD_MATCH_REF_CACHE = None
         _HOG_DESCRIPTOR = None
 
         updated = 0
@@ -3049,6 +3458,306 @@ def symbol_batch_test():
       function exportBatchHtml() {{
         const html = document.documentElement.outerHTML;
         downloadTextFile("symbol_batch_results.html", html, "text/html;charset=utf-8");
+      }}
+
+      function copyBatchJson() {{
+        const jsonText = getBatchJsonText();
+        navigator.clipboard.writeText(jsonText)
+          .then(() => alert("JSON copié"))
+          .catch(() => alert("Copie impossible"));
+      }}
+      </script>
+    </body>
+    </html>
+    """
+
+# =====================================================
+# CARD BATCH TEST
+# =====================================================
+
+@app.route("/card-batch-test", methods=["GET", "POST"])
+def card_batch_test():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Card Batch Test</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background: #f5f5f5; }
+            .ok { color: #0a7a28; font-weight: bold; }
+            .ko { color: #b00020; font-weight: bold; }
+            .fragile { color: #b26b00; font-weight: bold; }
+            .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }
+            .summary-card { border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }
+            .summary-card .label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }
+            .summary-card .value { font-size:28px; font-weight:bold; margin-top:6px; }
+            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+          </style>
+        </head>
+        <body>
+          <h1>Test batch carte finale</h1>
+          <p>Envoie plusieurs images de cartes complètes. Le moteur décide la carte unique avec couleur + symbole + bottom.</p>
+          <form method="post" enctype="multipart/form-data">
+            <p><input type="file" name="images" accept="image/*" multiple required /></p>
+            <p><button type="submit">Analyser le lot</button></p>
+          </form>
+        </body>
+        </html>
+        """
+
+    files = sorted(
+        request.files.getlist("images"),
+        key=lambda f: _natural_sort_key(f.filename or "")
+    )
+    if not files:
+        return "Aucun fichier envoyé", 400
+
+    try:
+        cards = load_cards_js()
+    except Exception as e:
+        return f"Impossible de charger cards.js: {str(e)}", 500
+
+    rows = []
+    batch_results = []
+    summary = {
+        "total": 0,
+        "with_expected": 0,
+        "correctes": 0,
+        "fausses": 0,
+        "fragiles": 0,
+        "rejetees": 0,
+        "sans_attendu": 0,
+        "errors": 0,
+    }
+
+    for file in files:
+        filename = file.filename or "unknown"
+        safe_filename = html.escape(filename)
+        summary["total"] += 1
+
+        try:
+            data = file.read()
+            if not data:
+                raise ValueError("empty_file")
+
+            np_arr = np.frombuffer(data, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("invalid_image")
+
+            rect = detect_main_card(img)
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+            else:
+                warped = None
+
+            if warped is None or warped.size == 0:
+                warped = img.copy()
+
+            warped = cv2.resize(warped, (200, 300))
+            sig, _ = compute_signature(warped)
+            card_match = resolve_final_card(sig, cards=cards)
+
+            expected_card_id = _resolve_expected_card_id(filename, cards=cards)
+            business = _build_business_card_result(
+                filename=filename,
+                final_card_id=card_match.get("final_card_id"),
+                final_status=card_match.get("final_status"),
+                expected_card_id=expected_card_id,
+            )
+
+            bucket = business["business_bucket"]
+            if expected_card_id:
+                summary["with_expected"] += 1
+                if bucket == "correcte":
+                    summary["correctes"] += 1
+                elif bucket == "fausse":
+                    summary["fausses"] += 1
+                elif bucket == "fragile":
+                    summary["fragiles"] += 1
+                elif bucket == "rejetee":
+                    summary["rejetees"] += 1
+            else:
+                summary["sans_attendu"] += 1
+
+            item = {
+                "file": filename,
+                "expected_card_id": expected_card_id,
+                "color_name": card_match.get("color_name"),
+                "symbol_name": card_match.get("symbol_name"),
+                "symbol_source": card_match.get("symbol_source"),
+                "bottom_layout": card_match.get("bottom_layout"),
+                "points": card_match.get("points"),
+                "final_card_id": card_match.get("final_card_id"),
+                "final_score": float(card_match.get("final_score", 0.0)),
+                "final_gap": float(card_match.get("final_gap", 0.0)),
+                "final_status": card_match.get("final_status"),
+                "reason": card_match.get("reason"),
+                "candidate_cards": card_match.get("candidate_cards", []),
+                "business_status": business["business_status"],
+                "business_bucket": business["business_bucket"],
+            }
+            batch_results.append(item)
+
+            if business["business_status"] == "OK":
+                status_class = "ok"
+            elif business["business_bucket"] == "fragile":
+                status_class = "fragile"
+            else:
+                status_class = "ko"
+
+            rows.append(
+                f"""
+                <tr>
+                  <td>{safe_filename}</td>
+                  <td>{html.escape(expected_card_id or '')}</td>
+                  <td>{html.escape(card_match.get('color_name') or '')}</td>
+                  <td>{html.escape(card_match.get('symbol_name') or '')}</td>
+                  <td>{html.escape(str(card_match.get('points') if card_match.get('points') is not None else ''))}</td>
+                  <td>{html.escape(card_match.get('bottom_layout') or '')}</td>
+                  <td>{html.escape(card_match.get('final_card_id') or '')}</td>
+                  <td>{float(card_match.get('final_score', 0.0)):.4f}</td>
+                  <td>{float(card_match.get('final_gap', 0.0)):.4f}</td>
+                  <td>{html.escape(card_match.get('final_status') or '')}</td>
+                  <td><span class="{status_class}">{html.escape(business['business_status'])}</span></td>
+                </tr>
+                """
+            )
+
+        except Exception as e:
+            summary["errors"] += 1
+            batch_results.append({
+                "file": filename,
+                "error": str(e),
+            })
+            rows.append(
+                f"<tr><td>{safe_filename}</td><td colspan='10'><span class='ko'>Erreur: {html.escape(str(e))}</span></td></tr>"
+            )
+
+    pretty_json = json.dumps({
+        "summary": summary,
+        "results": batch_results
+    }, indent=2, ensure_ascii=False)
+    html_rows = "\n".join(rows)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Card Batch Test</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background: #f5f5f5; }}
+        .ok {{ color: #0a7a28; font-weight: bold; }}
+        .ko {{ color: #b00020; font-weight: bold; }}
+        .fragile {{ color: #b26b00; font-weight: bold; }}
+        .summary-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }}
+        .summary-card {{ border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }}
+        .summary-card .label {{ font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }}
+        .summary-card .value {{ font-size:28px; font-weight:bold; margin-top:6px; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat batch carte finale</h1>
+      <p><a href="/card-batch-test">← Revenir au formulaire</a></p>
+
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="label">Correctes</div>
+          <div class="value">{summary['correctes']} / {summary['with_expected']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Fausses</div>
+          <div class="value">{summary['fausses']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Fragiles</div>
+          <div class="value">{summary['fragiles']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Rejetées</div>
+          <div class="value">{summary['rejetees']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Sans attendu</div>
+          <div class="value">{summary['sans_attendu']}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Erreurs</div>
+          <div class="value">{summary['errors']}</div>
+        </div>
+      </div>
+
+      <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="button" onclick="exportBatchJson()">Exporter JSON</button>
+        <button type="button" onclick="exportBatchTxt()">Exporter TXT</button>
+        <button type="button" onclick="exportBatchHtml()">Exporter HTML</button>
+        <button type="button" onclick="copyBatchJson()">Copier JSON</button>
+      </div>
+
+      <table id="batch-results-table">
+        <thead>
+          <tr>
+            <th>Fichier</th>
+            <th>Attendue</th>
+            <th>Couleur</th>
+            <th>Symbole</th>
+            <th>Points</th>
+            <th>Bottom</th>
+            <th>Carte finale</th>
+            <th>Score final</th>
+            <th>Gap final</th>
+            <th>Statut final</th>
+            <th>Statut métier</th>
+          </tr>
+        </thead>
+        <tbody>
+          {html_rows}
+        </tbody>
+      </table>
+
+      <h2>JSON complet</h2>
+      <pre id="batch-json">{pretty_json}</pre>
+
+      <script>
+      function downloadTextFile(filename, content, contentType) {{
+        const blob = new Blob([content], {{ type: contentType }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }}
+
+      function getBatchJsonText() {{
+        const pre = document.getElementById("batch-json");
+        return pre ? pre.textContent : "";
+      }}
+
+      function exportBatchJson() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("card_batch_results.json", jsonText, "application/json;charset=utf-8");
+      }}
+
+      function exportBatchTxt() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("card_batch_results.txt", jsonText, "text/plain;charset=utf-8");
+      }}
+
+      function exportBatchHtml() {{
+        const html = document.documentElement.outerHTML;
+        downloadTextFile("card_batch_results.html", html, "text/html;charset=utf-8");
       }}
 
       function copyBatchJson() {{
