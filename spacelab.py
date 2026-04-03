@@ -2341,30 +2341,28 @@ def _build_card_match_ref_cache(cards=None):
         if not card_id:
             continue
 
-        scan_sig = ((card.get("signature") or {}).get("scan") or {})
-        has_bottom = bool(((scan_sig.get("bottom") or {}).get("vector") or []))
-        has_global = bool(((scan_sig.get("global") or {}).get("vector") or []))
-        has_symbol = bool(((scan_sig.get("symbol") or {}).get("name")) or ((scan_sig.get("symbol") or {}).get("raw_name")))
-        has_bottom_layout = bool(scan_sig.get("bottom_layout"))
-
-        if has_bottom and has_global and has_symbol and has_bottom_layout:
-            cache[card_id] = scan_sig
-            continue
-
+        ref_sig = None
         try:
             image_path = find_card_image(card_id)
             if image_path and os.path.exists(image_path):
                 ref_img = cv2.imread(image_path)
                 if ref_img is not None and ref_img.size != 0:
                     ref_img = cv2.resize(ref_img, (200, 300))
-                    ref_sig, _ = compute_signature(ref_img)
-                    if ref_sig is not None:
-                        cache[card_id] = ref_sig
-                        continue
+                    _, ref_bottom_roi, _ = extract_bottom_roi_from_full_card(ref_img)
+                    ref_sig = {
+                        "global": compute_patch_signature(ref_img),
+                        "bottom": compute_patch_signature(ref_bottom_roi),
+                        "symbol": {"name": _safe_upper(card.get("symbol"))},
+                        "bottom_layout": _build_expected_bottom_profile(card),
+                    }
         except Exception:
-            pass
+            ref_sig = None
 
-        cache[card_id] = scan_sig
+        if ref_sig is None:
+            scan_sig = ((card.get("signature") or {}).get("scan") or {})
+            ref_sig = scan_sig
+
+        cache[card_id] = ref_sig
 
     _CARD_MATCH_REF_CACHE = cache
     return cache
@@ -2543,7 +2541,18 @@ def _score_bottom_profile(expected, observed):
     return float(score), details
 
 
-def resolve_final_card(scan_sig, cards=None):
+def _build_bottom_identity_from_card(card):
+    expected = _build_expected_bottom_profile(card)
+    return {
+        "layout": expected.get("layout"),
+        "points": expected.get("points"),
+        "target": expected.get("target"),
+        "range": expected.get("range"),
+        "effect": bool(expected.get("effect", False)),
+    }
+
+
+def _resolve_bottom_identity(scan_sig, cards=None):
     if cards is None:
         try:
             cards = load_cards_js()
@@ -2555,13 +2564,18 @@ def resolve_final_card(scan_sig, cards=None):
             "color_name": None,
             "symbol_name": None,
             "symbol_source": "none",
+            "observed_bottom_layout": None,
+            "observed_points": None,
             "bottom_layout": None,
             "points": None,
+            "target": None,
+            "range": None,
+            "effect": False,
             "candidate_cards": [],
-            "final_card_id": None,
-            "final_score": 0.0,
-            "final_gap": 0.0,
-            "final_status": "rejected",
+            "matched_card_id": None,
+            "bottom_score": 0.0,
+            "bottom_gap": 0.0,
+            "bottom_status": "rejected",
             "reason": "no_cards_reference",
         }
 
@@ -2581,101 +2595,113 @@ def resolve_final_card(scan_sig, cards=None):
         symbol_source = "none"
 
     observed_bottom = _build_observed_bottom_profile(scan_sig)
-    bottom_layout_name = observed_bottom.get("layout")
-    points_value = observed_bottom.get("points")
+    observed_layout = observed_bottom.get("layout")
+    observed_points = observed_bottom.get("points")
     bottom_patch = (scan_sig.get("bottom") or {}).get("vector") or []
     global_patch = (scan_sig.get("global") or {}).get("vector") or []
 
     color_candidates = [
         card for card in cards
         if not color_name or _safe_upper(card.get("couleur")) == color_name
-    ]
-    if not color_candidates:
-        color_candidates = list(cards)
+    ] or list(cards)
 
     symbol_candidates = [
         card for card in color_candidates
         if not symbol_name or _safe_upper(card.get("symbol")) == symbol_name
-    ]
-    if not symbol_candidates:
-        symbol_candidates = list(color_candidates)
+    ] or list(color_candidates)
 
     scored = []
     for card in symbol_candidates:
-        expected_bottom = _build_expected_bottom_profile(card)
-        semantic_score, semantic_details = _score_bottom_profile(expected_bottom, observed_bottom)
-
         ref_scan = _get_card_scan_signature(card)
         ref_bottom = ((ref_scan.get("bottom") or {}).get("vector") or [])
         ref_global = ((ref_scan.get("global") or {}).get("vector") or [])
-
         bottom_visual = _patch_vector_similarity(bottom_patch, ref_bottom)
         global_visual = _patch_vector_similarity(global_patch, ref_global)
-
-        total_score = 0.0
-        details = []
-
-        if color_name and _safe_upper(card.get("couleur")) == color_name:
-            total_score += 5.0
-            details.append("color_exact")
-
-        if symbol_name and _safe_upper(card.get("symbol")) == symbol_name:
-            total_score += 7.0 if symbol_source == "accepted" else 5.0
-            details.append(f"symbol_{symbol_source}")
-
-        total_score += semantic_score
-        details.extend(semantic_details)
-
-        total_score += bottom_visual * 6.0
-        total_score += global_visual * 1.5
-
-        details.append(f"bottom_visual={bottom_visual:.3f}")
-        details.append(f"global_visual={global_visual:.3f}")
-
+        total_score = (bottom_visual * 0.95) + (global_visual * 0.05)
+        identity = _build_bottom_identity_from_card(card)
         scored.append({
             "card_id": str(card.get("id") or ""),
             "score": float(total_score),
             "bottom_visual": float(bottom_visual),
             "global_visual": float(global_visual),
-            "expected_bottom": expected_bottom,
-            "details": details[:12],
+            "bottom_identity": identity,
+            "details": [
+                f"bottom_visual={bottom_visual:.3f}",
+                f"global_visual={global_visual:.3f}",
+                f"layout={identity.get('layout') or ''}",
+                f"points={identity.get('points') if identity.get('points') is not None else ''}",
+                f"target={identity.get('target') or ''}",
+                f"range={identity.get('range') or ''}",
+            ],
         })
 
     scored.sort(key=lambda item: item["score"], reverse=True)
-
     best = scored[0] if scored else None
     runner_up = scored[1] if len(scored) > 1 else None
-    final_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
+    bottom_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
 
     if best is None:
-        final_status = "rejected"
-        final_card_id = None
+        bottom_status = "rejected"
+        matched_card_id = None
         reason = "no_candidate"
-    elif final_gap >= 1.0 and best["score"] >= 18.0:
-        final_status = "accepted"
-        final_card_id = best["card_id"]
-        reason = "strong_unique_match"
-    elif final_gap >= 0.35 and best["score"] >= 16.0:
-        final_status = "fragile"
-        final_card_id = best["card_id"]
-        reason = "usable_but_close"
+        identity = {}
     else:
-        final_status = "rejected"
-        final_card_id = None
-        reason = "bottom_not_discriminant_enough"
+        identity = best.get("bottom_identity") or {}
+        matched_card_id = best.get("card_id")
+        if best["score"] >= 0.86 and bottom_gap >= 0.04:
+            bottom_status = "accepted"
+            reason = "strong_bottom_match"
+        elif best["score"] >= 0.78 and bottom_gap >= 0.02:
+            bottom_status = "fragile"
+            reason = "usable_but_close"
+        else:
+            bottom_status = "rejected"
+            matched_card_id = None
+            reason = "bottom_not_discriminant_enough"
 
     return {
         "color_name": color_name or None,
         "symbol_name": symbol_name or None,
         "symbol_source": symbol_source,
-        "bottom_layout": bottom_layout_name,
-        "points": points_value,
+        "observed_bottom_layout": observed_layout,
+        "observed_points": observed_points,
+        "bottom_layout": identity.get("layout"),
+        "points": identity.get("points"),
+        "target": identity.get("target"),
+        "range": identity.get("range"),
+        "effect": bool(identity.get("effect", False)),
         "candidate_cards": scored[:8],
-        "final_card_id": final_card_id,
-        "final_score": float(best["score"]) if best else 0.0,
-        "final_gap": final_gap,
-        "final_status": final_status,
+        "matched_card_id": matched_card_id,
+        "bottom_score": float(best["score"]) if best else 0.0,
+        "bottom_gap": bottom_gap,
+        "bottom_status": bottom_status,
         "reason": reason,
+    }
+
+
+def resolve_final_card(scan_sig, cards=None):
+    bottom_match = _resolve_bottom_identity(scan_sig, cards=cards)
+
+    final_status = bottom_match.get("bottom_status") or "rejected"
+    final_card_id = bottom_match.get("matched_card_id") if final_status in ("accepted", "fragile") else None
+
+    return {
+        "color_name": bottom_match.get("color_name"),
+        "symbol_name": bottom_match.get("symbol_name"),
+        "symbol_source": bottom_match.get("symbol_source") or "none",
+        "bottom_layout": bottom_match.get("bottom_layout"),
+        "observed_bottom_layout": bottom_match.get("observed_bottom_layout"),
+        "points": bottom_match.get("points"),
+        "observed_points": bottom_match.get("observed_points"),
+        "target": bottom_match.get("target"),
+        "range": bottom_match.get("range"),
+        "effect": bool(bottom_match.get("effect", False)),
+        "candidate_cards": bottom_match.get("candidate_cards", []),
+        "final_card_id": final_card_id,
+        "final_score": float(bottom_match.get("bottom_score", 0.0)),
+        "final_gap": float(bottom_match.get("bottom_gap", 0.0)),
+        "final_status": final_status,
+        "reason": bottom_match.get("reason") or "bottom_not_discriminant_enough",
     }
 
 
