@@ -53,6 +53,8 @@ WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 # =====================================================
 
 _SYMBOL_REFS_CACHE = None
+_HOG_DESCRIPTOR = None
+
 
 
 def _keep_main_components(bin_img, max_components=6, min_ratio=0.08):
@@ -302,6 +304,245 @@ def _extract_symbol_zone_variants(zone):
     return variants
 
 
+
+def _get_hog_descriptor():
+    global _HOG_DESCRIPTOR
+
+    if _HOG_DESCRIPTOR is None:
+        _HOG_DESCRIPTOR = cv2.HOGDescriptor(
+            _winSize=(96, 96),
+            _blockSize=(16, 16),
+            _blockStride=(8, 8),
+            _cellSize=(8, 8),
+            _nbins=9,
+        )
+
+    return _HOG_DESCRIPTOR
+
+
+
+def _panel_to_gray_canvas(panel, target=96):
+    if panel is None or panel.size == 0:
+        return None
+
+    if len(panel.shape) == 3:
+        gray = cv2.cvtColor(panel, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = panel.copy()
+
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    gray = cv2.resize(gray, (target, target), interpolation=cv2.INTER_AREA)
+    return gray
+
+
+
+def _hog_feature_from_mask(mask):
+    if mask is None or mask.size == 0:
+        return None
+
+    hog = _get_hog_descriptor()
+    mask_u8 = np.where(mask > 0, 255, 0).astype(np.uint8)
+    return hog.compute(mask_u8).flatten().astype(np.float32)
+
+
+
+def _hog_feature_from_panel(panel):
+    gray = _panel_to_gray_canvas(panel)
+    if gray is None:
+        return None
+
+    hog = _get_hog_descriptor()
+    return hog.compute(gray).flatten().astype(np.float32)
+
+
+
+def _compute_symbol_shape_features(mask):
+    features = {
+        "fill": 0.0,
+        "components": 0.0,
+        "largest_comp": 0.0,
+        "bbox_ratio": 0.0,
+        "bbox_fill": 0.0,
+        "holes": 0.0,
+        "solidity": 0.0,
+        "circularity": 0.0,
+    }
+
+    if mask is None or mask.size == 0:
+        return features
+
+    m = np.where(mask > 0, 255, 0).astype(np.uint8)
+    features["fill"] = float(np.count_nonzero(m) / float(m.size))
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+    comp_areas = [int(stats[i, cv2.CC_STAT_AREA]) for i in range(1, num_labels)]
+    features["components"] = float(len(comp_areas))
+    if comp_areas:
+        features["largest_comp"] = float(max(comp_areas) / float(m.size))
+
+    cnts, hierarchy = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]
+        features["holes"] = float(sum(1 for h in hierarchy if h[3] != -1))
+
+    if cnts:
+        c = max(cnts, key=cv2.contourArea)
+        area = float(cv2.contourArea(c))
+        peri = float(cv2.arcLength(c, True))
+        x, y, w, h = cv2.boundingRect(c)
+        hull = cv2.convexHull(c)
+        hull_area = float(cv2.contourArea(hull)) if hull is not None else 0.0
+
+        features["bbox_ratio"] = float(w / float(h + 1e-6))
+        features["bbox_fill"] = float(area / float((w * h) + 1e-6)) if w > 0 and h > 0 else 0.0
+        features["solidity"] = float(area / float(hull_area + 1e-6)) if hull_area > 0 else 0.0
+        features["circularity"] = float((4.0 * np.pi * area) / float((peri * peri) + 1e-6)) if peri > 0 else 0.0
+
+    return features
+
+
+
+def _shape_feature_vector(features):
+    if features is None:
+        features = {}
+
+    return np.array([
+        float(features.get("fill", 0.0)),
+        float(features.get("components", 0.0)),
+        float(features.get("largest_comp", 0.0)),
+        float(min(features.get("bbox_ratio", 0.0), 3.0)),
+        float(features.get("bbox_fill", 0.0)),
+        float(features.get("holes", 0.0)),
+        float(features.get("solidity", 0.0)),
+        float(features.get("circularity", 0.0)),
+    ], dtype=np.float32)
+
+
+
+def _normalize_score_map(score_map, names):
+    if not score_map:
+        return {name: 0.0 for name in names}
+
+    max_val = max(float(score_map.get(name, 0.0)) for name in names)
+    if max_val <= 0:
+        return {name: 0.0 for name in names}
+
+    return {name: float(score_map.get(name, 0.0)) / float(max_val) for name in names}
+
+
+
+def _build_template_symbol_scores(scan_mask, refs, symbol_names):
+    per_symbol = {}
+
+    for symbol_name in symbol_names:
+        icon_mask = refs["icons"].get(symbol_name)
+        icon_score = _score_symbol_masks(scan_mask, icon_mask) if icon_mask is not None else 0.0
+
+        card_scores = []
+        for card_ref in refs["cards"].get(symbol_name, []):
+            ref_mask = card_ref.get("mask")
+            if ref_mask is None:
+                continue
+
+            s = _score_symbol_masks(scan_mask, ref_mask)
+            card_scores.append((float(s), card_ref.get("id")))
+
+        card_scores.sort(key=lambda t: t[0], reverse=True)
+
+        if card_scores:
+            top_scores = card_scores[:3]
+            avg_card_score = float(sum(s for s, _ in top_scores) / len(top_scores))
+            best_source = top_scores[0][1]
+            support = len(card_scores)
+        else:
+            avg_card_score = 0.0
+            best_source = None
+            support = 0
+
+        final_score = float((avg_card_score * 0.55) + (icon_score * 0.45))
+
+        per_symbol[symbol_name] = {
+            "name": symbol_name,
+            "score": final_score,
+            "icon_score": float(icon_score),
+            "card_score": float(avg_card_score),
+            "best_source": best_source,
+            "support": support,
+            "card_scores": card_scores,
+        }
+
+    return per_symbol
+
+
+
+def _knn_symbol_scores(feature, refs, feature_key, symbol_names, k=7):
+    score_map = {name: 0.0 for name in symbol_names}
+    top_refs = []
+
+    if feature is None:
+        return score_map, top_refs
+
+    candidates = []
+    for ref in refs.get("all_cards", []):
+        ref_feature = ref.get(feature_key)
+        if ref_feature is None:
+            continue
+
+        dist = float(np.linalg.norm(feature - ref_feature))
+        candidates.append((dist, ref.get("symbol"), ref.get("id")))
+
+    candidates.sort(key=lambda t: t[0])
+    top_refs = candidates[:k]
+
+    for rank, (dist, symbol_name, card_id) in enumerate(top_refs):
+        sim = 1.0 / (1.0 + dist)
+        score_map[symbol_name] += float(sim / float(rank + 1))
+
+    return _normalize_score_map(score_map, symbol_names), top_refs
+
+
+
+def _shape_model_scores(scan_mask, refs, symbol_names):
+    score_map = {name: 0.0 for name in symbol_names}
+    features = _compute_symbol_shape_features(scan_mask)
+    x = _shape_feature_vector(features)
+
+    shape_stats = refs.get("shape_stats", {})
+    for symbol_name in symbol_names:
+        stats = shape_stats.get(symbol_name)
+        if not stats:
+            continue
+
+        mean_vec = stats.get("mean")
+        std_vec = stats.get("std")
+        if mean_vec is None or std_vec is None:
+            continue
+
+        z = ((x - mean_vec) / std_vec) ** 2
+        score_map[symbol_name] = float(np.exp(-0.5 * float(np.mean(z))))
+
+    # Règles de secours ciblées pour les cas qui glissaient encore.
+    if features["bbox_ratio"] > 3.0 and features["fill"] < 0.14:
+        score_map["ASTRONAUTE"] = max(score_map.get("ASTRONAUTE", 0.0), 1.0)
+
+    if (
+        features["fill"] > 0.37 and
+        int(round(features["components"])) == 1 and
+        features["bbox_fill"] > 0.62 and
+        features["solidity"] > 0.76
+    ):
+        score_map["MEDECIN"] = max(score_map.get("MEDECIN", 0.0), 1.0)
+
+    if (
+        features["circularity"] < 0.18 and
+        features["solidity"] < 0.62 and
+        features["bbox_fill"] < 0.52
+    ):
+        score_map["MECANICIEN"] = max(score_map.get("MECANICIEN", 0.0), 1.0)
+
+    return _normalize_score_map(score_map, symbol_names), features
+
+
 def _symbol_iou(a, b):
     if a is None or b is None:
         return 0.0
@@ -418,23 +659,25 @@ def _extract_symbol_zone_from_card(img):
     return zone
 
 
+
+
+
+
 def _load_symbol_references():
     global _SYMBOL_REFS_CACHE
 
     if _SYMBOL_REFS_CACHE is not None:
         return _SYMBOL_REFS_CACHE
 
+    symbol_names = ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]
     refs = {
         "icons": {},
-        "cards": {
-            "SCIENTIFIQUE": [],
-            "ASTRONAUTE": [],
-            "MECANICIEN": [],
-            "MEDECIN": [],
-        }
+        "cards": {name: [] for name in symbol_names},
+        "all_cards": [],
+        "shape_stats": {},
     }
 
-    for name in ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]:
+    for name in symbol_names:
         path = os.path.join(SYMBOLS_DIR, f"{name.lower()}.png")
         tpl = cv2.imread(path, cv2.IMREAD_COLOR)
         refs["icons"][name] = _normalize_symbol_template(tpl)
@@ -463,26 +706,50 @@ def _load_symbol_references():
         if zone is None or zone.size == 0:
             continue
 
-        mask, _, _ = _normalize_symbol_scan(zone)
+        mask, panel, _ = _normalize_symbol_scan(zone)
         if mask is None:
             continue
 
-        refs["cards"][symbol_name].append({
+        panel_img = panel if panel is not None and panel.size > 0 else zone
+        entry = {
             "id": card_id,
-            "mask": mask
-        })
+            "symbol": symbol_name,
+            "mask": mask,
+            "panel_gray": _panel_to_gray_canvas(panel_img),
+            "hog_mask": _hog_feature_from_mask(mask),
+            "hog_panel": _hog_feature_from_panel(panel_img),
+            "shape_features": _compute_symbol_shape_features(mask),
+        }
+
+        refs["cards"][symbol_name].append(entry)
+        refs["all_cards"].append(entry)
+
+    for symbol_name in symbol_names:
+        feature_vecs = [
+            _shape_feature_vector(entry.get("shape_features"))
+            for entry in refs["cards"].get(symbol_name, [])
+        ]
+        if not feature_vecs:
+            continue
+
+        mat = np.vstack(feature_vecs).astype(np.float32)
+        refs["shape_stats"][symbol_name] = {
+            "mean": mat.mean(axis=0),
+            "std": mat.std(axis=0) + 1e-3,
+        }
 
     _SYMBOL_REFS_CACHE = refs
-    return refs
+    return _SYMBOL_REFS_CACHE
 
 
 def detect_symbol(zone):
     refs = _load_symbol_references()
+    symbol_names = ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]
 
     empty_debug = {
         "top_candidates": [],
         "winner_references": [],
-        "runner_up": None
+        "runner_up": None,
     }
 
     if zone is None or zone.size == 0:
@@ -493,104 +760,103 @@ def detect_symbol(zone):
         return None, 0.0, 0.0, empty_debug
 
     best_result = None
-    best_scan_mask = None
 
     for variant in variants:
-        scan_mask, _, _ = _normalize_symbol_scan(variant)
+        scan_mask, panel, _ = _normalize_symbol_scan(variant)
         if scan_mask is None:
             continue
 
-        per_symbol = {}
+        panel_img = panel if panel is not None and panel.size > 0 else variant
 
-        for symbol_name in ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]:
-            icon_mask = refs["icons"].get(symbol_name)
-            icon_score = _score_symbol_masks(scan_mask, icon_mask) if icon_mask is not None else 0.0
+        template_scores = _build_template_symbol_scores(scan_mask, refs, symbol_names)
+        template_abs = {name: float(template_scores[name]["score"]) for name in symbol_names}
 
-            card_scores = []
-            for card_ref in refs["cards"].get(symbol_name, []):
-                ref_mask = card_ref.get("mask")
-                if ref_mask is None:
-                    continue
+        mask_feature = _hog_feature_from_mask(scan_mask)
+        mask_knn_scores, mask_knn_top = _knn_symbol_scores(
+            mask_feature,
+            refs,
+            "hog_mask",
+            symbol_names,
+            k=7,
+        )
 
-                s = _score_symbol_masks(scan_mask, ref_mask)
-                card_scores.append((float(s), card_ref.get("id")))
+        panel_feature = _hog_feature_from_panel(panel_img)
+        panel_knn_scores, panel_knn_top = _knn_symbol_scores(
+            panel_feature,
+            refs,
+            "hog_panel",
+            symbol_names,
+            k=7,
+        )
 
-            card_scores.sort(key=lambda t: t[0], reverse=True)
+        shape_scores, shape_features = _shape_model_scores(scan_mask, refs, symbol_names)
 
-            if card_scores:
-                top_scores = card_scores[:3]
-                avg_card_score = float(sum(s for s, _ in top_scores) / len(top_scores))
-                best_source = top_scores[0][1]
-                support = len(card_scores)
-            else:
-                avg_card_score = 0.0
-                best_source = None
-                support = 0
+        combined_scores = {}
+        for symbol_name in symbol_names:
+            combined_scores[symbol_name] = float(
+                (template_abs.get(symbol_name, 0.0) * 0.40) +
+                (mask_knn_scores.get(symbol_name, 0.0) * 0.20) +
+                (panel_knn_scores.get(symbol_name, 0.0) * 0.15) +
+                (shape_scores.get(symbol_name, 0.0) * 0.25)
+            )
 
-            final_score = float((avg_card_score * 0.55) + (icon_score * 0.45))
-
-            per_symbol[symbol_name] = {
-                "name": symbol_name,
-                "score": final_score,
-                "icon_score": float(icon_score),
-                "card_score": float(avg_card_score),
-                "best_source": best_source,
-                "support": support
-            }
-
-        ranked = sorted(per_symbol.values(), key=lambda d: d["score"], reverse=True)
+        ranked = sorted(combined_scores.items(), key=lambda t: t[1], reverse=True)
         if not ranked:
             continue
 
-        best = ranked[0]
-        second = ranked[1] if len(ranked) > 1 else None
-        gap = float(best["score"] - (second["score"] if second else 0.0))
+        winner_name, winner_score = ranked[0]
+        runner_up = ranked[1] if len(ranked) > 1 else None
+        gap = float(winner_score - (runner_up[1] if runner_up else 0.0))
 
-        winner_name = best["name"]
-
-        winner_card_scores = []
+        winner_refs = []
         for card_ref in refs["cards"].get(winner_name, []):
             ref_mask = card_ref.get("mask")
-            if ref_mask is None:
-                continue
+            mask_similarity = _score_symbol_masks(scan_mask, ref_mask) if ref_mask is not None else 0.0
 
-            s = _score_symbol_masks(scan_mask, ref_mask)
-            winner_card_scores.append({
+            panel_similarity = 0.0
+            ref_panel_feature = card_ref.get("hog_panel")
+            if panel_feature is not None and ref_panel_feature is not None:
+                panel_similarity = float(1.0 / (1.0 + np.linalg.norm(panel_feature - ref_panel_feature)))
+
+            mix_score = float((mask_similarity * 0.70) + (panel_similarity * 0.30))
+            winner_refs.append({
                 "card_id": card_ref.get("id"),
-                "score": float(s)
+                "score": mix_score,
             })
 
-        winner_card_scores.sort(key=lambda d: d["score"], reverse=True)
+        winner_refs.sort(key=lambda d: d["score"], reverse=True)
+        best_source = winner_refs[0]["card_id"] if winner_refs else template_scores[winner_name].get("best_source")
 
         result = {
             "raw_name": winner_name,
-            "score": float(best["score"]),
+            "score": float(winner_score),
             "gap": gap,
             "top_candidates": [
                 {
-                    "best_kind": "card" if best["best_source"] else "icon",
-                    "best_source": best["best_source"] or best["name"].lower(),
-                    "name": best["name"],
-                    "score": float(best["score"]),
-                    "support": int(best["support"])
+                    "best_kind": "card" if best_source else "icon",
+                    "best_source": best_source or winner_name.lower(),
+                    "name": winner_name,
+                    "score": float(winner_score),
+                    "support": int(template_scores[winner_name].get("support", 0)),
                 }
             ],
-            "winner_references": winner_card_scores[:5],
+            "winner_references": winner_refs[:5],
             "runner_up": {
-                "name": second["name"],
-                "score": float(second["score"])
-            } if second else None
+                "name": runner_up[0],
+                "score": float(runner_up[1]),
+            } if runner_up else None,
+            "shape_features": shape_features,
+            "mask_knn_top": mask_knn_top,
+            "panel_knn_top": panel_knn_top,
         }
 
         if best_result is None:
             best_result = result
-            best_scan_mask = scan_mask
         else:
             prev = (best_result["score"], best_result["gap"])
             cur = (result["score"], result["gap"])
             if cur > prev:
                 best_result = result
-                best_scan_mask = scan_mask
 
     if best_result is None:
         return None, 0.0, 0.0, empty_debug
@@ -602,7 +868,7 @@ def detect_symbol(zone):
         {
             "top_candidates": best_result.get("top_candidates", []),
             "winner_references": best_result.get("winner_references", []),
-            "runner_up": best_result.get("runner_up")
+            "runner_up": best_result.get("runner_up"),
         }
     )
 
@@ -2255,8 +2521,9 @@ def build_signatures():
         backup_path = f"{CARDS_JS_PATH}.bak_{timestamp}"
         shutil.copyfile(CARDS_JS_PATH, backup_path)
 
-        global _SYMBOL_REFS_CACHE
+        global _SYMBOL_REFS_CACHE, _HOG_DESCRIPTOR
         _SYMBOL_REFS_CACHE = None
+        _HOG_DESCRIPTOR = None
 
         updated = 0
         skipped = []
