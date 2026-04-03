@@ -2341,28 +2341,30 @@ def _build_card_match_ref_cache(cards=None):
         if not card_id:
             continue
 
-        ref_sig = None
+        scan_sig = ((card.get("signature") or {}).get("scan") or {})
+        has_bottom = bool(((scan_sig.get("bottom") or {}).get("vector") or []))
+        has_global = bool(((scan_sig.get("global") or {}).get("vector") or []))
+        has_symbol = bool(((scan_sig.get("symbol") or {}).get("name")) or ((scan_sig.get("symbol") or {}).get("raw_name")))
+        has_bottom_layout = bool(scan_sig.get("bottom_layout"))
+
+        if has_bottom and has_global and has_symbol and has_bottom_layout:
+            cache[card_id] = scan_sig
+            continue
+
         try:
             image_path = find_card_image(card_id)
             if image_path and os.path.exists(image_path):
                 ref_img = cv2.imread(image_path)
                 if ref_img is not None and ref_img.size != 0:
                     ref_img = cv2.resize(ref_img, (200, 300))
-                    _, ref_bottom_roi, _ = extract_bottom_roi_from_full_card(ref_img)
-                    ref_sig = {
-                        "global": compute_patch_signature(ref_img),
-                        "bottom": compute_patch_signature(ref_bottom_roi),
-                        "symbol": {"name": _safe_upper(card.get("symbol"))},
-                        "bottom_layout": _build_expected_bottom_profile(card),
-                    }
+                    ref_sig, _ = compute_signature(ref_img)
+                    if ref_sig is not None:
+                        cache[card_id] = ref_sig
+                        continue
         except Exception:
-            ref_sig = None
+            pass
 
-        if ref_sig is None:
-            scan_sig = ((card.get("signature") or {}).get("scan") or {})
-            ref_sig = scan_sig
-
-        cache[card_id] = ref_sig
+        cache[card_id] = scan_sig
 
     _CARD_MATCH_REF_CACHE = cache
     return cache
@@ -2541,18 +2543,7 @@ def _score_bottom_profile(expected, observed):
     return float(score), details
 
 
-def _build_bottom_identity_from_card(card):
-    expected = _build_expected_bottom_profile(card)
-    return {
-        "layout": expected.get("layout"),
-        "points": expected.get("points"),
-        "target": expected.get("target"),
-        "range": expected.get("range"),
-        "effect": bool(expected.get("effect", False)),
-    }
-
-
-def _resolve_bottom_identity(scan_sig, cards=None):
+def resolve_final_card(scan_sig, cards=None):
     if cards is None:
         try:
             cards = load_cards_js()
@@ -2564,18 +2555,13 @@ def _resolve_bottom_identity(scan_sig, cards=None):
             "color_name": None,
             "symbol_name": None,
             "symbol_source": "none",
-            "observed_bottom_layout": None,
-            "observed_points": None,
             "bottom_layout": None,
             "points": None,
-            "target": None,
-            "range": None,
-            "effect": False,
             "candidate_cards": [],
-            "matched_card_id": None,
-            "bottom_score": 0.0,
-            "bottom_gap": 0.0,
-            "bottom_status": "rejected",
+            "final_card_id": None,
+            "final_score": 0.0,
+            "final_gap": 0.0,
+            "final_status": "rejected",
             "reason": "no_cards_reference",
         }
 
@@ -2595,113 +2581,101 @@ def _resolve_bottom_identity(scan_sig, cards=None):
         symbol_source = "none"
 
     observed_bottom = _build_observed_bottom_profile(scan_sig)
-    observed_layout = observed_bottom.get("layout")
-    observed_points = observed_bottom.get("points")
+    bottom_layout_name = observed_bottom.get("layout")
+    points_value = observed_bottom.get("points")
     bottom_patch = (scan_sig.get("bottom") or {}).get("vector") or []
     global_patch = (scan_sig.get("global") or {}).get("vector") or []
 
     color_candidates = [
         card for card in cards
         if not color_name or _safe_upper(card.get("couleur")) == color_name
-    ] or list(cards)
+    ]
+    if not color_candidates:
+        color_candidates = list(cards)
 
     symbol_candidates = [
         card for card in color_candidates
         if not symbol_name or _safe_upper(card.get("symbol")) == symbol_name
-    ] or list(color_candidates)
+    ]
+    if not symbol_candidates:
+        symbol_candidates = list(color_candidates)
 
     scored = []
     for card in symbol_candidates:
+        expected_bottom = _build_expected_bottom_profile(card)
+        semantic_score, semantic_details = _score_bottom_profile(expected_bottom, observed_bottom)
+
         ref_scan = _get_card_scan_signature(card)
         ref_bottom = ((ref_scan.get("bottom") or {}).get("vector") or [])
         ref_global = ((ref_scan.get("global") or {}).get("vector") or [])
+
         bottom_visual = _patch_vector_similarity(bottom_patch, ref_bottom)
         global_visual = _patch_vector_similarity(global_patch, ref_global)
-        total_score = (bottom_visual * 0.95) + (global_visual * 0.05)
-        identity = _build_bottom_identity_from_card(card)
+
+        total_score = 0.0
+        details = []
+
+        if color_name and _safe_upper(card.get("couleur")) == color_name:
+            total_score += 5.0
+            details.append("color_exact")
+
+        if symbol_name and _safe_upper(card.get("symbol")) == symbol_name:
+            total_score += 7.0 if symbol_source == "accepted" else 5.0
+            details.append(f"symbol_{symbol_source}")
+
+        total_score += semantic_score
+        details.extend(semantic_details)
+
+        total_score += bottom_visual * 6.0
+        total_score += global_visual * 1.5
+
+        details.append(f"bottom_visual={bottom_visual:.3f}")
+        details.append(f"global_visual={global_visual:.3f}")
+
         scored.append({
             "card_id": str(card.get("id") or ""),
             "score": float(total_score),
             "bottom_visual": float(bottom_visual),
             "global_visual": float(global_visual),
-            "bottom_identity": identity,
-            "details": [
-                f"bottom_visual={bottom_visual:.3f}",
-                f"global_visual={global_visual:.3f}",
-                f"layout={identity.get('layout') or ''}",
-                f"points={identity.get('points') if identity.get('points') is not None else ''}",
-                f"target={identity.get('target') or ''}",
-                f"range={identity.get('range') or ''}",
-            ],
+            "expected_bottom": expected_bottom,
+            "details": details[:12],
         })
 
     scored.sort(key=lambda item: item["score"], reverse=True)
+
     best = scored[0] if scored else None
     runner_up = scored[1] if len(scored) > 1 else None
-    bottom_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
+    final_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
 
     if best is None:
-        bottom_status = "rejected"
-        matched_card_id = None
+        final_status = "rejected"
+        final_card_id = None
         reason = "no_candidate"
-        identity = {}
+    elif final_gap >= 1.0 and best["score"] >= 18.0:
+        final_status = "accepted"
+        final_card_id = best["card_id"]
+        reason = "strong_unique_match"
+    elif final_gap >= 0.35 and best["score"] >= 16.0:
+        final_status = "fragile"
+        final_card_id = best["card_id"]
+        reason = "usable_but_close"
     else:
-        identity = best.get("bottom_identity") or {}
-        matched_card_id = best.get("card_id")
-        if best["score"] >= 0.86 and bottom_gap >= 0.04:
-            bottom_status = "accepted"
-            reason = "strong_bottom_match"
-        elif best["score"] >= 0.78 and bottom_gap >= 0.02:
-            bottom_status = "fragile"
-            reason = "usable_but_close"
-        else:
-            bottom_status = "rejected"
-            matched_card_id = None
-            reason = "bottom_not_discriminant_enough"
+        final_status = "rejected"
+        final_card_id = None
+        reason = "bottom_not_discriminant_enough"
 
     return {
         "color_name": color_name or None,
         "symbol_name": symbol_name or None,
         "symbol_source": symbol_source,
-        "observed_bottom_layout": observed_layout,
-        "observed_points": observed_points,
-        "bottom_layout": identity.get("layout"),
-        "points": identity.get("points"),
-        "target": identity.get("target"),
-        "range": identity.get("range"),
-        "effect": bool(identity.get("effect", False)),
+        "bottom_layout": bottom_layout_name,
+        "points": points_value,
         "candidate_cards": scored[:8],
-        "matched_card_id": matched_card_id,
-        "bottom_score": float(best["score"]) if best else 0.0,
-        "bottom_gap": bottom_gap,
-        "bottom_status": bottom_status,
-        "reason": reason,
-    }
-
-
-def resolve_final_card(scan_sig, cards=None):
-    bottom_match = _resolve_bottom_identity(scan_sig, cards=cards)
-
-    final_status = bottom_match.get("bottom_status") or "rejected"
-    final_card_id = bottom_match.get("matched_card_id") if final_status in ("accepted", "fragile") else None
-
-    return {
-        "color_name": bottom_match.get("color_name"),
-        "symbol_name": bottom_match.get("symbol_name"),
-        "symbol_source": bottom_match.get("symbol_source") or "none",
-        "bottom_layout": bottom_match.get("bottom_layout"),
-        "observed_bottom_layout": bottom_match.get("observed_bottom_layout"),
-        "points": bottom_match.get("points"),
-        "observed_points": bottom_match.get("observed_points"),
-        "target": bottom_match.get("target"),
-        "range": bottom_match.get("range"),
-        "effect": bool(bottom_match.get("effect", False)),
-        "candidate_cards": bottom_match.get("candidate_cards", []),
         "final_card_id": final_card_id,
-        "final_score": float(bottom_match.get("bottom_score", 0.0)),
-        "final_gap": float(bottom_match.get("bottom_gap", 0.0)),
+        "final_score": float(best["score"]) if best else 0.0,
+        "final_gap": final_gap,
         "final_status": final_status,
-        "reason": bottom_match.get("reason") or "bottom_not_discriminant_enough",
+        "reason": reason,
     }
 
 
@@ -3800,6 +3774,443 @@ def card_batch_test():
 # =====================================================
 # BOTTOM TEST
 # =====================================================
+
+
+
+def _get_expected_bottom_map():
+    try:
+        cards = load_cards_js()
+    except Exception:
+        cards = []
+
+    expected = {}
+    for card in cards:
+        card_id = str(card.get("id") or "").strip()
+        if not card_id:
+            continue
+        profile = _build_expected_bottom_profile(card)
+        profile.update({
+            "card_id": card_id,
+            "color": _safe_upper(card.get("couleur")),
+            "symbol": _safe_upper(card.get("symbol")),
+        })
+        expected[card_id.lower()] = profile
+
+    return expected
+
+
+def _resolve_expected_bottom(filename, expected_bottom_map):
+    stem = os.path.splitext(os.path.basename(filename or ""))[0].strip().lower()
+    if not stem:
+        return None
+    return expected_bottom_map.get(stem)
+
+
+def _build_observed_bottom_from_result(result):
+    result = result or {}
+    return {
+        "layout": str(result.get("layout") or "UNKNOWN"),
+        "points": _safe_int(result.get("points")),
+        "raw_points": _safe_int(result.get("raw_points")),
+        "points_score": float(result.get("points_score", 0.0) or 0.0),
+        "points_gap": float(result.get("points_gap", 0.0) or 0.0),
+        "has_special_white_panel": bool(result.get("has_special_white_panel", False)),
+        "has_slash": bool(result.get("has_slash", False)),
+        "has_right_icon": bool(result.get("has_right_icon", False)),
+        "has_bottom_line": bool(result.get("has_bottom_line", False)),
+    }
+
+
+def _infer_observed_bottom_range(observed):
+    observed = observed or {}
+    has_slash = bool(observed.get("has_slash"))
+    has_right_icon = bool(observed.get("has_right_icon"))
+    has_bottom_line = bool(observed.get("has_bottom_line"))
+
+    if has_slash and has_right_icon and has_bottom_line:
+        return "LIGNE"
+    if has_slash and has_right_icon:
+        return "GLOBAL"
+    return None
+
+
+def _bottom_points_threshold_mode(observed):
+    observed = observed or {}
+    accepted = observed.get("points")
+    raw = observed.get("raw_points")
+    score = float(observed.get("points_score", 0.0) or 0.0)
+    gap = float(observed.get("points_gap", 0.0) or 0.0)
+
+    if accepted is not None:
+        return "accepted"
+    if raw is None:
+        return "no_digit"
+    if score < 0.60 and gap < 0.02:
+        return "rejected_score_gap"
+    if score < 0.60:
+        return "rejected_score"
+    if gap < 0.02:
+        return "rejected_gap"
+    return "rejected_digit"
+
+
+def _build_business_bottom_result(expected_bottom, observed_bottom):
+    observed_bottom = observed_bottom or {}
+
+    if not expected_bottom:
+        return {
+            "expected_range": None,
+            "observed_range": _infer_observed_bottom_range(observed_bottom),
+            "threshold_mode": _bottom_points_threshold_mode(observed_bottom),
+            "business_status": "N/A",
+            "business_bucket": "sans_attendu",
+        }
+
+    expected_range = expected_bottom.get("range") or None
+    observed_range = _infer_observed_bottom_range(observed_bottom)
+
+    layout_ok = (expected_bottom.get("layout") or "") == (observed_bottom.get("layout") or "")
+    points_ok = expected_bottom.get("points") == observed_bottom.get("points")
+    raw_points_ok = expected_bottom.get("points") == observed_bottom.get("raw_points")
+    special_ok = bool(expected_bottom.get("has_special_white_panel")) == bool(observed_bottom.get("has_special_white_panel"))
+    slash_ok = bool(expected_bottom.get("has_slash")) == bool(observed_bottom.get("has_slash"))
+    icon_ok = bool(expected_bottom.get("has_right_icon")) == bool(observed_bottom.get("has_right_icon"))
+    line_ok = bool(expected_bottom.get("has_bottom_line")) == bool(observed_bottom.get("has_bottom_line"))
+    range_ok = expected_range == observed_range
+
+    exact_ok = all([layout_ok, points_ok, special_ok, slash_ok, icon_ok, line_ok, range_ok])
+    raw_ok = all([layout_ok, raw_points_ok, special_ok, slash_ok, icon_ok, line_ok, range_ok])
+
+    if exact_ok:
+        business_status = "OK"
+        business_bucket = "correcte"
+    elif raw_ok:
+        business_status = "KO"
+        business_bucket = "fragile"
+    elif (observed_bottom.get("layout") in {"UNKNOWN", "BLACK_PANEL"} and
+          observed_bottom.get("points") is None and
+          observed_bottom.get("raw_points") is None and
+          not observed_bottom.get("has_special_white_panel") and
+          not observed_bottom.get("has_slash") and
+          not observed_bottom.get("has_right_icon") and
+          not observed_bottom.get("has_bottom_line")):
+        business_status = "KO"
+        business_bucket = "rejetee"
+    else:
+        business_status = "KO"
+        business_bucket = "fausse"
+
+    return {
+        "expected_range": expected_range,
+        "observed_range": observed_range,
+        "threshold_mode": _bottom_points_threshold_mode(observed_bottom),
+        "business_status": business_status,
+        "business_bucket": business_bucket,
+    }
+
+
+@app.route("/bottom-batch-test", methods=["GET", "POST"])
+def bottom_batch_test():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Bottom Batch Test</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background: #f5f5f5; }
+            .ok { color: #0a7a28; font-weight: bold; }
+            .ko { color: #b00020; font-weight: bold; }
+            .fragile { color: #b26b00; font-weight: bold; }
+            .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }
+            .summary-card { border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }
+            .summary-card .label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }
+            .summary-card .value { font-size:28px; font-weight:bold; margin-top:6px; }
+            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+          </style>
+        </head>
+        <body>
+          <h1>Test batch bottom</h1>
+          <p>Envoie plusieurs images de cartes complètes pour vérifier le bas de carte.</p>
+          <form method="post" enctype="multipart/form-data">
+            <p><input type="file" name="images" accept="image/*" multiple required /></p>
+            <p><button type="submit">Analyser le lot</button></p>
+          </form>
+        </body>
+        </html>
+        """
+
+    files = sorted(
+        request.files.getlist("images"),
+        key=lambda f: _natural_sort_key(f.filename or "")
+    )
+    if not files:
+        return "Aucun fichier envoyé", 400
+
+    expected_bottom_map = _get_expected_bottom_map()
+
+    rows = []
+    batch_results = []
+    summary = {
+        "total": 0,
+        "with_expected": 0,
+        "correctes": 0,
+        "fausses": 0,
+        "fragiles": 0,
+        "rejetees": 0,
+        "sans_attendu": 0,
+        "errors": 0,
+    }
+
+    for file in files:
+        filename = file.filename or "unknown"
+        safe_filename = html.escape(filename)
+        summary["total"] += 1
+
+        try:
+            data = file.read()
+            if not data:
+                summary["errors"] += 1
+                batch_results.append({"file": filename, "error": "empty_file"})
+                rows.append(f"<tr><td>{safe_filename}</td><td colspan='11'><span class='ko'>Fichier vide</span></td></tr>")
+                continue
+
+            np_arr = np.frombuffer(data, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if img is None:
+                summary["errors"] += 1
+                batch_results.append({"file": filename, "error": "invalid_image"})
+                rows.append(f"<tr><td>{safe_filename}</td><td colspan='11'><span class='ko'>Image invalide</span></td></tr>")
+                continue
+
+            rect = detect_main_card(img)
+            warped = None
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+            if warped is None or warped.size == 0:
+                warped = img.copy()
+
+            warped = cv2.resize(warped, (200, 300))
+            full_img, bottom_roi, bottom_box = extract_bottom_roi_from_full_card(warped)
+            result = analyze_bottom(bottom_roi, DIGITS_DIR)
+            observed = _build_observed_bottom_from_result(result)
+            expected = _resolve_expected_bottom(filename, expected_bottom_map)
+            business = _build_business_bottom_result(expected, observed)
+
+            bucket = business["business_bucket"]
+            if expected:
+                summary["with_expected"] += 1
+                if bucket == "correcte":
+                    summary["correctes"] += 1
+                elif bucket == "fausse":
+                    summary["fausses"] += 1
+                elif bucket == "fragile":
+                    summary["fragiles"] += 1
+                elif bucket == "rejetee":
+                    summary["rejetees"] += 1
+            else:
+                summary["sans_attendu"] += 1
+
+            expected_layout = (expected or {}).get("layout")
+            expected_points = (expected or {}).get("points")
+            expected_range = business.get("expected_range")
+            expected_symbol = (expected or {}).get("symbol")
+            observed_layout = observed.get("layout")
+            observed_points = observed.get("points")
+            raw_points = observed.get("raw_points")
+            observed_range = business.get("observed_range")
+            score = float(observed.get("points_score", 0.0))
+            gap = float(observed.get("points_gap", 0.0))
+
+            item = {
+                "file": filename,
+                "expected_symbol": expected_symbol,
+                "expected_layout": expected_layout,
+                "expected_points": expected_points,
+                "expected_range": expected_range,
+                "observed_layout": observed_layout,
+                "observed_points": observed_points,
+                "raw_points": raw_points,
+                "observed_range": observed_range,
+                "points_score": score,
+                "points_gap": gap,
+                "has_slash": bool(observed.get("has_slash")),
+                "has_right_icon": bool(observed.get("has_right_icon")),
+                "has_bottom_line": bool(observed.get("has_bottom_line")),
+                "has_special_white_panel": bool(observed.get("has_special_white_panel")),
+                "threshold_mode": business["threshold_mode"],
+                "business_status": business["business_status"],
+                "business_bucket": business["business_bucket"],
+            }
+            batch_results.append(item)
+
+            if business["business_status"] == "OK":
+                status_class = "ok"
+            elif business["business_bucket"] == "fragile":
+                status_class = "fragile"
+            else:
+                status_class = "ko"
+
+            rows.append(
+                f"""
+                <tr>
+                  <td>{safe_filename}</td>
+                  <td>{html.escape(expected_symbol or '')}</td>
+                  <td>{html.escape(expected_layout or '')}</td>
+                  <td>{'' if expected_points is None else expected_points}</td>
+                  <td>{html.escape(expected_range or '')}</td>
+                  <td>{html.escape(observed_layout or '')}</td>
+                  <td>{'' if observed_points is None else observed_points}</td>
+                  <td>{'' if raw_points is None else raw_points}</td>
+                  <td>{float(score):.4f}</td>
+                  <td>{float(gap):.4f}</td>
+                  <td>{html.escape(observed_range or '')}</td>
+                  <td>{html.escape(business['threshold_mode'])}</td>
+                  <td><span class=\"{status_class}\">{html.escape(business['business_status'])}</span></td>
+                </tr>
+                """
+            )
+
+        except Exception as e:
+            summary["errors"] += 1
+            batch_results.append({"file": filename, "error": str(e)})
+            rows.append(f"<tr><td>{safe_filename}</td><td colspan='11'><span class='ko'>Erreur: {html.escape(str(e))}</span></td></tr>")
+
+    pretty_json = json.dumps({"summary": summary, "results": batch_results}, indent=2, ensure_ascii=False)
+    html_rows = "\n".join(rows)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset=\"utf-8\" />
+      <title>Bottom Batch Test</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background: #f5f5f5; }}
+        .ok {{ color: #0a7a28; font-weight: bold; }}
+        .ko {{ color: #b00020; font-weight: bold; }}
+        .fragile {{ color: #b26b00; font-weight: bold; }}
+        .summary-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }}
+        .summary-card {{ border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }}
+        .summary-card .label {{ font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }}
+        .summary-card .value {{ font-size:28px; font-weight:bold; margin-top:6px; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat batch bottom</h1>
+      <p><a href=\"/bottom-batch-test\">← Revenir au formulaire</a></p>
+
+      <div class=\"summary-grid\">
+        <div class=\"summary-card\">
+          <div class=\"label\">Correctes</div>
+          <div class=\"value\">{summary['correctes']} / {summary['with_expected']}</div>
+        </div>
+        <div class=\"summary-card\">
+          <div class=\"label\">Fausses</div>
+          <div class=\"value\">{summary['fausses']}</div>
+        </div>
+        <div class=\"summary-card\">
+          <div class=\"label\">Fragiles</div>
+          <div class=\"value\">{summary['fragiles']}</div>
+        </div>
+        <div class=\"summary-card\">
+          <div class=\"label\">Rejetées</div>
+          <div class=\"value\">{summary['rejetees']}</div>
+        </div>
+        <div class=\"summary-card\">
+          <div class=\"label\">Sans attendu</div>
+          <div class=\"value\">{summary['sans_attendu']}</div>
+        </div>
+        <div class=\"summary-card\">
+          <div class=\"label\">Erreurs</div>
+          <div class=\"value\">{summary['errors']}</div>
+        </div>
+      </div>
+
+      <div style=\"margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;\">
+        <button type=\"button\" onclick=\"exportBatchJson()\">Exporter JSON</button>
+        <button type=\"button\" onclick=\"exportBatchTxt()\">Exporter TXT</button>
+        <button type=\"button\" onclick=\"exportBatchHtml()\">Exporter HTML</button>
+        <button type=\"button\" onclick=\"copyBatchJson()\">Copier JSON</button>
+      </div>
+
+      <table id=\"batch-results-table\">
+        <thead>
+          <tr>
+            <th>Fichier</th>
+            <th>Symbole</th>
+            <th>Layout attendu</th>
+            <th>Pts attendus</th>
+            <th>Portée attendue</th>
+            <th>Layout détecté</th>
+            <th>Pts détectés</th>
+            <th>Raw</th>
+            <th>Score</th>
+            <th>Gap</th>
+            <th>Portée détectée</th>
+            <th>Mode seuil</th>
+            <th>Statut métier</th>
+          </tr>
+        </thead>
+        <tbody>
+          {html_rows}
+        </tbody>
+      </table>
+
+      <h2>JSON complet</h2>
+      <pre id=\"batch-json\">{pretty_json}</pre>
+
+      <script>
+      function downloadTextFile(filename, content, contentType) {{
+        const blob = new Blob([content], {{ type: contentType }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }}
+
+      function getBatchJsonText() {{
+        const pre = document.getElementById("batch-json");
+        return pre ? pre.textContent : "";
+      }}
+
+      function exportBatchJson() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("bottom_batch_results.json", jsonText, "application/json;charset=utf-8");
+      }}
+
+      function exportBatchTxt() {{
+        const jsonText = getBatchJsonText();
+        downloadTextFile("bottom_batch_results.txt", jsonText, "text/plain;charset=utf-8");
+      }}
+
+      function exportBatchHtml() {{
+        const html = document.documentElement.outerHTML;
+        downloadTextFile("bottom_batch_results.html", html, "text/html;charset=utf-8");
+      }}
+
+      function copyBatchJson() {{
+        const jsonText = getBatchJsonText();
+        navigator.clipboard.writeText(jsonText)
+          .then(() => alert("JSON copié"))
+          .catch(() => alert("Copie impossible"));
+      }}
+      </script>
+    </body>
+    </html>
+    """
+
 
 @app.route("/bottom-test", methods=["GET", "POST"])
 def bottom_test():
