@@ -3969,7 +3969,15 @@ def _load_bottom_reference_library():
             continue
 
         try:
-            _, bottom_roi, _ = extract_bottom_roi_from_full_card(img)
+            rect = detect_main_card(img)
+            warped = None
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+            if warped is None or warped.size == 0:
+                warped = img.copy()
+            warped = cv2.resize(warped, (200, 300))
+            _, bottom_roi, _ = extract_bottom_roi_from_full_card(warped)
         except Exception:
             continue
 
