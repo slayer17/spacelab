@@ -2125,6 +2125,17 @@ def compute_signature(img):
     bottom_sig = compute_patch_signature(bottom_zone, size=(16, 16))
     bottom_layout = analyze_bottom(bottom_zone, DIGITS_DIR)
 
+    detected_color_name = _safe_upper((color_sig or {}).get("detected"))
+    detected_symbol_name = _safe_upper((symbol_sig or {}).get("name") or (symbol_sig or {}).get("raw_name"))
+    bottom_layout = _apply_bottom_reference_match(
+        _build_observed_bottom_from_result(bottom_layout),
+        bottom_zone,
+        {
+            "color": detected_color_name,
+            "symbol": detected_symbol_name,
+        }
+    )
+
     panel_box = bottom_layout.get("panel_box")
     if panel_box is not None:
         x, y, bw2, bh2 = panel_box
@@ -2583,6 +2594,7 @@ def resolve_final_card(scan_sig, cards=None):
     observed_bottom = _build_observed_bottom_profile(scan_sig)
     bottom_layout_name = observed_bottom.get("layout")
     points_value = observed_bottom.get("points")
+    ref_card_id = _safe_upper((scan_sig.get("bottom_layout") or {}).get("ref_card_id"))
     bottom_patch = (scan_sig.get("bottom") or {}).get("vector") or []
     global_patch = (scan_sig.get("global") or {}).get("vector") or []
 
@@ -2622,6 +2634,10 @@ def resolve_final_card(scan_sig, cards=None):
         if symbol_name and _safe_upper(card.get("symbol")) == symbol_name:
             total_score += 7.0 if symbol_source == "accepted" else 5.0
             details.append(f"symbol_{symbol_source}")
+
+        if ref_card_id and _safe_upper(card.get("id")) == ref_card_id:
+            total_score += 25.0
+            details.append("bottom_ref_exact")
 
         total_score += semantic_score
         details.extend(semantic_details)
