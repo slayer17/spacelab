@@ -2239,7 +2239,12 @@ def compute_signature(img):
         "has_slash": bool(bottom_layout.get("has_slash", False)),
         "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
         "has_bottom_line": bool(bottom_layout.get("has_bottom_line", False)),
-        "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False))
+        "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False)),
+        "target": bottom_layout.get("target") or "",
+        "range": bottom_layout.get("range") or "",
+        "ref_card_id": bottom_layout.get("ref_card_id") or "",
+        "ref_score": float(bottom_layout.get("ref_score", 0.0)),
+        "ref_gap": float(bottom_layout.get("ref_gap", 0.0)),
     }
 
     # -------------------------------------------------
@@ -2459,6 +2464,9 @@ def _build_observed_bottom_profile(scan_sig):
         "has_slash": bool(bottom_layout.get("has_slash", False)),
         "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
         "has_bottom_line": bool(bottom_layout.get("has_bottom_line", False)),
+        "target": _safe_upper(bottom_layout.get("target")),
+        "range": _safe_upper(bottom_layout.get("range")),
+        "ref_card_id": _safe_upper(bottom_layout.get("ref_card_id")),
     }
 
 
@@ -2536,6 +2544,31 @@ def _score_bottom_profile(expected, observed):
             score -= 5.0
             details.append("points_mismatch")
 
+    exp_target = _safe_upper(expected.get("target"))
+    obs_target = _safe_upper(observed.get("target"))
+    exp_range = _safe_upper(expected.get("range"))
+    obs_range = _safe_upper(observed.get("range"))
+
+    if exp_target:
+        if obs_target == exp_target:
+            score += 4.0
+            details.append("target_exact")
+        elif obs_target:
+            score -= 2.0
+            details.append("target_mismatch")
+        else:
+            details.append("target_unknown")
+
+    if exp_range:
+        if obs_range == exp_range:
+            score += 3.0
+            details.append("range_exact")
+        elif obs_range:
+            score -= 1.5
+            details.append("range_mismatch")
+        else:
+            details.append("range_unknown")
+
     for field, weight in [
         ("has_special_white_panel", 2.5),
         ("has_slash", 1.5),
@@ -2594,7 +2627,7 @@ def resolve_final_card(scan_sig, cards=None):
     observed_bottom = _build_observed_bottom_profile(scan_sig)
     bottom_layout_name = observed_bottom.get("layout")
     points_value = observed_bottom.get("points")
-    ref_card_id = _safe_upper((scan_sig.get("bottom_layout") or {}).get("ref_card_id"))
+    ref_card_id = _safe_upper(observed_bottom.get("ref_card_id") or (scan_sig.get("bottom_layout") or {}).get("ref_card_id"))
     bottom_patch = (scan_sig.get("bottom") or {}).get("vector") or []
     global_patch = (scan_sig.get("global") or {}).get("vector") or []
 
