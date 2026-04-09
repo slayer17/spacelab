@@ -2908,6 +2908,109 @@ def _rect_iou(a, b):
     return float(inter / union)
 
 
+def _board_candidate_metrics(warp):
+    if warp is None or warp.size == 0:
+        return None
+
+    try:
+        view = cv2.resize(warp, (200, 300), interpolation=cv2.INTER_AREA)
+    except Exception:
+        return None
+
+    hsv = cv2.cvtColor(view, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(view, cv2.COLOR_BGR2GRAY)
+
+    sat_ratio = float(np.mean((hsv[:, :, 1] > 30) & (hsv[:, :, 2] > 35)))
+    dark_ratio = float(np.mean(gray < 150))
+
+    center = view[60:250, 45:155]
+    center_hsv = cv2.cvtColor(center, cv2.COLOR_BGR2HSV)
+    center_gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
+
+    center_dark_ratio = float(np.mean(center_gray < 125))
+    center_bright_low_sat_ratio = float(np.mean((center_gray > 190) & (center_hsv[:, :, 1] < 35)))
+
+    border_mask = np.zeros((300, 200), dtype=np.uint8)
+    border_mask[:22, :] = 1
+    border_mask[-22:, :] = 1
+    border_mask[:, :16] = 1
+    border_mask[:, -16:] = 1
+    border_sat_ratio = float(np.mean((hsv[:, :, 1] > 30) & (hsv[:, :, 2] > 35) & (border_mask > 0)))
+
+    return {
+        "sat_ratio": sat_ratio,
+        "dark_ratio": dark_ratio,
+        "center_dark_ratio": center_dark_ratio,
+        "center_bright_low_sat_ratio": center_bright_low_sat_ratio,
+        "border_sat_ratio": border_sat_ratio,
+    }
+
+
+def _board_try_register_candidate(candidates, work, quad, source, image_area):
+    warp = warp_quad(work, quad)
+    if warp is None or warp.size == 0:
+        return
+
+    wh, ww = warp.shape[:2]
+    if ww <= 0 or wh <= 0:
+        return
+
+    ratio = wh / float(ww)
+    if ratio < 1.12 or ratio > 1.90:
+        return
+
+    quad_ord = order_points(quad)
+    x, y, bw, bh = cv2.boundingRect(quad_ord.astype(np.int32))
+    rect_area_ratio = float((bw * bh) / float(max(image_area, 1.0)))
+
+    if rect_area_ratio < 0.005:
+        return
+    if rect_area_ratio > 0.040:
+        return
+
+    metrics = _board_candidate_metrics(warp)
+    if not metrics:
+        return
+
+    sat_ratio = float(metrics.get("sat_ratio", 0.0))
+    dark_ratio = float(metrics.get("dark_ratio", 0.0))
+    center_dark_ratio = float(metrics.get("center_dark_ratio", 0.0))
+    center_bright_ratio = float(metrics.get("center_bright_low_sat_ratio", 0.0))
+    border_sat_ratio = float(metrics.get("border_sat_ratio", 0.0))
+
+    # Filtrage "anti-station / anti-gros faux rectangle".
+    if sat_ratio < 0.13:
+        return
+    if center_dark_ratio < 0.22:
+        return
+    if center_bright_ratio > 0.18 and sat_ratio < 0.28:
+        return
+
+    score = 0.0
+    score += sat_ratio * 3.5
+    score += center_dark_ratio * 3.0
+    score += border_sat_ratio * 1.5
+    score += dark_ratio * 0.8
+
+    score += max(0.0, 0.35 - abs(ratio - 1.50))
+    score += max(0.0, 0.03 - abs(rect_area_ratio - 0.022)) * 8.0
+
+    if source == "sat":
+        score += 0.15
+
+    rect_dict = {
+        "x": int(x),
+        "y": int(y),
+        "w": int(bw),
+        "h": int(bh),
+        "quad": quad_ord.astype(int).tolist(),
+        "_score": float(score),
+        "_source": source,
+        "_metrics": metrics,
+    }
+    candidates.append(rect_dict)
+
+
 def detect_cards_on_board(img, max_cards=24):
     if img is None or img.size == 0:
         return []
@@ -2923,72 +3026,95 @@ def detect_cards_on_board(img, max_cards=24):
 
     h, w = work.shape[:2]
     image_area = float(max(h * w, 1))
+    candidates = []
 
+    # -------------------------
+    # PASS 1 : contours / edges
+    # -------------------------
     gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 45, 140)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    edges = cv2.dilate(edges, kernel, iterations=1)
-    edges = cv2.erode(edges, kernel, iterations=1)
+    for th1, th2 in [(35, 120), (45, 140)]:
+        edges = cv2.Canny(blur, th1, th2)
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        edges = cv2.erode(edges, kernel, iterations=1)
 
-    candidates = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < image_area * 0.012:
-            continue
-        if area > image_area * 0.75:
-            continue
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < image_area * 0.004:
+                continue
+            if area > image_area * 0.10:
+                continue
 
-        if len(approx) == 4:
-            quad = approx.reshape(4, 2).astype("float32")
-        else:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+            if len(approx) == 4:
+                quad = approx.reshape(4, 2).astype("float32")
+            else:
+                rect = cv2.minAreaRect(c)
+                quad = cv2.boxPoints(rect).astype("float32")
+
+            _board_try_register_candidate(candidates, work, quad, "edge", image_area)
+
+    # ----------------------------------------
+    # PASS 2 : zones saturées / bords colorés
+    # ----------------------------------------
+    hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
+
+    for sat_threshold in [18, 28]:
+        mask = np.where(
+            (hsv[:, :, 1] > sat_threshold) & (hsv[:, :, 2] > 35),
+            255,
+            0
+        ).astype(np.uint8)
+
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < image_area * 0.0015:
+                continue
+            if area > image_area * 0.06:
+                continue
+
             rect = cv2.minAreaRect(c)
             quad = cv2.boxPoints(rect).astype("float32")
+            _board_try_register_candidate(candidates, work, quad, "sat", image_area)
 
-        warp = warp_quad(work, quad)
-        if warp is None or warp.size == 0:
-            continue
-
-        wh, ww = warp.shape[:2]
-        if ww <= 0 or wh <= 0:
-            continue
-
-        ratio = wh / float(ww)
-        if ratio < 1.18 or ratio > 1.85:
-            continue
-
-        quad_ord = order_points(quad)
-        x, y, bw, bh = cv2.boundingRect(quad_ord.astype(np.int32))
-        rect_dict = {
-            "x": int(round(x / scale)),
-            "y": int(round(y / scale)),
-            "w": int(round(bw / scale)),
-            "h": int(round(bh / scale)),
-            "quad": np.round(quad_ord / scale).astype(int).tolist(),
-        }
-
-        score = float(area / image_area)
-        score += max(0.0, 0.35 - abs(ratio - 1.5))
-        candidates.append((score, rect_dict))
-
-    candidates.sort(key=lambda t: t[0], reverse=True)
+    # ----------------------------------------
+    # NMS / dédoublonnage + remise à l'échelle
+    # ----------------------------------------
+    candidates.sort(key=lambda r: float(r.get("_score", 0.0)), reverse=True)
 
     kept = []
-    for score, rect in candidates:
-        if any(_rect_iou(rect, existing) > 0.35 for existing in kept):
+    for rect in candidates:
+        if any(_rect_iou(rect, existing) > 0.32 for existing in kept):
             continue
         kept.append(rect)
         if len(kept) >= max_cards:
             break
 
-    kept.sort(key=lambda r: (r.get("y", 0), r.get("x", 0)))
-    return kept
+    final_rects = []
+    for rect in kept:
+        rect_out = {
+            "x": int(round(rect["x"] / scale)),
+            "y": int(round(rect["y"] / scale)),
+            "w": int(round(rect["w"] / scale)),
+            "h": int(round(rect["h"] / scale)),
+            "quad": np.round(np.array(rect["quad"], dtype=np.float32) / scale).astype(int).tolist(),
+        }
+        final_rects.append(rect_out)
+
+    final_rects.sort(key=lambda r: (r.get("y", 0), r.get("x", 0)))
+    return final_rects
 
 
 def _process_single_card_from_rect(img, rect):
