@@ -98,40 +98,6 @@ fileInput.onchange = e => {
 
 
 // =========================
-// COLOR
-// =========================
-
-// function detectColorFromBGR(b, g, r) {
-    // const max = Math.max(r, g, b);
-    // const min = Math.min(r, g, b);
-    // const delta = max - min;
-
-    // if (delta < 15) {
-        // return "ROUGE";
-    // }
-
-    // let hue = 0;
-
-    // if (max === r) {
-        // hue = 60 * (((g - b) / delta) % 6);
-    // } else if (max === g) {
-        // hue = 60 * (((b - r) / delta) + 2);
-    // } else {
-        // hue = 60 * (((r - g) / delta) + 4);
-    // }
-
-    // if (hue < 0) hue += 360;
-
-    // if (hue >= 340 || hue <= 20) return "ROUGE";
-    // if (hue >= 25 && hue <= 75) return "JAUNE";
-    // if (hue >= 80 && hue <= 170) return "VERT";
-    // if (hue >= 190 && hue <= 260) return "BLEU";
-
-    // return "ROUGE";
-// }
-
-
-// =========================
 // SEND TO PYTHON
 // =========================
 
@@ -142,7 +108,7 @@ function sendToPython() {
         form.append("image", blob, "capture.jpg");
         form.append("mode", mode);
 
-        resultEl.textContent = "Envoi…";
+        resultEl.textContent = "Analyse en cours par le serveur...";
 
         try {
             const res = await fetch("/upload", {
@@ -151,83 +117,91 @@ function sendToPython() {
             });
 
             const json = await res.json();
-
             console.log("UPLOAD JSON =", json);
-            console.log("SERVER SIG =", json.signature);
-            console.log("CARD MATCH =", json.card_match);
-            console.log("FINAL CARD =", json.final_card_id, json.final_status);
 
+            if (json.error) {
+                resultEl.textContent = "Erreur : " + json.error;
+                return;
+            }
+
+            // Dessin des rectangles de détection
             drawRects(json.rects || []);
 
-            if (json.rois && json.rects && json.rects.length > 0) {
+            // Dessin des zones d'intérêt (ROI) si une carte unique est détectée
+            if (mode !== "BOARD" && json.rois && json.rects && json.rects.length > 0) {
                 const r = json.rects[0];
                 drawRois(json.rois, r);
             }
 
+            // --- CAS 1 : MODE BOARD ---
+            if (mode === "BOARD") {
+                const matches = Array.isArray(json.board_matches) ? json.board_matches : [];
+
+                if (!matches.length) {
+                    resultEl.textContent = "Aucune carte détectée sur le plateau";
+                    return;
+                }
+
+                const accepted = matches.filter(m => m.final_card_id && m.final_status === "accepted");
+                const proposed = matches.filter(m => m.final_card_id && m.final_status && m.final_status !== "accepted");
+                const failed = matches.filter(m => !m.final_card_id);
+
+                const lines = [];
+                lines.push("=== MODE : BOARD ===");
+                lines.push(`Total : ${matches.length} | OK : ${accepted.length} | ?? : ${proposed.length}`);
+                lines.push("");
+
+                matches.forEach((m, idx) => {
+                    const num = idx + 1;
+                    if (m.final_card_id) {
+                        const statusIcon = m.final_status === "accepted" ? "✅" : "⚠️";
+                        lines.push(`${num}. ${statusIcon} ${m.final_card_id} (${m.final_status})`);
+                        lines.push(`   - ${m.color_name || "?"} | ${m.symbol_name || "?"} | pts:${m.points ?? "?"}`);
+                    } else {
+                        lines.push(`${num}. ❌ Non reconnue`);
+                    }
+                });
+
+                resultEl.textContent = lines.join("\n");
+                return;
+            }
+
+            // --- CAS 2 : MODE CARDS_ONLY ---
             if (json.signature) {
-                const finalCardId = json.final_card_id || null;
-                const finalStatus = json.final_status || null;
+                const finalCardId = json.final_card_id || "Inconnue";
+                const finalStatus = json.final_status || "rejected";
                 const finalScore = Number(json.final_score ?? 0);
                 const finalGap = Number(json.final_gap ?? 0);
 
-                const detectedColor =
-                    json.color_name ||
-                    json.signature?.color?.detected ||
-                    "??";
+                const color = json.color_name || json.signature?.color?.detected || "??";
+                const symbol = json.symbol_name || json.signature?.symbol?.name || "??";
+                const points = json.points ?? json.signature?.points?.digit ?? "??";
+                const layout = json.bottom_layout || json.signature?.bottom_layout?.layout || "??";
 
-                const detectedSymbol =
-                    json.symbol_name ||
-                    json.signature?.symbol?.name ||
-                    json.signature?.symbol?.raw_name ||
-                    "??";
-
-                const detectedPoints =
-                    json.points ??
-                    json.signature?.points?.digit ??
-                    json.signature?.points?.raw_digit ??
-                    "??";
-
-                const detectedBottom =
-                    json.bottom_layout ||
-                    json.signature?.bottom_layout?.layout ||
-                    "??";
-
-                if (finalCardId && finalStatus === "accepted") {
-                    resultEl.textContent =
-                        "Carte : " + finalCardId + "\n" +
-                        "Statut : " + finalStatus + "\n" +
-                        "Couleur : " + detectedColor + "\n" +
-                        "Symbole : " + detectedSymbol + "\n" +
-                        "Points : " + detectedPoints + "\n" +
-                        "Bottom : " + detectedBottom + "\n" +
-                        "Score final : " + finalScore.toFixed(3) + "\n" +
-                        "Gap final : " + finalGap.toFixed(3);
-                } else if (finalCardId) {
-                    resultEl.textContent =
-                        "Carte proposée : " + finalCardId + "\n" +
-                        "Statut : " + finalStatus + "\n" +
-                        "Couleur : " + detectedColor + "\n" +
-                        "Symbole : " + detectedSymbol + "\n" +
-                        "Points : " + detectedPoints + "\n" +
-                        "Bottom : " + detectedBottom + "\n" +
-                        "Score final : " + finalScore.toFixed(3) + "\n" +
-                        "Gap final : " + finalGap.toFixed(3);
+                let message = "";
+                if (finalStatus === "accepted") {
+                    message += `✅ CARTE CONFIRMÉE : ${finalCardId}\n`;
                 } else {
-                    resultEl.textContent =
-                        "Pas de carte finale fiable\n" +
-                        "Statut : " + (finalStatus || "none") + "\n" +
-                        "Couleur : " + detectedColor + "\n" +
-                        "Symbole : " + detectedSymbol + "\n" +
-                        "Points : " + detectedPoints + "\n" +
-                        "Bottom : " + detectedBottom;
+                    message += `⚠️ CARTE PROPOSÉE : ${finalCardId}\n`;
                 }
+
+                message += `Statut : ${finalStatus}\n`;
+                message += `---------------------------\n`;
+                message += `Couleur  : ${color}\n`;
+                message += `Symbole  : ${symbol}\n`;
+                message += `Points   : ${points}\n`;
+                message += `Layout   : ${layout}\n`;
+                message += `Score    : ${finalScore.toFixed(3)}\n`;
+                message += `Gap      : ${finalGap.toFixed(3)}`;
+
+                resultEl.textContent = message;
             } else {
-                resultEl.textContent = "Pas de signature";
+                resultEl.textContent = "Pas de signature détectée par le serveur.";
             }
 
         } catch (err) {
             console.error(err);
-            resultEl.textContent = "Erreur serveur";
+            resultEl.textContent = "Erreur lors de la communication avec le serveur.";
         }
     }, "image/jpeg");
 }
@@ -241,25 +215,15 @@ function drawRects(rects) {
     ctx.lineWidth = 3;
     ctx.font = "20px Arial";
 
-    let text = "";
-
     rects.forEach(r => {
-        if (r.type === "STATION") {
-            ctx.strokeStyle = "red";
-        } else {
-            ctx.strokeStyle = "yellow";
-        }
-
+        ctx.strokeStyle = (r.type === "STATION") ? "red" : "yellow";
         ctx.strokeRect(r.x, r.y, r.w, r.h);
 
         if (r.name) {
             ctx.fillStyle = "lime";
             ctx.fillText(r.name, r.x, r.y - 5);
-            text += r.name + "\n";
         }
     });
-
-    if (text) resultEl.textContent = text;
 }
 
 
@@ -273,19 +237,16 @@ function drawRois(rois, rect) {
 
     rois.forEach(r => {
         if (r.type === "GLOBAL") return;
-if (r.type === "COLOR")
-    ctx.strokeStyle = "red";
-else if (r.type === "SYMBOL")
-    ctx.strokeStyle = "blue";
-else if (r.type === "BOTTOM")
-    ctx.strokeStyle = "violet";
-else if (r.type === "POINTS_BADGE")
-    ctx.strokeStyle = "white";
-else
-    ctx.strokeStyle = "white";
+
+        switch(r.type) {
+            case "COLOR": ctx.strokeStyle = "red"; break;
+            case "SYMBOL": ctx.strokeStyle = "blue"; break;
+            case "BOTTOM": ctx.strokeStyle = "violet"; break;
+            case "POINTS_BADGE": ctx.strokeStyle = "white"; break;
+            default: ctx.strokeStyle = "cyan";
+        }
 
         ctx.lineWidth = 2;
-
         ctx.strokeRect(
             rect.x + r.x * scaleX,
             rect.y + r.y * scaleY,
