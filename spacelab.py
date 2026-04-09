@@ -2902,7 +2902,16 @@ def index():
 def upload():
     try:
         if "image" not in request.files:
-            return jsonify({"rects": [], "signature": None, "rois": []})
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+            })
 
         file = request.files["image"]
 
@@ -2910,7 +2919,16 @@ def upload():
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
         if img is None:
-            return jsonify({"rects": [], "signature": None, "rois": []})
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+            })
 
         rect = detect_main_card(img)
 
@@ -2934,6 +2952,7 @@ def upload():
 
         sig = None
         rois = []
+        card_match = None
 
         if warped is None or warped.size == 0:
             warped = img.copy()
@@ -2944,14 +2963,24 @@ def upload():
 
         if sig is not None:
             try:
-                sig["card_match"] = resolve_final_card(sig)
+                card_match = resolve_final_card(sig)
+                sig["card_match"] = card_match
             except Exception:
-                pass
+                card_match = None
 
         return jsonify({
             "rects": [rect],
             "signature": sig,
-            "rois": rois
+            "rois": rois,
+            "card_match": card_match,
+            "final_card_id": (card_match or {}).get("final_card_id"),
+            "final_status": (card_match or {}).get("final_status"),
+            "final_score": float((card_match or {}).get("final_score", 0.0)),
+            "final_gap": float((card_match or {}).get("final_gap", 0.0)),
+            "color_name": (card_match or {}).get("color_name"),
+            "symbol_name": (card_match or {}).get("symbol_name"),
+            "bottom_layout": (card_match or {}).get("bottom_layout"),
+            "points": (card_match or {}).get("points"),
         })
 
     except Exception as e:
@@ -2959,7 +2988,12 @@ def upload():
         return jsonify({
             "rects": [],
             "signature": None,
-            "rois": []
+            "rois": [],
+            "card_match": None,
+            "final_card_id": None,
+            "final_status": None,
+            "final_score": 0.0,
+            "final_gap": 0.0,
         })
 
 
