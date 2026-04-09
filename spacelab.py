@@ -2878,6 +2878,140 @@ def detect_main_card(img):
     }
 
 
+def _rect_iou(a, b):
+    if not a or not b:
+        return 0.0
+
+    ax1, ay1 = float(a.get("x", 0)), float(a.get("y", 0))
+    ax2 = ax1 + float(a.get("w", 0))
+    ay2 = ay1 + float(a.get("h", 0))
+
+    bx1, by1 = float(b.get("x", 0)), float(b.get("y", 0))
+    bx2 = bx1 + float(b.get("w", 0))
+    by2 = by1 + float(b.get("h", 0))
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter = inter_w * inter_h
+
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+
+    if union <= 0:
+        return 0.0
+    return float(inter / union)
+
+
+def detect_cards_on_board(img, max_cards=24):
+    if img is None or img.size == 0:
+        return []
+
+    orig_h, orig_w = img.shape[:2]
+    max_dim = 1600
+    scale = 1.0
+    work = img
+
+    if max(orig_h, orig_w) > max_dim:
+        scale = max_dim / float(max(orig_h, orig_w))
+        work = cv2.resize(img, (int(orig_w * scale), int(orig_h * scale)))
+
+    h, w = work.shape[:2]
+    image_area = float(max(h * w, 1))
+
+    gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 45, 140)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    edges = cv2.erode(edges, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidates = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < image_area * 0.012:
+            continue
+        if area > image_area * 0.75:
+            continue
+
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+
+        if len(approx) == 4:
+            quad = approx.reshape(4, 2).astype("float32")
+        else:
+            rect = cv2.minAreaRect(c)
+            quad = cv2.boxPoints(rect).astype("float32")
+
+        warp = warp_quad(work, quad)
+        if warp is None or warp.size == 0:
+            continue
+
+        wh, ww = warp.shape[:2]
+        if ww <= 0 or wh <= 0:
+            continue
+
+        ratio = wh / float(ww)
+        if ratio < 1.18 or ratio > 1.85:
+            continue
+
+        quad_ord = order_points(quad)
+        x, y, bw, bh = cv2.boundingRect(quad_ord.astype(np.int32))
+        rect_dict = {
+            "x": int(round(x / scale)),
+            "y": int(round(y / scale)),
+            "w": int(round(bw / scale)),
+            "h": int(round(bh / scale)),
+            "quad": np.round(quad_ord / scale).astype(int).tolist(),
+        }
+
+        score = float(area / image_area)
+        score += max(0.0, 0.35 - abs(ratio - 1.5))
+        candidates.append((score, rect_dict))
+
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    kept = []
+    for score, rect in candidates:
+        if any(_rect_iou(rect, existing) > 0.35 for existing in kept):
+            continue
+        kept.append(rect)
+        if len(kept) >= max_cards:
+            break
+
+    kept.sort(key=lambda r: (r.get("y", 0), r.get("x", 0)))
+    return kept
+
+
+def _process_single_card_from_rect(img, rect):
+    quad = np.array(rect["quad"], dtype="float32")
+    warped = warp_quad(img, quad)
+    if warped is None or warped.size == 0:
+        warped = img.copy()
+
+    if warped is None or warped.size == 0:
+        return None
+
+    warped = cv2.resize(warped, (200, 300))
+    sig, rois = compute_signature(warped)
+    card_match = resolve_final_card(sig) if sig is not None else None
+
+    return {
+        "warped": warped,
+        "signature": sig,
+        "rois": rois,
+        "card_match": card_match,
+    }
+
+
 # =====================================================
 # ROUTES
 # =====================================================
@@ -2903,9 +3037,11 @@ def upload():
     try:
         if "image" not in request.files:
             return jsonify({
+                "mode": request.form.get("mode", "CARDS_ONLY"),
                 "rects": [],
                 "signature": None,
                 "rois": [],
+                "board_matches": [],
                 "card_match": None,
                 "final_card_id": None,
                 "final_status": None,
@@ -2914,15 +3050,78 @@ def upload():
             })
 
         file = request.files["image"]
+        mode = str(request.form.get("mode") or "CARDS_ONLY").strip().upper()
 
         data = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
         if img is None:
             return jsonify({
+                "mode": mode,
                 "rects": [],
                 "signature": None,
                 "rois": [],
+                "board_matches": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+            })
+
+        if mode == "BOARD":
+            rects = detect_cards_on_board(img)
+            board_matches = []
+            named_rects = []
+
+            for idx, rect in enumerate(rects):
+                try:
+                    processed = _process_single_card_from_rect(img, rect)
+                    if not processed:
+                        continue
+
+                    card_match = processed.get("card_match") or {}
+                    final_card_id = card_match.get("final_card_id")
+                    final_status = card_match.get("final_status")
+                    display_name = final_card_id or f"CARD_{idx + 1}"
+                    if final_status and final_status != "accepted":
+                        display_name = f"{display_name} ({final_status})"
+
+                    named_rect = dict(rect)
+                    named_rect["name"] = display_name
+                    named_rect["type"] = "CARD"
+                    named_rects.append(named_rect)
+
+                    board_matches.append({
+                        "index": idx,
+                        "rect": rect,
+                        "card_match": card_match,
+                        "final_card_id": final_card_id,
+                        "final_status": final_status,
+                        "final_score": float(card_match.get("final_score", 0.0) or 0.0),
+                        "final_gap": float(card_match.get("final_gap", 0.0) or 0.0),
+                        "color_name": card_match.get("color_name"),
+                        "symbol_name": card_match.get("symbol_name"),
+                        "bottom_layout": card_match.get("bottom_layout"),
+                        "points": card_match.get("points"),
+                    })
+                except Exception as e:
+                    failed_rect = dict(rect)
+                    failed_rect["name"] = f"ERR_{idx + 1}"
+                    failed_rect["type"] = "CARD"
+                    named_rects.append(failed_rect)
+                    board_matches.append({
+                        "index": idx,
+                        "rect": rect,
+                        "error": str(e),
+                    })
+
+            return jsonify({
+                "mode": mode,
+                "rects": named_rects,
+                "signature": None,
+                "rois": [],
+                "board_matches": board_matches,
                 "card_match": None,
                 "final_card_id": None,
                 "final_status": None,
@@ -2947,31 +3146,27 @@ def upload():
                 ]
             }
 
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
+        processed = _process_single_card_from_rect(img, rect)
         sig = None
         rois = []
         card_match = None
 
-        if warped is None or warped.size == 0:
-            warped = img.copy()
-
-        if warped is not None and warped.size != 0:
-            cv2.imwrite(WARP_PATH, warped)
-            sig, rois = compute_signature(warped)
-
-        if sig is not None:
-            try:
-                card_match = resolve_final_card(sig)
+        if processed:
+            warped = processed.get("warped")
+            sig = processed.get("signature")
+            rois = processed.get("rois") or []
+            card_match = processed.get("card_match")
+            if warped is not None and getattr(warped, "size", 0) != 0:
+                cv2.imwrite(WARP_PATH, warped)
+            if sig is not None and card_match is not None:
                 sig["card_match"] = card_match
-            except Exception:
-                card_match = None
 
         return jsonify({
+            "mode": mode,
             "rects": [rect],
             "signature": sig,
             "rois": rois,
+            "board_matches": [],
             "card_match": card_match,
             "final_card_id": (card_match or {}).get("final_card_id"),
             "final_status": (card_match or {}).get("final_status"),
@@ -2986,9 +3181,11 @@ def upload():
     except Exception as e:
         print("UPLOAD ERROR:", e)
         return jsonify({
+            "mode": str(request.form.get("mode") or "CARDS_ONLY").strip().upper(),
             "rects": [],
             "signature": None,
             "rois": [],
+            "board_matches": [],
             "card_match": None,
             "final_card_id": None,
             "final_status": None,
