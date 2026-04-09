@@ -152,11 +152,11 @@ function sendToPython() {
 
             const json = await res.json();
 
-            console.log("SERVER SIG", json.signature);
-console.log("BOTTOM =", json.signature?.bottom);
-console.log("BOTTOM_LAYOUT =", json.signature?.bottom_layout);
-console.log("POINTS =", json.signature?.points);
-console.log("SYMBOL =", json.signature?.symbol);
+            console.log("UPLOAD JSON =", json);
+            console.log("SERVER SIG =", json.signature);
+            console.log("CARD MATCH =", json.card_match);
+            console.log("FINAL CARD =", json.final_card_id, json.final_status);
+
             drawRects(json.rects || []);
 
             if (json.rois && json.rects && json.rects.length > 0) {
@@ -164,75 +164,63 @@ console.log("SYMBOL =", json.signature?.symbol);
                 drawRois(json.rois, r);
             }
 
-                  // =========================
-            // MATCH
-            // =========================
-
             if (json.signature) {
-                let detectedColor = null;
+                const finalCardId = json.final_card_id || null;
+                const finalStatus = json.final_status || null;
+                const finalScore = Number(json.final_score ?? 0);
+                const finalGap = Number(json.final_gap ?? 0);
 
-                if (json.signature?.color?.detected) {
-                    detectedColor = json.signature.color.detected;
+                const detectedColor =
+                    json.color_name ||
+                    json.signature?.color?.detected ||
+                    "??";
 
-                    console.log(
-                        "COLOR PY =",
-                        detectedColor,
-                        json.signature.color.debug,
-                        json.signature.color.color
-                    );
+                const detectedSymbol =
+                    json.symbol_name ||
+                    json.signature?.symbol?.name ||
+                    json.signature?.symbol?.raw_name ||
+                    "??";
+
+                const detectedPoints =
+                    json.points ??
+                    json.signature?.points?.digit ??
+                    json.signature?.points?.raw_digit ??
+                    "??";
+
+                const detectedBottom =
+                    json.bottom_layout ||
+                    json.signature?.bottom_layout?.layout ||
+                    "??";
+
+                if (finalCardId && finalStatus === "accepted") {
+                    resultEl.textContent =
+                        "Carte : " + finalCardId + "\n" +
+                        "Statut : " + finalStatus + "\n" +
+                        "Couleur : " + detectedColor + "\n" +
+                        "Symbole : " + detectedSymbol + "\n" +
+                        "Points : " + detectedPoints + "\n" +
+                        "Bottom : " + detectedBottom + "\n" +
+                        "Score final : " + finalScore.toFixed(3) + "\n" +
+                        "Gap final : " + finalGap.toFixed(3);
+                } else if (finalCardId) {
+                    resultEl.textContent =
+                        "Carte proposée : " + finalCardId + "\n" +
+                        "Statut : " + finalStatus + "\n" +
+                        "Couleur : " + detectedColor + "\n" +
+                        "Symbole : " + detectedSymbol + "\n" +
+                        "Points : " + detectedPoints + "\n" +
+                        "Bottom : " + detectedBottom + "\n" +
+                        "Score final : " + finalScore.toFixed(3) + "\n" +
+                        "Gap final : " + finalGap.toFixed(3);
+                } else {
+                    resultEl.textContent =
+                        "Pas de carte finale fiable\n" +
+                        "Statut : " + (finalStatus || "none") + "\n" +
+                        "Couleur : " + detectedColor + "\n" +
+                        "Symbole : " + detectedSymbol + "\n" +
+                        "Points : " + detectedPoints + "\n" +
+                        "Bottom : " + detectedBottom;
                 }
-
-                let cardsFiltered = CARDS;
-
-                if (detectedColor) {
-                    cardsFiltered = CARDS.filter(
-                        c => c.couleur === detectedColor
-                    );
-                }
-
-                const resultMatch = matchSignature(
-                    json.signature,
-                    cardsFiltered
-                );
-
-                console.log("MATCH =", resultMatch);
-
-        if (resultMatch && resultMatch.card) {
-
-    const detectedSymbol =
-        json.signature?.symbol?.name || "??";
-
-    const rawDetectedSymbol =
-        json.signature?.symbol?.raw_name || "??";
-
-    const detectedSymbolScore =
-        json.signature?.symbol?.score ?? 0;
-
-const detectedPoints =
-    json.signature?.points?.digit ?? "??";
-
-const rawDetectedPoints =
-    json.signature?.points?.raw_digit ?? "??";
-
-const detectedPointsScore =
-    json.signature?.points?.score ?? 0;
-
-    resultEl.textContent =
-        "Carte : " + resultMatch.card.id + "\n" +
-        "Couleur : " + resultMatch.card.couleur + "\n" +
-        "Symbole carte : " + resultMatch.card.symbol + "\n" +
-        "Symbole détecté : " + detectedSymbol + "\n" +
-        "Symbole brut : " + rawDetectedSymbol + "\n" +
-        "Score symbole : " + Number(detectedSymbolScore).toFixed(3) + "\n" +
-        "Points carte : " + resultMatch.card.points + "\n" +
-        "Points détectés : " + detectedPoints + "\n" +
-        "Points bruts : " + rawDetectedPoints + "\n" +
-        "Score points : " + Number(detectedPointsScore).toFixed(3) + "\n" +
-        "Score : " + resultMatch.score.toFixed(3);
-} else {
-                    resultEl.textContent = "Pas trouvé";
-                }
-
             } else {
                 resultEl.textContent = "Pas de signature";
             }
@@ -243,7 +231,6 @@ const detectedPointsScore =
         }
     }, "image/jpeg");
 }
-
 
 
 // =========================
