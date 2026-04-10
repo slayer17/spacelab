@@ -2878,266 +2878,6 @@ def detect_main_card(img):
     }
 
 
-def _rect_iou(a, b):
-    if not a or not b:
-        return 0.0
-
-    ax1, ay1 = float(a.get("x", 0)), float(a.get("y", 0))
-    ax2 = ax1 + float(a.get("w", 0))
-    ay2 = ay1 + float(a.get("h", 0))
-
-    bx1, by1 = float(b.get("x", 0)), float(b.get("y", 0))
-    bx2 = bx1 + float(b.get("w", 0))
-    by2 = by1 + float(b.get("h", 0))
-
-    inter_x1 = max(ax1, bx1)
-    inter_y1 = max(ay1, by1)
-    inter_x2 = min(ax2, bx2)
-    inter_y2 = min(ay2, by2)
-
-    inter_w = max(0.0, inter_x2 - inter_x1)
-    inter_h = max(0.0, inter_y2 - inter_y1)
-    inter = inter_w * inter_h
-
-    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    union = area_a + area_b - inter
-
-    if union <= 0:
-        return 0.0
-    return float(inter / union)
-
-
-def _board_candidate_metrics(warp):
-    if warp is None or warp.size == 0:
-        return None
-
-    try:
-        view = cv2.resize(warp, (200, 300), interpolation=cv2.INTER_AREA)
-    except Exception:
-        return None
-
-    hsv = cv2.cvtColor(view, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(view, cv2.COLOR_BGR2GRAY)
-
-    sat_ratio = float(np.mean((hsv[:, :, 1] > 30) & (hsv[:, :, 2] > 35)))
-    dark_ratio = float(np.mean(gray < 150))
-
-    center = view[60:250, 45:155]
-    center_hsv = cv2.cvtColor(center, cv2.COLOR_BGR2HSV)
-    center_gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
-
-    center_dark_ratio = float(np.mean(center_gray < 125))
-    center_bright_low_sat_ratio = float(np.mean((center_gray > 190) & (center_hsv[:, :, 1] < 35)))
-
-    border_mask = np.zeros((300, 200), dtype=np.uint8)
-    border_mask[:22, :] = 1
-    border_mask[-22:, :] = 1
-    border_mask[:, :16] = 1
-    border_mask[:, -16:] = 1
-    border_sat_ratio = float(np.mean((hsv[:, :, 1] > 30) & (hsv[:, :, 2] > 35) & (border_mask > 0)))
-
-    return {
-        "sat_ratio": sat_ratio,
-        "dark_ratio": dark_ratio,
-        "center_dark_ratio": center_dark_ratio,
-        "center_bright_low_sat_ratio": center_bright_low_sat_ratio,
-        "border_sat_ratio": border_sat_ratio,
-    }
-
-
-def _board_try_register_candidate(candidates, work, quad, source, image_area):
-    warp = warp_quad(work, quad)
-    if warp is None or warp.size == 0:
-        return
-
-    wh, ww = warp.shape[:2]
-    if ww <= 0 or wh <= 0:
-        return
-
-    ratio = wh / float(ww)
-    if ratio < 1.12 or ratio > 1.90:
-        return
-
-    quad_ord = order_points(quad)
-    x, y, bw, bh = cv2.boundingRect(quad_ord.astype(np.int32))
-    rect_area_ratio = float((bw * bh) / float(max(image_area, 1.0)))
-
-    if rect_area_ratio < 0.005:
-        return
-    if rect_area_ratio > 0.040:
-        return
-
-    metrics = _board_candidate_metrics(warp)
-    if not metrics:
-        return
-
-    sat_ratio = float(metrics.get("sat_ratio", 0.0))
-    dark_ratio = float(metrics.get("dark_ratio", 0.0))
-    center_dark_ratio = float(metrics.get("center_dark_ratio", 0.0))
-    center_bright_ratio = float(metrics.get("center_bright_low_sat_ratio", 0.0))
-    border_sat_ratio = float(metrics.get("border_sat_ratio", 0.0))
-
-    # Filtrage "anti-station / anti-gros faux rectangle".
-    if sat_ratio < 0.13:
-        return
-    if center_dark_ratio < 0.22:
-        return
-    if center_bright_ratio > 0.18 and sat_ratio < 0.28:
-        return
-
-    score = 0.0
-    score += sat_ratio * 3.5
-    score += center_dark_ratio * 3.0
-    score += border_sat_ratio * 1.5
-    score += dark_ratio * 0.8
-
-    score += max(0.0, 0.35 - abs(ratio - 1.50))
-    score += max(0.0, 0.03 - abs(rect_area_ratio - 0.022)) * 8.0
-
-    if source == "sat":
-        score += 0.15
-
-    rect_dict = {
-        "x": int(x),
-        "y": int(y),
-        "w": int(bw),
-        "h": int(bh),
-        "quad": quad_ord.astype(int).tolist(),
-        "_score": float(score),
-        "_source": source,
-        "_metrics": metrics,
-    }
-    candidates.append(rect_dict)
-
-
-def detect_cards_on_board(img, max_cards=24):
-    if img is None or img.size == 0:
-        return []
-
-    orig_h, orig_w = img.shape[:2]
-    max_dim = 1600
-    scale = 1.0
-    work = img
-
-    if max(orig_h, orig_w) > max_dim:
-        scale = max_dim / float(max(orig_h, orig_w))
-        work = cv2.resize(img, (int(orig_w * scale), int(orig_h * scale)))
-
-    h, w = work.shape[:2]
-    image_area = float(max(h * w, 1))
-    candidates = []
-
-    # -------------------------
-    # PASS 1 : contours / edges
-    # -------------------------
-    gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    for th1, th2 in [(35, 120), (45, 140)]:
-        edges = cv2.Canny(blur, th1, th2)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        edges = cv2.dilate(edges, kernel, iterations=1)
-        edges = cv2.erode(edges, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < image_area * 0.004:
-                continue
-            if area > image_area * 0.10:
-                continue
-
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-            if len(approx) == 4:
-                quad = approx.reshape(4, 2).astype("float32")
-            else:
-                rect = cv2.minAreaRect(c)
-                quad = cv2.boxPoints(rect).astype("float32")
-
-            _board_try_register_candidate(candidates, work, quad, "edge", image_area)
-
-    # ----------------------------------------
-    # PASS 2 : zones saturées / bords colorés
-    # ----------------------------------------
-    hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
-
-    for sat_threshold in [18, 28]:
-        mask = np.where(
-            (hsv[:, :, 1] > sat_threshold) & (hsv[:, :, 2] > 35),
-            255,
-            0
-        ).astype(np.uint8)
-
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
-
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < image_area * 0.0015:
-                continue
-            if area > image_area * 0.06:
-                continue
-
-            rect = cv2.minAreaRect(c)
-            quad = cv2.boxPoints(rect).astype("float32")
-            _board_try_register_candidate(candidates, work, quad, "sat", image_area)
-
-    # ----------------------------------------
-    # NMS / dédoublonnage + remise à l'échelle
-    # ----------------------------------------
-    candidates.sort(key=lambda r: float(r.get("_score", 0.0)), reverse=True)
-
-    kept = []
-    for rect in candidates:
-        if any(_rect_iou(rect, existing) > 0.32 for existing in kept):
-            continue
-        kept.append(rect)
-        if len(kept) >= max_cards:
-            break
-
-    final_rects = []
-    for rect in kept:
-        rect_out = {
-            "x": int(round(rect["x"] / scale)),
-            "y": int(round(rect["y"] / scale)),
-            "w": int(round(rect["w"] / scale)),
-            "h": int(round(rect["h"] / scale)),
-            "quad": np.round(np.array(rect["quad"], dtype=np.float32) / scale).astype(int).tolist(),
-        }
-        final_rects.append(rect_out)
-
-    final_rects.sort(key=lambda r: (r.get("y", 0), r.get("x", 0)))
-    return final_rects
-
-
-def _process_single_card_from_rect(img, rect):
-    quad = np.array(rect["quad"], dtype="float32")
-    warped = warp_quad(img, quad)
-    if warped is None or warped.size == 0:
-        warped = img.copy()
-
-    if warped is None or warped.size == 0:
-        return None
-
-    warped = cv2.resize(warped, (200, 300))
-    sig, rois = compute_signature(warped)
-    card_match = resolve_final_card(sig) if sig is not None else None
-
-    return {
-        "warped": warped,
-        "signature": sig,
-        "rois": rois,
-        "card_match": card_match,
-    }
-
-
 # =====================================================
 # ROUTES
 # =====================================================
@@ -3163,11 +2903,9 @@ def upload():
     try:
         if "image" not in request.files:
             return jsonify({
-                "mode": request.form.get("mode", "CARDS_ONLY"),
                 "rects": [],
                 "signature": None,
                 "rois": [],
-                "board_matches": [],
                 "card_match": None,
                 "final_card_id": None,
                 "final_status": None,
@@ -3176,78 +2914,15 @@ def upload():
             })
 
         file = request.files["image"]
-        mode = str(request.form.get("mode") or "CARDS_ONLY").strip().upper()
 
         data = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
         if img is None:
             return jsonify({
-                "mode": mode,
                 "rects": [],
                 "signature": None,
                 "rois": [],
-                "board_matches": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-            })
-
-        if mode == "BOARD":
-            rects = detect_cards_on_board(img)
-            board_matches = []
-            named_rects = []
-
-            for idx, rect in enumerate(rects):
-                try:
-                    processed = _process_single_card_from_rect(img, rect)
-                    if not processed:
-                        continue
-
-                    card_match = processed.get("card_match") or {}
-                    final_card_id = card_match.get("final_card_id")
-                    final_status = card_match.get("final_status")
-                    display_name = final_card_id or f"CARD_{idx + 1}"
-                    if final_status and final_status != "accepted":
-                        display_name = f"{display_name} ({final_status})"
-
-                    named_rect = dict(rect)
-                    named_rect["name"] = display_name
-                    named_rect["type"] = "CARD"
-                    named_rects.append(named_rect)
-
-                    board_matches.append({
-                        "index": idx,
-                        "rect": rect,
-                        "card_match": card_match,
-                        "final_card_id": final_card_id,
-                        "final_status": final_status,
-                        "final_score": float(card_match.get("final_score", 0.0) or 0.0),
-                        "final_gap": float(card_match.get("final_gap", 0.0) or 0.0),
-                        "color_name": card_match.get("color_name"),
-                        "symbol_name": card_match.get("symbol_name"),
-                        "bottom_layout": card_match.get("bottom_layout"),
-                        "points": card_match.get("points"),
-                    })
-                except Exception as e:
-                    failed_rect = dict(rect)
-                    failed_rect["name"] = f"ERR_{idx + 1}"
-                    failed_rect["type"] = "CARD"
-                    named_rects.append(failed_rect)
-                    board_matches.append({
-                        "index": idx,
-                        "rect": rect,
-                        "error": str(e),
-                    })
-
-            return jsonify({
-                "mode": mode,
-                "rects": named_rects,
-                "signature": None,
-                "rois": [],
-                "board_matches": board_matches,
                 "card_match": None,
                 "final_card_id": None,
                 "final_status": None,
@@ -3272,27 +2947,31 @@ def upload():
                 ]
             }
 
-        processed = _process_single_card_from_rect(img, rect)
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(img, quad)
+
         sig = None
         rois = []
         card_match = None
 
-        if processed:
-            warped = processed.get("warped")
-            sig = processed.get("signature")
-            rois = processed.get("rois") or []
-            card_match = processed.get("card_match")
-            if warped is not None and getattr(warped, "size", 0) != 0:
-                cv2.imwrite(WARP_PATH, warped)
-            if sig is not None and card_match is not None:
+        if warped is None or warped.size == 0:
+            warped = img.copy()
+
+        if warped is not None and warped.size != 0:
+            cv2.imwrite(WARP_PATH, warped)
+            sig, rois = compute_signature(warped)
+
+        if sig is not None:
+            try:
+                card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
+            except Exception:
+                card_match = None
 
         return jsonify({
-            "mode": mode,
             "rects": [rect],
             "signature": sig,
             "rois": rois,
-            "board_matches": [],
             "card_match": card_match,
             "final_card_id": (card_match or {}).get("final_card_id"),
             "final_status": (card_match or {}).get("final_status"),
@@ -3307,11 +2986,9 @@ def upload():
     except Exception as e:
         print("UPLOAD ERROR:", e)
         return jsonify({
-            "mode": str(request.form.get("mode") or "CARDS_ONLY").strip().upper(),
             "rects": [],
             "signature": None,
             "rois": [],
-            "board_matches": [],
             "card_match": None,
             "final_card_id": None,
             "final_status": None,
@@ -4982,6 +4659,276 @@ def verify_cards_integrity():
         
       
         
+
+
+# =====================================================
+# BOARD DEBUG (CANDIDATS UNIQUEMENT)
+# =====================================================
+
+def _rect_iou(a, b):
+    ax1, ay1, aw, ah = int(a["x"]), int(a["y"]), int(a["w"]), int(a["h"])
+    bx1, by1, bw, bh = int(b["x"]), int(b["y"]), int(b["w"]), int(b["h"])
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+
+    area_a = max(1, aw * ah)
+    area_b = max(1, bw * bh)
+    union = area_a + area_b - inter
+    return float(inter) / float(max(1, union))
+
+
+def _dedupe_board_candidates(candidates, iou_threshold=0.35):
+    kept = []
+    for cand in sorted(candidates, key=lambda c: float(c.get("score", 0.0)), reverse=True):
+        duplicate = False
+        for k in kept:
+            if _rect_iou(cand, k) >= iou_threshold:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(cand)
+    return kept
+
+
+def _classify_board_crop(crop):
+    if crop is None or crop.size == 0:
+        return {"kind": "unknown", "score": 0.0, "reasons": ["empty"]}
+
+    h, w = crop.shape[:2]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+
+    sat_ratio = float(np.count_nonzero(hsv[:, :, 1] > 55)) / float(max(h * w, 1))
+    dark_ratio = float(np.count_nonzero(gray < 110)) / float(max(h * w, 1))
+    bright_ratio = float(np.count_nonzero(gray > 190)) / float(max(h * w, 1))
+
+    if bright_ratio > 0.28 and sat_ratio < 0.18 and dark_ratio > 0.10:
+        return {
+            "kind": "station",
+            "score": 0.95,
+            "reasons": [f"bright={bright_ratio:.2f}", f"sat={sat_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+        }
+
+    if sat_ratio > 0.12:
+        return {
+            "kind": "card",
+            "score": min(0.99, 0.55 + sat_ratio),
+            "reasons": [f"sat={sat_ratio:.2f}", f"bright={bright_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+        }
+
+    return {
+        "kind": "unknown",
+        "score": 0.40,
+        "reasons": [f"sat={sat_ratio:.2f}", f"bright={bright_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+    }
+
+
+def detect_board_candidates(img):
+    if img is None or img.size == 0:
+        return []
+
+    vis = img.copy()
+    h, w = vis.shape[:2]
+    image_area = float(max(1, h * w))
+
+    gray = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    edges = cv2.Canny(blur, 60, 160)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidates = []
+
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < image_area * 0.006:
+            continue
+
+        x, y, bw, bh = cv2.boundingRect(c)
+        if bw < 40 or bh < 80:
+            continue
+
+        ratio = bh / float(max(bw, 1))
+        if ratio < 1.05 or ratio > 2.6:
+            continue
+
+        pad_x = int(bw * 0.06)
+        pad_y = int(bh * 0.06)
+
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - pad_y)
+        x2 = min(w, x + bw + pad_x)
+        y2 = min(h, y + bh + pad_y)
+
+        crop = vis[y1:y2, x1:x2]
+        if crop is None or crop.size == 0:
+            continue
+
+        cls = _classify_board_crop(crop)
+
+        candidates.append({
+            "x": int(x1),
+            "y": int(y1),
+            "w": int(x2 - x1),
+            "h": int(y2 - y1),
+            "score": float(area / image_area) + float(cls.get("score", 0.0)),
+            "kind": cls.get("kind", "unknown"),
+            "kind_score": float(cls.get("score", 0.0)),
+            "reasons": cls.get("reasons", []),
+        })
+
+    return _dedupe_board_candidates(candidates, iou_threshold=0.30)
+
+
+@app.route("/board-debug", methods=["GET", "POST"])
+def board_debug():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Board Debug</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+            th { background: #f5f5f5; }
+            .card { color: #0a7a28; font-weight: bold; }
+            .station { color: #b26b00; font-weight: bold; }
+            .unknown { color: #b00020; font-weight: bold; }
+            img { max-width: 220px; border: 1px solid #ddd; }
+            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+          </style>
+        </head>
+        <body>
+          <h1>Board Debug</h1>
+          <p>Cette page ne reconnaît pas les cartes. Elle montre seulement les candidats détectés et leur type probable.</p>
+          <form method="post" enctype="multipart/form-data">
+            <p><input type="file" name="image" accept="image/*" required /></p>
+            <p><button type="submit">Analyser</button></p>
+          </form>
+        </body>
+        </html>
+        """
+
+    if "image" not in request.files:
+        return "Aucun fichier envoyé", 400
+
+    file = request.files["image"]
+    data = file.read()
+    if not data:
+        return "Fichier vide", 400
+
+    np_arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return "Image invalide", 400
+
+    candidates = detect_board_candidates(img)
+
+    overlay = img.copy()
+    rows = []
+    export_items = []
+
+    color_map = {
+        "card": (0, 255, 0),
+        "station": (0, 165, 255),
+        "unknown": (0, 0, 255),
+    }
+
+    for idx, cand in enumerate(candidates, start=1):
+        x, y, w, h = cand["x"], cand["y"], cand["w"], cand["h"]
+        kind = cand.get("kind", "unknown")
+        score = float(cand.get("kind_score", 0.0))
+        reasons = cand.get("reasons", [])
+
+        crop = img[y:y+h, x:x+w]
+        crop_b64 = _img_to_base64(crop)
+
+        cv2.rectangle(overlay, (x, y), (x+w, y+h), color_map.get(kind, (255,255,0)), 3)
+        cv2.putText(overlay, f"{idx}:{kind}", (x, max(20, y-8)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color_map.get(kind, (255,255,0)), 2)
+
+        rows.append(f"""
+        <tr>
+          <td>{idx}</td>
+          <td><span class="{html.escape(kind)}">{html.escape(kind.upper())}</span></td>
+          <td>{score:.3f}</td>
+          <td>{html.escape(", ".join(reasons))}</td>
+          <td>x={x}, y={y}, w={w}, h={h}</td>
+          <td><img src="data:image/png;base64,{crop_b64}" /></td>
+        </tr>
+        """)
+
+        export_items.append({
+            "index": idx,
+            "kind": kind,
+            "kind_score": score,
+            "reasons": reasons,
+            "box": {"x": x, "y": y, "w": w, "h": h},
+        })
+
+    pretty_json = json.dumps({"count": len(candidates), "candidates": export_items}, indent=2, ensure_ascii=False)
+    overlay_b64 = _img_to_base64(overlay)
+    source_b64 = _img_to_base64(img)
+
+    return f"""
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Board Debug</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }}
+        th {{ background: #f5f5f5; }}
+        .card {{ color: #0a7a28; font-weight: bold; }}
+        .station {{ color: #b26b00; font-weight: bold; }}
+        .unknown {{ color: #b00020; font-weight: bold; }}
+        img {{ max-width: 220px; border: 1px solid #ddd; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat Board Debug</h1>
+      <p><a href="/board-debug">← Revenir</a></p>
+      {_html_img_block("Image source", source_b64)}
+      {_html_img_block("Overlay candidats", overlay_b64)}
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Type probable</th>
+            <th>Score type</th>
+            <th>Raisons</th>
+            <th>Box</th>
+            <th>Crop</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
+        </tbody>
+      </table>
+
+      <h2>JSON complet</h2>
+      <pre>{pretty_json}</pre>
+    </body>
+    </html>
+    """
+
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory(BASE_DIR, path)
