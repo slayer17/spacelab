@@ -4832,7 +4832,7 @@ def detect_board_candidates(img):
     return _dedupe_board_candidates(candidates, iou_threshold=0.30)
 
 
-@app.route("/board-debug", methods=["GET", "POST"])
+@app.route("/board_debug", methods=["GET", "POST"])
 def board_debug():
     if request.method == "GET":
         return """
@@ -4954,7 +4954,7 @@ def board_debug():
     </head>
     <body>
       <h1>Résultat Board Debug</h1>
-      <p><a href="/board-debug">← Revenir</a></p>
+      <p><a href="/board_debug">← Revenir</a></p>
 
       <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
         <button type="button" onclick="exportBoardJson()">Exporter JSON</button>
