@@ -5767,7 +5767,7 @@ def _render_board_debug_page(img, analysis):
       <title>Board Debug</title>
       <style>
         body {{ font-family: Arial, sans-serif; padding: 20px; color:#111; }}
-        h1, h2 { margin-bottom: 8px; }
+        h1, h2 {{ margin-bottom: 8px; }}
         p { line-height: 1.4; }
         .ok { color:#0a7a28; font-weight:bold; }
         .ko { color:#b00020; font-weight:bold; }
