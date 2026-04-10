@@ -4793,36 +4793,73 @@ def detect_board_candidates(img):
     return _dedupe_board_candidates(candidates, iou_threshold=0.30)
 
 
-@app.route("/board-debug", methods=["GET", "POST"])
-def board_debug():
-    if request.method == "GET":
-        return """
-        <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Board Debug</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
-            th { background: #f5f5f5; }
-            .card { color: #0a7a28; font-weight: bold; }
-            .station { color: #b26b00; font-weight: bold; }
-            .unknown { color: #b00020; font-weight: bold; }
-            img { max-width: 220px; border: 1px solid #ddd; }
-            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
-          </style>
-        </head>
-        <body>
-          <h1>Board Debug</h1>
-          <p>Cette page ne reconnaît pas les cartes. Elle montre seulement les candidats détectés et leur type probable.</p>
-          <form method="post" enctype="multipart/form-data">
-            <p><input type="file" name="image" accept="image/*" required /></p>
-            <p><button type="submit">Analyser</button></p>
-          </form>
-        </body>
-        </html>
-        """
+@app.route("/board-debug", methods=["GET"])
+def index_debug():
+    """Affiche une page simple pour uploader une image ou tester le board."""
+    return """
+    <html>
+    <body>
+        <h1>Board Debug Tool</h1>
+        <form action="/board-debug/run" method="post" enctype="multipart/form-data">
+            <input type="file" name="image">
+            <button type="submit">Analyser le plateau</button>
+        </form>
+    </body>
+    </html>
+    """
+
+@app.route("/board-debug/run", methods=["POST"])
+def run_debug():
+    """Route principale de traitement (remplace la route tronquée)"""
+    file = request.files.get("image")
+    if not file:
+        return "Aucune image fournie", 400
+
+    # Lecture de l'image
+    file_bytes = np.frombuffer(file.read(), np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return "Erreur de lecture image", 400
+
+    # --- Logique de détection (Appel à vos fonctions existantes) ---
+    # Ici, vous devez appeler votre logique de détection de board
+    # Exemple fictif basé sur votre code :
+    source_b64 = _img_to_base64(img)
+    
+    # Simulation de résultats (à remplacer par votre logique réelle)
+    rows = []
+    # rows.append(f"<tr><td>1</td><td>Card</td><td>0.95</td><td>...</td></tr>")
+    
+    # Génération du HTML (Utilisez le template que vous aviez commencé)
+    html_content = f"""
+    <html>
+    <head>
+      <style>
+        body {{ font-family: sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        img {{ max-width: 220px; border: 1px solid #ddd; }}
+      </style>
+    </head>
+    <body>
+      <h1>Résultat Board Debug</h1>
+      <p><a href="/board-debug">← Revenir</a></p>
+      {_html_img_block("Image source", source_b64)}
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Type</th><th>Score</th><th>Box</th><th>Crop</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
+        </tbody>
+      </table>
+    </body>
+    </html>
+    """
+    return html_content
 
     if "image" not in request.files:
         return "Aucun fichier envoyé", 400
