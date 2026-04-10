@@ -3270,18 +3270,18 @@ def symbol_batch_test():
           <meta charset="utf-8" />
           <title>Symbol Batch Test</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background: #f5f5f5; }
-            .ok { color: #0a7a28; font-weight: bold; }
-            .ko { color: #b00020; font-weight: bold; }
-            .fragile { color: #b26b00; font-weight: bold; }
-            .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }
-            .summary-card { border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }
-            .summary-card .label { font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }
-            .summary-card .value { font-size:28px; font-weight:bold; margin-top:6px; }
-            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+            body {{ font-family: Arial, sans-serif; padding: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background: #f5f5f5; }}
+            .ok {{ color: #0a7a28; font-weight: bold; }}
+            .ko {{ color: #b00020; font-weight: bold; }}
+            .fragile {{ color: #b26b00; font-weight: bold; }}
+            .summary-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:18px 0; }}
+            .summary-card {{ border:1px solid #ddd; background:#fafafa; padding:12px; border-radius:8px; }}
+            .summary-card .label {{ font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.04em; }}
+            .summary-card .value {{ font-size:28px; font-weight:bold; margin-top:6px; }}
+            pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
           </style>
         </head>
         <body>
