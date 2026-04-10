@@ -4820,14 +4820,14 @@ def detect_board_candidates(img):
     return _dedupe_board_candidates(candidates, iou_threshold=0.30)
 
 
-@app.route("/board-debug", methods=["GET"])
+@app.route("/board_debug", methods=["GET"])
 def index_debug():
     """Affiche une page simple pour uploader une image ou tester le board."""
     return """
     <html>
     <body>
         <h1>Board Debug Tool</h1>
-        <form action="/board-debug/run" method="post" enctype="multipart/form-data">
+        <form action="/board_debug/run" method="post" enctype="multipart/form-data">
             <input type="file" name="image">
             <button type="submit">Analyser le plateau</button>
         </form>
@@ -4835,7 +4835,7 @@ def index_debug():
     </html>
     """
 
-@app.route("/board-debug/run", methods=["POST"])
+@app.route("/board_debug/run", methods=["POST"])
 def run_debug():
     """Route principale de traitement (remplace la route tronquée)"""
     file = request.files.get("image")
@@ -4871,7 +4871,7 @@ def run_debug():
     </head>
     <body>
       <h1>Résultat Board Debug</h1>
-      <p><a href="/board-debug">← Revenir</a></p>
+      <p><a href="/board_debug">← Revenir</a></p>
       {_html_img_block("Image source", source_b64)}
       <table>
         <thead>
@@ -4967,7 +4967,7 @@ def run_debug():
     </head>
     <body>
       <h1>Résultat Board Debug</h1>
-      <p><a href="/board-debug">← Revenir</a></p>
+      <p><a href="/board_debug">← Revenir</a></p>
       {_html_img_block("Image source", source_b64)}
       {_html_img_block("Overlay candidats", overlay_b64)}
 
