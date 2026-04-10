@@ -696,6 +696,12 @@ def _load_symbol_references():
     if _SYMBOL_REFS_CACHE is not None:
         return _SYMBOL_REFS_CACHE
 
+    # 1. Sécurisation du dossier de symboles
+    # Assurez-vous que SYMBOLS_DIR est défini en haut du fichier
+    if not os.path.exists(SYMBOLS_DIR):
+        print(f"ATTENTION : Le dossier {SYMBOLS_DIR} est introuvable.")
+        return {"icons": {}, "cards": {}, "all_cards": [], "shape_stats": {}}
+
     symbol_names = ["SCIENTIFIQUE", "ASTRONAUTE", "MECANICIEN", "MEDECIN"]
     refs = {
         "icons": {},
@@ -704,16 +710,27 @@ def _load_symbol_references():
         "shape_stats": {},
     }
 
+    # 2. Chargement des icônes de référence
     for name in symbol_names:
         path = os.path.join(SYMBOLS_DIR, f"{name.lower()}.png")
         tpl = cv2.imread(path, cv2.IMREAD_COLOR)
-        refs["icons"][name] = _normalize_symbol_template(tpl)
+        if tpl is not None:
+            refs["icons"][name] = _normalize_symbol_template(tpl)
+        else:
+            print(f"Alerte : Icône manquante pour {name} à {path}")
+            refs["icons"][name] = None
 
-    try:
-        cards = load_cards_js()
-    except Exception:
-        cards = []
+    # 3. Chargement des données cartes (Sécurité si la fonction n'existe pas)
+    cards = []
+    if 'load_cards_js' in globals():
+        try:
+            cards = load_cards_js()
+        except Exception as e:
+            print(f"Erreur lors de l'appel à load_cards_js : {e}")
+    else:
+        print("Erreur : La fonction load_cards_js n'est pas définie.")
 
+    # 4. Traitement des cartes
     for card in cards:
         card_id = card.get("id")
         symbol_name = card.get("symbol")
@@ -721,8 +738,12 @@ def _load_symbol_references():
         if not card_id or symbol_name not in refs["cards"]:
             continue
 
+        # Sécurité sur find_card_image
+        if 'find_card_image' not in globals():
+            continue
+            
         path = find_card_image(card_id)
-        if path is None:
+        if path is None or not os.path.exists(path):
             continue
 
         img = cv2.imread(path, cv2.IMREAD_COLOR)
@@ -733,41 +754,47 @@ def _load_symbol_references():
         if zone is None or zone.size == 0:
             continue
 
-        mask, panel, _ = _normalize_symbol_scan(zone)
-        if mask is None:
+        # Normalisation
+        try:
+            mask, panel, _ = _normalize_symbol_scan(zone)
+            if mask is None:
+                continue
+
+            panel_img = panel if (panel is not None and panel.size > 0) else zone
+            
+            entry = {
+                "id": card_id,
+                "symbol": symbol_name,
+                "mask": mask,
+                "panel_gray": _panel_to_gray_canvas(panel_img),
+                "hog_mask": _hog_feature_from_mask(mask),
+                "hog_panel": _hog_feature_from_panel(panel_img),
+                "shape_features": _compute_symbol_shape_features(mask),
+            }
+
+            refs["cards"][symbol_name].append(entry)
+            refs["all_cards"].append(entry)
+        except Exception as e:
+            print(f"Erreur de processing sur la carte {card_id}: {e}")
             continue
 
-        panel_img = panel if panel is not None and panel.size > 0 else zone
-        entry = {
-            "id": card_id,
-            "symbol": symbol_name,
-            "mask": mask,
-            "panel_gray": _panel_to_gray_canvas(panel_img),
-            "hog_mask": _hog_feature_from_mask(mask),
-            "hog_panel": _hog_feature_from_panel(panel_img),
-            "shape_features": _compute_symbol_shape_features(mask),
-        }
-
-        refs["cards"][symbol_name].append(entry)
-        refs["all_cards"].append(entry)
-
+    # 5. Calcul des statistiques de forme
     for symbol_name in symbol_names:
-        feature_vecs = [
-            _shape_feature_vector(entry.get("shape_features"))
-            for entry in refs["cards"].get(symbol_name, [])
-        ]
-        if not feature_vecs:
-            continue
-
-        mat = np.vstack(feature_vecs).astype(np.float32)
-        refs["shape_stats"][symbol_name] = {
-            "mean": mat.mean(axis=0),
-            "std": mat.std(axis=0) + 1e-3,
-        }
+        feature_vecs = []
+        for entry in refs["cards"].get(symbol_name, []):
+            feat = _shape_feature_vector(entry.get("shape_features"))
+            if feat is not None:
+                feature_vecs.append(feat)
+        
+        if len(feature_vecs) > 0:
+            mat = np.vstack(feature_vecs).astype(np.float32)
+            refs["shape_stats"][symbol_name] = {
+                "mean": mat.mean(axis=0),
+                "std": mat.std(axis=0) + 1e-3,
+            }
 
     _SYMBOL_REFS_CACHE = refs
     return _SYMBOL_REFS_CACHE
-
 
 def detect_symbol(zone):
     refs = _load_symbol_references()
