@@ -4744,20 +4744,32 @@ def _classify_board_crop(crop):
         return {
             "kind": "station",
             "score": 0.95,
-            "reasons": [f"bright={bright_ratio:.2f}", f"sat={sat_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+            "reasons": [
+                f"bright={bright_ratio:.2f}",
+                f"sat={sat_ratio:.2f}",
+                f"dark={dark_ratio:.2f}",
+            ],
         }
 
     if sat_ratio > 0.12:
         return {
             "kind": "card",
             "score": min(0.99, 0.55 + sat_ratio),
-            "reasons": [f"sat={sat_ratio:.2f}", f"bright={bright_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+            "reasons": [
+                f"sat={sat_ratio:.2f}",
+                f"bright={bright_ratio:.2f}",
+                f"dark={dark_ratio:.2f}",
+            ],
         }
 
     return {
         "kind": "unknown",
         "score": 0.40,
-        "reasons": [f"sat={sat_ratio:.2f}", f"bright={bright_ratio:.2f}", f"dark={dark_ratio:.2f}"],
+        "reasons": [
+            f"sat={sat_ratio:.2f}",
+            f"bright={bright_ratio:.2f}",
+            f"dark={dark_ratio:.2f}",
+        ],
     }
 
 
@@ -4820,17 +4832,199 @@ def detect_board_candidates(img):
     return _dedupe_board_candidates(candidates, iou_threshold=0.30)
 
 
-@app.route("/board_debug", methods=["GET"])
-def index_debug():
-    """Affiche une page simple pour uploader une image ou tester le board."""
-    return """
+@app.route("/board-debug", methods=["GET", "POST"])
+def board_debug():
+    if request.method == "GET":
+        return """
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Board Debug</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+            th { background: #f5f5f5; }
+            .card { color: #0a7a28; font-weight: bold; }
+            .station { color: #b26b00; font-weight: bold; }
+            .unknown { color: #b00020; font-weight: bold; }
+            img { max-width: 220px; border: 1px solid #ddd; }
+            pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }
+          </style>
+        </head>
+        <body>
+          <h1>Board Debug</h1>
+          <p>Cette page ne reconnaît pas les cartes. Elle montre seulement les candidats détectés et leur type probable.</p>
+          <form method="post" enctype="multipart/form-data">
+            <p><input type="file" name="image" accept="image/*" required /></p>
+            <p><button type="submit">Analyser</button></p>
+          </form>
+        </body>
+        </html>
+        """
+
+    if "image" not in request.files:
+        return "Aucun fichier envoyé", 400
+
+    file = request.files["image"]
+    data = file.read()
+    if not data:
+        return "Fichier vide", 400
+
+    np_arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return "Image invalide", 400
+
+    candidates = detect_board_candidates(img)
+
+    overlay = img.copy()
+    rows = []
+    export_items = []
+
+    color_map = {
+        "card": (0, 255, 0),
+        "station": (0, 165, 255),
+        "unknown": (0, 0, 255),
+    }
+
+    for idx, cand in enumerate(candidates, start=1):
+        x, y, w, h = cand["x"], cand["y"], cand["w"], cand["h"]
+        kind = cand.get("kind", "unknown")
+        score = float(cand.get("kind_score", 0.0))
+        reasons = cand.get("reasons", [])
+
+        crop = img[y:y + h, x:x + w]
+        crop_b64 = _img_to_base64(crop)
+
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), color_map.get(kind, (255, 255, 0)), 3)
+        cv2.putText(
+            overlay,
+            f"{idx}:{kind}",
+            (x, max(20, y - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            color_map.get(kind, (255, 255, 0)),
+            2
+        )
+
+        rows.append(f"""
+        <tr>
+          <td>{idx}</td>
+          <td><span class="{html.escape(kind)}">{html.escape(kind.upper())}</span></td>
+          <td>{score:.3f}</td>
+          <td>{html.escape(", ".join(reasons))}</td>
+          <td>x={x}, y={y}, w={w}, h={h}</td>
+          <td><img src="data:image/png;base64,{crop_b64}" /></td>
+        </tr>
+        """)
+
+        export_items.append({
+            "index": idx,
+            "kind": kind,
+            "kind_score": score,
+            "reasons": reasons,
+            "box": {"x": x, "y": y, "w": w, "h": h},
+        })
+
+    pretty_json = json.dumps({
+        "count": len(candidates),
+        "candidates": export_items
+    }, indent=2, ensure_ascii=False)
+
+    overlay_b64 = _img_to_base64(overlay)
+    source_b64 = _img_to_base64(img)
+
+    return f"""
     <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Board Debug</title>
+      <style>
+        body {{ font-family: Arial, sans-serif; padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }}
+        th {{ background: #f5f5f5; }}
+        .card {{ color: #0a7a28; font-weight: bold; }}
+        .station {{ color: #b26b00; font-weight: bold; }}
+        .unknown {{ color: #b00020; font-weight: bold; }}
+        img {{ max-width: 220px; border: 1px solid #ddd; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
+      </style>
+    </head>
     <body>
-        <h1>Board Debug Tool</h1>
-        <form action="/board_debug/run" method="post" enctype="multipart/form-data">
-            <input type="file" name="image">
-            <button type="submit">Analyser le plateau</button>
-        </form>
+      <h1>Résultat Board Debug</h1>
+      <p><a href="/board-debug">← Revenir</a></p>
+
+      <div style="margin:16px 0; display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="button" onclick="exportBoardJson()">Exporter JSON</button>
+        <button type="button" onclick="exportBoardTxt()">Exporter TXT</button>
+        <button type="button" onclick="exportBoardHtml()">Exporter HTML</button>
+        <button type="button" onclick="copyBoardJson()">Copier JSON</button>
+      </div>
+
+      {_html_img_block("Image source", source_b64)}
+      {_html_img_block("Overlay candidats", overlay_b64)}
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Type probable</th>
+            <th>Score type</th>
+            <th>Raisons</th>
+            <th>Box</th>
+            <th>Crop</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
+        </tbody>
+      </table>
+
+      <h2>JSON complet</h2>
+      <pre id="board-json">{pretty_json}</pre>
+
+      <script>
+      function downloadTextFile(filename, content, contentType) {{
+        const blob = new Blob([content], {{ type: contentType }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }}
+
+      function getBoardJsonText() {{
+        const pre = document.getElementById("board-json");
+        return pre ? pre.textContent : "";
+      }}
+
+      function exportBoardJson() {{
+        const jsonText = getBoardJsonText();
+        downloadTextFile("board_debug_results.json", jsonText, "application/json;charset=utf-8");
+      }}
+
+      function exportBoardTxt() {{
+        const jsonText = getBoardJsonText();
+        downloadTextFile("board_debug_results.txt", jsonText, "text/plain;charset=utf-8");
+      }}
+
+      function exportBoardHtml() {{
+        const html = document.documentElement.outerHTML;
+        downloadTextFile("board_debug_results.html", html, "text/html;charset=utf-8");
+      }}
+
+      function copyBoardJson() {{
+        const jsonText = getBoardJsonText();
+        navigator.clipboard.writeText(jsonText)
+          .then(() => alert("JSON copié"))
+          .catch(() => alert("Copie impossible"));
+      }}
+      </script>
     </body>
     </html>
     """
