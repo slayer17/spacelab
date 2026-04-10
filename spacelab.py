@@ -4822,95 +4822,18 @@ def detect_board_candidates(img):
 
 @app.route("/board-debug", methods=["GET"])
 def index_debug():
-    """Affiche l'interface de test."""
+    """Affiche une page simple pour uploader une image ou tester le board."""
     return """
     <html>
-    <head>
-      <title>Spacelab - Board Debug</title>
-      <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; line-height: 1.6; }
-        .upload-zone { border: 2px dashed #ccc; padding: 30px; text-align: center; border-radius: 8px; }
-        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
-      </style>
-    </head>
     <body>
-        <h1>Analyseur de Plateau (Debug)</h1>
-        <div class="upload-zone">
-            <form action="/board-debug/run" method="post" enctype="multipart/form-data">
-                <p>Sélectionnez une photo du plateau de jeu :</p>
-                <input type="file" name="image" accept="image/*" required>
-                <br><br>
-                <button type="submit">Lancer l'analyse</button>
-            </form>
-        </div>
+        <h1>Board Debug Tool</h1>
+        <form action="/board-debug/run" method="post" enctype="multipart/form-data">
+            <input type="file" name="image">
+            <button type="submit">Analyser le plateau</button>
+        </form>
     </body>
     </html>
     """
-
-@app.route("/board-debug/run", methods=["POST"])
-def run_debug():
-    """Route qui traite l'image et affiche les résultats détaillés."""
-    file = request.files.get("image")
-    if not file:
-        return "Erreur : Aucune image reçue.", 400
-
-    # Lecture de l'image
-    file_bytes = np.frombuffer(file.read(), np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        return "Erreur : Format d'image invalide.", 400
-
-    # Simulation du traitement (Appel à vos fonctions de détection)
-    # Ici, vous devriez appeler votre fonction principale de détection, ex: analyze_full_board(img)
-    source_b64 = _img_to_base64(img)
-    
-    # Construction de la réponse HTML (en utilisant vos fonctions _html_img_block)
-    rows = [] 
-    # Exemple de remplissage de lignes (à connecter à votre logique d'analyse)
-    # for i, result in enumerate(detection_results):
-    #     rows.append(f"<tr><td>{i}</td><td>{result['type']}</td>...</tr>")
-
-    pretty_json = json.dumps({"status": "success", "message": "Analyse terminée"}, indent=2)
-
-    return f"""
-    <html>
-    <head>
-      <style>
-        body {{ font-family: sans-serif; padding: 20px; }}
-        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }}
-        th {{ background: #f5f5f5; }}
-        img {{ max-width: 220px; border: 1px solid #ddd; }}
-        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; }}
-      </style>
-    </head>
-    <body>
-      <h1>Résultat Board Debug</h1>
-      <p><a href="/board-debug">← Revenir</a></p>
-      
-      {_html_img_block("Image source", source_b64)}
-      
-      <table>
-        <thead>
-          <tr>
-            <th>#</th><th>Type probable</th><th>Score</th><th>Box</th><th>Crop</th>
-          </tr>
-        </thead>
-        <tbody>
-          {"".join(rows) if rows else "<tr><td colspan='5'>Aucun objet détecté ou logique non connectée</td></tr>"}
-        </tbody>
-      </table>
-
-      <h2>JSON complet</h2>
-      <pre>{pretty_json}</pre>
-    </body>
-    </html>
-    """
-
-if __name__ == "__main__":
-    # Assurez-vous que le port correspond à celui que vous utilisez
-    app.run(host="0.0.0.0", port=5000, debug=True)
 
 @app.route("/board-debug/run", methods=["POST"])
 def run_debug():
