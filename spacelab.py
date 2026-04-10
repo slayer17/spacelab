@@ -5766,21 +5766,22 @@ def _render_board_debug_page(img, analysis):
       <meta charset="utf-8" />
       <title>Board Debug</title>
       <style>
+ <style>
         body {{ font-family: Arial, sans-serif; padding: 20px; color:#111; }}
-        h1, h2 { margin-bottom: 8px; }
-        p { line-height: 1.4; }
-        .ok { color:#0a7a28; font-weight:bold; }
-        .ko { color:#b00020; font-weight:bold; }
-        .occupied { color:#0a7a28; font-weight:bold; }
-        .empty { color:#8b5cf6; font-weight:bold; }
-        .warn { background:#fff4e5; border:1px solid #f0c36d; padding:12px; margin:16px 0; }
-        table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
-        th { background: #f5f5f5; }
-        img { max-width: 220px; border: 1px solid #ddd; }
-        pre { background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; white-space:pre-wrap; }
-        .toolbar { margin:16px 0; display:flex; gap:10px; flex-wrap:wrap; }
-        button { padding:8px 12px; cursor:pointer; }
+        h1, h2 {{ margin-bottom: 8px; }}
+        p {{ line-height: 1.4; }}
+        .ok {{ color:#0a7a28; font-weight:bold; }}
+        .ko {{ color:#b00020; font-weight:bold; }}
+        .occupied {{ color:#0a7a28; font-weight:bold; }}
+        .empty {{ color:#8b5cf6; font-weight:bold; }}
+        .warn {{ background:#fff4e5; border:1px solid #f0c36d; padding:12px; margin:16px 0; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }}
+        th {{ background: #f5f5f5; }}
+        img {{ max-width: 220px; border: 1px solid #ddd; }}
+        pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; white-space:pre-wrap; }}
+        .toolbar {{ margin:16px 0; display:flex; gap:10px; flex-wrap:wrap; }}
+        button {{ padding:8px 12px; cursor:pointer; }}
       </style>
     </head>
     <body>
