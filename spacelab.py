@@ -4941,7 +4941,42 @@ def _resize_for_board_debug(img, max_width=1600):
     scale = max_width / float(w)
     out = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
     return out, scale
+def _rotate_bound(img, angle, border_value=0):
+    if img is None or img.size == 0:
+        return img
 
+    h, w = img.shape[:2]
+    cx, cy = (w / 2.0, h / 2.0)
+
+    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+
+    cos = abs(M[0, 0])
+    sin = abs(M[0, 1])
+
+    new_w = int((h * sin) + (w * cos))
+    new_h = int((h * cos) + (w * sin))
+
+    M[0, 2] += (new_w / 2.0) - cx
+    M[1, 2] += (new_h / 2.0) - cy
+
+    if len(img.shape) == 2:
+        return cv2.warpAffine(
+            img,
+            M,
+            (new_w, new_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=border_value,
+        )
+
+    return cv2.warpAffine(
+        img,
+        M,
+        (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(border_value, border_value, border_value),
+    )
 
 def _match_capsule_template(img, template, x_min_frac, x_max_frac):
     if template is None:
