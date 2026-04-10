@@ -5766,7 +5766,7 @@ def _render_board_debug_page(img, analysis):
       <meta charset="utf-8" />
       <title>Board Debug</title>
       <style>
-        body { font-family: Arial, sans-serif; padding: 20px; color:#111; }
+        body {{ font-family: Arial, sans-serif; padding: 20px; color:#111; }}
         h1, h2 { margin-bottom: 8px; }
         p { line-height: 1.4; }
         .ok { color:#0a7a28; font-weight:bold; }
@@ -5936,7 +5936,7 @@ def board_debug():
           <meta charset="utf-8" />
           <title>Board Debug</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; color:#111; }
+            body {{ font-family: Arial, sans-serif; padding: 20px; color:#111; }}
             p { line-height: 1.45; }
             .card { background:#f5f5f5; border:1px solid #ddd; padding:16px; max-width:900px; }
             button { padding:8px 12px; cursor:pointer; }
