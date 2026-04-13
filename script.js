@@ -239,15 +239,17 @@ function buildReadableResult(json) {
     if (!json) return "Aucun résultat.";
 
     // MODE BOARD
-    if (Array.isArray(json.board_matches)) {
-        if (json.board_matches.length === 0) {
-            return "Aucune carte détectée sur le plateau.";
-        }
+    const boardMatches = Array.isArray(json.board_analysis?.board_matches)
+        ? json.board_analysis.board_matches
+        : Array.isArray(json.board_matches)
+            ? json.board_matches
+            : [];
 
+    if (boardMatches.length > 0) {
         const lines = [];
         lines.push("=== MODE : BOARD ===");
 
-        json.board_matches.forEach((item, index) => {
+        boardMatches.forEach((item, index) => {
             const slot = item.slot_id || item.slot_label || item.slot || `slot_${index + 1}`;
             const card = item.final_card_id || item.card_id || "inconnue";
             const status = item.final_status || "unknown";
@@ -256,6 +258,11 @@ function buildReadableResult(json) {
         });
 
         return lines.join("\n");
+    }
+
+    // cas où le backend renvoie bien une structure board mais vide
+    if (json.board_analysis || json.board_matches) {
+        return "Aucune carte détectée sur le plateau.";
     }
 
     // MODE carte unique
@@ -272,7 +279,6 @@ function buildReadableResult(json) {
 
     return "Résultat disponible dans le JSON.";
 }
-
 
 // =========================
 // JSON TOOLS
