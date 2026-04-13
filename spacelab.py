@@ -5166,33 +5166,62 @@ def _build_slots_from_capsules(capsules, img_shape):
     capsules = sorted(capsules, key=lambda c: c["x"])
     left, middle, right = capsules
 
-    def cx(cap):
-        return float(cap["x"] + (cap["w"] / 2.0))
+    def _center(cap):
+        return float(cap["x"] + (cap["w"] / 2.0)), float(cap["y"] + (cap["h"] / 2.0))
 
-    cxl = cx(left)
-    cxm = cx(middle)
-    cxr = cx(right)
-    cy_med = float(np.median([left["y"], middle["y"], right["y"]]))
-    h_med = float(np.median([left["h"], middle["h"], right["h"]]))
+    def _copy_cap(cap):
+        return {"x": float(cap["x"]), "y": float(cap["y"]), "w": float(cap["w"]), "h": float(cap["h"])}
+
+    left_a = _copy_cap(left)
+    middle_a = _copy_cap(middle)
+    right_a = _copy_cap(right)
+
+    cxl, cyl = _center(left_a)
+    cxm, cym = _center(middle_a)
+    cxr, cyr = _center(right_a)
+
+    h_med = float(np.median([left_a["h"], middle_a["h"], right_a["h"]]))
+    w_med = float(np.median([left_a["w"], middle_a["w"], right_a["w"]]))
+    lr_mid_x = (cxl + cxr) / 2.0
+    lr_mid_y = (cyl + cyr) / 2.0
+    gap_left = max(1.0, cxm - cxl)
+    gap_right = max(1.0, cxr - cxm)
+    gap_ratio = max(gap_left, gap_right) / max(1.0, min(gap_left, gap_right))
+    y_offset = abs(cym - lr_mid_y)
+    x_offset = abs(cxm - lr_mid_x)
+
+    # If the middle capsule is an obvious outlier, rebuild its anchor from the left/right stations.
+    if gap_ratio > 1.35 or y_offset > (0.18 * h_med) or x_offset > (0.14 * max(1.0, (cxr - cxl))):
+        middle_a["w"] = w_med
+        middle_a["h"] = h_med
+        middle_a["x"] = lr_mid_x - (w_med / 2.0)
+        middle_a["y"] = lr_mid_y - (h_med / 2.0)
+        cxm, cym = _center(middle_a)
+
+    cxl, cyl = _center(left_a)
+    cxr, cyr = _center(right_a)
+    y_line = float(np.median([cyl, cym, cyr]))
     gap_med = float(np.median([max(1.0, cxm - cxl), max(1.0, cxr - cxm)]))
+
     top_w = int(round(gap_med * 0.34))
     top_h = int(round(top_w * 1.58))
     side_w = int(round(gap_med * 0.36))
     side_h = int(round(side_w * 1.50))
     bottom_w = top_w
     bottom_h = top_h
-    top_y = cy_med - int(round(h_med * 1.08))
-    mid_y = cy_med - int(round(side_h * 0.32))
-    bottom_y = cy_med + int(round(h_med * 0.58))
+
+    top_y = int(round(y_line - (h_med * 1.18) - (top_h * 0.35)))
+    mid_y = int(round(y_line - (side_h * 0.50)))
+    bottom_y = int(round(y_line + (h_med * 0.42)))
 
     centers = [
         ("top_left", cxl, top_y, top_w, top_h, "top"),
         ("top_middle", cxm, top_y, top_w, top_h, "top"),
         ("top_right", cxr, top_y, top_w, top_h, "top"),
-        ("left_outer", cxl - (gap_med * 0.52), mid_y, side_w, side_h, "middle"),
+        ("left_outer", cxl - (gap_med * 0.56), mid_y, side_w, side_h, "middle"),
         ("middle_left", (cxl + cxm) / 2.0, mid_y, side_w, side_h, "middle"),
         ("middle_right", (cxm + cxr) / 2.0, mid_y, side_w, side_h, "middle"),
-        ("right_outer", cxr + (gap_med * 0.52), mid_y, side_w, side_h, "middle"),
+        ("right_outer", cxr + (gap_med * 0.56), mid_y, side_w, side_h, "middle"),
         ("bottom_left", cxl, bottom_y, bottom_w, bottom_h, "bottom"),
         ("bottom_middle", cxm, bottom_y, bottom_w, bottom_h, "bottom"),
         ("bottom_right", cxr, bottom_y, bottom_w, bottom_h, "bottom"),
@@ -5205,7 +5234,6 @@ def _build_slots_from_capsules(capsules, img_shape):
         box["band"] = band
         out.append(box)
     return out
-
 
 def _analyze_board_slot(crop):
     if crop is None or crop.size == 0:
