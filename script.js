@@ -96,6 +96,26 @@ fileInput.onchange = e => {
     img.src = URL.createObjectURL(file);
 };
 
+function showLastJson() {
+  const el = document.getElementById("jsonOutput");
+  if (!window.lastUploadJson) {
+    el.style.display = "block";
+    el.textContent = "Aucun JSON disponible pour le moment.";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = JSON.stringify(window.lastUploadJson, null, 2);
+}
+
+async function copyLastJson() {
+  if (!window.lastUploadJson) {
+    alert("Aucun JSON disponible pour le moment.");
+    return;
+  }
+  const txt = JSON.stringify(window.lastUploadJson, null, 2);
+  await navigator.clipboard.writeText(txt);
+  alert("JSON copié.");
+}
 
 // =========================
 // SEND TO PYTHON
