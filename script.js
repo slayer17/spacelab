@@ -370,7 +370,9 @@ function sendToPython() {
 
             // --- CAS 1 : MODE BOARD ---
             if (mode === "BOARD") {
-                const matches = Array.isArray(json.board_matches) ? json.board_matches : [];
+                const matches = Array.isArray(json.board_analysis?.board_matches)
+    ? json.board_analysis.board_matches
+    : [];
 
                 if (!matches.length) {
                     resultEl.textContent = "Aucune carte détectée sur le plateau";
