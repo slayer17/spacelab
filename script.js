@@ -1,5 +1,9 @@
 console.log("CARDS =", CARDS);
 
+let lastImageDataUrl = null;
+let lastAnalysisJson = null;
+let lastResultText = "";
+
 let mode = "BOARD";
 window.lastUploadJson = null;
 
@@ -21,6 +25,9 @@ const resultEl = document.getElementById("result");
 const btnShowJson = document.getElementById("btnShowJson");
 const btnCopyJson = document.getElementById("btnCopyJson");
 const jsonOutput = document.getElementById("jsonOutput");
+
+// bouton export
+const exportReportBtn = document.getElementById("exportReportBtn");
 
 let currentStream = null;
 
@@ -71,6 +78,9 @@ captureBtn.onclick = () => {
 
     ctx.drawImage(video, 0, 0);
 
+    // mémorise l'image affichée
+    lastImageDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
     sendToPython();
 };
 
@@ -95,11 +105,173 @@ fileInput.onchange = e => {
 
         ctx.drawImage(img, 0, 0);
 
+        // mémorise l'image affichée
+        lastImageDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
         sendToPython();
     };
 
     img.src = URL.createObjectURL(file);
 };
+
+
+// =========================
+// EXPORT HTML + JSON
+// =========================
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function downloadFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportHtmlAndJson() {
+    if (!lastAnalysisJson) {
+        alert("Aucun JSON à exporter.");
+        return;
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const jsonPretty = JSON.stringify(lastAnalysisJson, null, 2);
+    const safeResult = escapeHtml(lastResultText || "Aucun résultat.");
+
+    const imageBlock = lastImageDataUrl
+        ? `<img src="${lastImageDataUrl}" alt="image analysée" style="max-width:100%; border:1px solid #ccc; border-radius:8px;">`
+        : `<p style="color:#888;">Image non disponible.</p>`;
+
+    const htmlContent = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Rapport SpaceLab</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 24px;
+            background: #f7f7f7;
+            color: #222;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        h1, h2 {
+            margin-top: 0;
+        }
+        pre {
+            background: #111;
+            color: #eee;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .result {
+            white-space: pre-wrap;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .meta {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Rapport d'analyse SpaceLab</h1>
+        <div class="meta">Généré le ${new Date().toLocaleString("fr-FR")}</div>
+    </div>
+
+    <div class="card">
+        <h2>Image analysée</h2>
+        ${imageBlock}
+    </div>
+
+    <div class="card">
+        <h2>Résultat</h2>
+        <div class="result">${safeResult}</div>
+    </div>
+
+    <div class="card">
+        <h2>JSON complet</h2>
+        <pre>${escapeHtml(jsonPretty)}</pre>
+    </div>
+</body>
+</html>`;
+
+    downloadFile(
+        `spacelab_report_${timestamp}.html`,
+        htmlContent,
+        "text/html;charset=utf-8"
+    );
+
+    downloadFile(
+        `spacelab_report_${timestamp}.json`,
+        jsonPretty,
+        "application/json;charset=utf-8"
+    );
+}
+
+function buildReadableResult(json) {
+    if (!json) return "Aucun résultat.";
+
+    // MODE BOARD
+    if (Array.isArray(json.board_matches)) {
+        if (json.board_matches.length === 0) {
+            return "Aucune carte détectée sur le plateau.";
+        }
+
+        const lines = [];
+        lines.push("=== MODE : BOARD ===");
+
+        json.board_matches.forEach((item, index) => {
+            const slot = item.slot_id || item.slot_label || item.slot || `slot_${index + 1}`;
+            const card = item.final_card_id || item.card_id || "inconnue";
+            const status = item.final_status || "unknown";
+            const score = item.final_score ?? item.score ?? "n/a";
+            lines.push(`${index + 1}. ${slot} : ${card} (${status}) score=${score}`);
+        });
+
+        return lines.join("\n");
+    }
+
+    // MODE carte unique
+    if (json.final_card_id) {
+        return `Carte détectée : ${json.final_card_id} (score: ${json.final_score ?? "n/a"}, statut: ${json.final_status ?? "unknown"})`;
+    }
+
+    if (json.signature) {
+        const color = json.color_name || json.signature?.color?.detected || "??";
+        const symbol = json.symbol_name || json.signature?.symbol?.name || "??";
+        const points = json.points ?? json.signature?.points?.digit ?? "??";
+        return `Carte détectée : couleur=${color}, symbole=${symbol}, points=${points}`;
+    }
+
+    return "Résultat disponible dans le JSON.";
+}
 
 
 // =========================
@@ -144,6 +316,10 @@ if (btnCopyJson) {
     btnCopyJson.addEventListener("click", copyLastJson);
 }
 
+if (exportReportBtn) {
+    exportReportBtn.addEventListener("click", exportHtmlAndJson);
+}
+
 
 // =========================
 // SEND TO PYTHON
@@ -167,6 +343,15 @@ function sendToPython() {
             const json = await res.json();
             window.lastUploadJson = json;
 
+            // mémorise pour export
+            lastAnalysisJson = json;
+            lastResultText = buildReadableResult(json);
+
+            // si l'image n'a pas encore été mémorisée
+            if (!lastImageDataUrl) {
+                lastImageDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+            }
+
             console.log("UPLOAD JSON =", json);
 
             if (json.error) {
@@ -174,13 +359,10 @@ function sendToPython() {
                 return;
             }
 
-            // Redessine l'image courante avant de tracer les rectangles
-            // si nécessaire, le canvas contient déjà l'image uploadée/capturée
-
-            // Dessin des rectangles de détection
+            // redessine les rectangles de détection
             drawRects(json.rects || []);
 
-            // Dessin des zones d'intérêt (ROI) si une carte unique est détectée
+            // zones ROI si carte unique
             if (mode !== "BOARD" && json.rois && json.rects && json.rects.length > 0) {
                 const r = json.rects[0];
                 drawRois(json.rois, r);
@@ -192,6 +374,7 @@ function sendToPython() {
 
                 if (!matches.length) {
                     resultEl.textContent = "Aucune carte détectée sur le plateau";
+                    lastResultText = resultEl.textContent;
                     return;
                 }
 
@@ -219,6 +402,7 @@ function sendToPython() {
                 });
 
                 resultEl.textContent = lines.join("\n");
+                lastResultText = resultEl.textContent;
                 return;
             }
 
@@ -251,13 +435,16 @@ function sendToPython() {
                 message += `Gap      : ${finalGap.toFixed(3)}`;
 
                 resultEl.textContent = message;
+                lastResultText = resultEl.textContent;
             } else {
                 resultEl.textContent = "Pas de signature détectée par le serveur.";
+                lastResultText = resultEl.textContent;
             }
 
         } catch (err) {
             console.error(err);
             resultEl.textContent = "Erreur lors de la communication avec le serveur.";
+            lastResultText = resultEl.textContent;
         }
     }, "image/jpeg");
 }
