@@ -393,55 +393,49 @@ function sendToPython() {
 
 // --- CAS 1 : MODE BOARD ---
 if (mode === "BOARD") {
-    const matches = Array.isArray(json.board_analysis?.board_matches)
-        ? json.board_analysis.board_matches
-        : Array.isArray(json.board_matches)
-            ? json.board_matches
-            : Array.isArray(json.board_analysis?.slots)
-                ? json.board_analysis.slots
-                : [];
+    const boardAnalysis = json.board_analysis || {};
+    const matches = Array.isArray(boardAnalysis.board_matches) ? boardAnalysis.board_matches : [];
+    const slots = Array.isArray(boardAnalysis.slots) ? boardAnalysis.slots : [];
 
-    if (!matches.length) {
-        resultEl.textContent = "Aucune carte détectée sur le plateau";
+    if (matches.length > 0) {
+        const lines = [];
+        lines.push("=== MODE : BOARD ===");
+        lines.push(`Cartes reconnues : ${matches.length}`);
+        lines.push("");
+
+        matches.forEach((m, idx) => {
+            const slotName = m.slot || m.slot_id || m.band || `slot_${idx + 1}`;
+            const cardName = m.final_card_id || m.card_id || "inconnue";
+            const status = m.final_status || "detected";
+            const score = m.final_score ?? m.score ?? "n/a";
+
+            lines.push(`${idx + 1}. ${slotName} : ${cardName} (${status}) score=${score}`);
+        });
+
+        resultEl.textContent = lines.join("\n");
         lastResultText = resultEl.textContent;
         return;
     }
 
-    const lines = [];
-    lines.push("=== MODE : BOARD ===");
-    lines.push(`Total détecté : ${matches.length}`);
-    lines.push("");
+    if (slots.length > 0) {
+        const lines = [];
+        lines.push("=== MODE : BOARD ===");
+        lines.push(`Zones détectées : ${slots.length}`);
+        lines.push("Aucune carte reconnue pour le moment.");
+        lines.push("");
+        lines.push("Détail des zones :");
 
-    matches.forEach((m, idx) => {
-        const num = idx + 1;
+        slots.forEach((s, idx) => {
+            const slotName = s.slot || s.slot_id || s.band || `slot_${idx + 1}`;
+            lines.push(`${idx + 1}. ${slotName}`);
+        });
 
-        const slotName =
-            m.slot_id ||
-            m.slot_label ||
-            m.slot ||
-            m.band ||
-            `slot_${num}`;
+        resultEl.textContent = lines.join("\n");
+        lastResultText = resultEl.textContent;
+        return;
+    }
 
-        const cardName =
-            m.final_card_id ||
-            m.card_id ||
-            m.label ||
-            "carte détectée";
-
-        const status =
-            m.final_status ||
-            (m.final_card_id ? "accepted" : "detected");
-
-        const score =
-            m.final_score ??
-            m.score ??
-            m.match_score ??
-            "n/a";
-
-        lines.push(`${num}. ${slotName} : ${cardName} (${status}) score=${score}`);
-    });
-
-    resultEl.textContent = lines.join("\n");
+    resultEl.textContent = "Aucune zone détectée sur le plateau";
     lastResultText = resultEl.textContent;
     return;
 }
