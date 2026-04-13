@@ -4918,15 +4918,52 @@ def _get_capsule_templates():
     if _CAPSULE_TEMPLATE_CACHE is not None:
         return _CAPSULE_TEMPLATE_CACHE
 
-    raw = {
-        "left": _decode_inline_png_b64_keep_alpha(_LEFT_CAPSULE_TEMPLATE_B64),
-        "middle": _decode_inline_png_b64_keep_alpha(_MID_CAPSULE_TEMPLATE_B64),
-        "right": _decode_inline_png_b64_keep_alpha(_RIGHT_CAPSULE_TEMPLATE_B64),
+    stations_dir = os.path.join(BASE_DIR, "stations")
+    candidates = {
+        "left": [
+            os.path.join(stations_dir, "station_gauche.png"),
+            os.path.join(stations_dir, "capsule_left.png"),
+        ],
+        "middle": [
+            os.path.join(stations_dir, "station_milieu.png"),
+            os.path.join(stations_dir, "capsule_middle.png"),
+        ],
+        "right": [
+            os.path.join(stations_dir, "station_droite.png"),
+            os.path.join(stations_dir, "capsule_right.png"),
+        ],
     }
 
     _CAPSULE_TEMPLATE_CACHE = {}
-    for label, img in raw.items():
-        _CAPSULE_TEMPLATE_CACHE[label] = _preprocess_capsule_template(img)
+    for label, paths in candidates.items():
+        chosen = None
+        for path in paths:
+            if os.path.exists(path):
+                chosen = path
+                break
+
+        if not chosen:
+            _CAPSULE_TEMPLATE_CACHE[label] = {
+                "ok": False,
+                "path": paths[0],
+                "error": "missing_file",
+            }
+            continue
+
+        img = cv2.imread(chosen, cv2.IMREAD_UNCHANGED)
+        if img is None or img.size == 0:
+            _CAPSULE_TEMPLATE_CACHE[label] = {
+                "ok": False,
+                "path": chosen,
+                "error": "unreadable_image",
+            }
+            continue
+
+        tpl = _preprocess_capsule_template(img)
+        tpl["ok"] = True
+        tpl["path"] = chosen
+        _CAPSULE_TEMPLATE_CACHE[label] = tpl
+
     return _CAPSULE_TEMPLATE_CACHE
 
 
@@ -4941,51 +4978,74 @@ def _resize_for_board_debug(img, max_width=1600):
     scale = max_width / float(w)
     out = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
     return out, scale
+
+
 def _rotate_bound(img, angle, border_value=0):
     if img is None or img.size == 0:
         return img
 
     h, w = img.shape[:2]
     cx, cy = (w / 2.0, h / 2.0)
-
     M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
-
     cos = abs(M[0, 0])
     sin = abs(M[0, 1])
-
     new_w = int((h * sin) + (w * cos))
     new_h = int((h * cos) + (w * sin))
-
     M[0, 2] += (new_w / 2.0) - cx
     M[1, 2] += (new_h / 2.0) - cy
 
     if len(img.shape) == 2:
         return cv2.warpAffine(
-            img,
-            M,
-            (new_w, new_h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=border_value,
+            img, M, (new_w, new_h), flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT, borderValue=border_value,
         )
 
     return cv2.warpAffine(
-        img,
-        M,
-        (new_w, new_h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(border_value, border_value, border_value),
+        img, M, (new_w, new_h), flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT, borderValue=(border_value, border_value, border_value),
     )
 
+
+def _finite_score(value, default=0.0):
+    try:
+        value = float(value)
+    except Exception:
+        return float(default)
+    if not np.isfinite(value):
+        return float(default)
+    return float(value)
+
+
+def _bounded01(value, default=0.0):
+    value = _finite_score(value, default=default)
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+def _safe_match_template(image, templ, mask=None):
+    if image is None or templ is None:
+        return None
+    try:
+        if mask is not None and np.count_nonzero(mask) > 0:
+            return cv2.matchTemplate(image, templ, cv2.TM_CCORR_NORMED, mask=mask)
+        return cv2.matchTemplate(image, templ, cv2.TM_CCORR_NORMED)
+    except Exception:
+        try:
+            return cv2.matchTemplate(image, templ, cv2.TM_CCORR_NORMED)
+        except Exception:
+            return None
+
+
 def _match_capsule_template(img, template, x_min_frac, x_max_frac):
-    if template is None:
+    if not template or not template.get("ok"):
         return None
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     edge = cv2.Canny(gray, 50, 140)
-
     h, w = gray.shape[:2]
     x1 = max(0, int(round(w * float(x_min_frac))))
     x2 = min(w, int(round(w * float(x_max_frac))))
@@ -4994,20 +5054,22 @@ def _match_capsule_template(img, template, x_min_frac, x_max_frac):
 
     sub_gray = gray[:, x1:x2]
     sub_edge = edge[:, x1:x2]
+    base_gray = template.get("gray")
+    base_edge = template.get("edge")
+    base_mask = template.get("mask")
+    if base_gray is None or base_edge is None or base_mask is None:
+        return None
 
-    base_gray = template["gray"]
-    base_edge = template["edge"]
-    base_mask = template["mask"]
-
-    scales = [0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30, 1.45, 1.60]
-    angles = [-8, -5, -3, 0, 3, 5, 8]
-
+    scales = [0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30]
+    angles = [-6, -3, 0, 3, 6]
     best = None
 
     for angle in angles:
         gray_rot = _rotate_bound(base_gray, angle)
         edge_rot = _rotate_bound(base_edge, angle)
         mask_rot = _rotate_bound(base_mask, angle)
+        if gray_rot is None or edge_rot is None or mask_rot is None:
+            continue
         mask_rot = cv2.threshold(mask_rot, 8, 255, cv2.THRESH_BINARY)[1]
 
         for scale in scales:
@@ -5015,34 +5077,37 @@ def _match_capsule_template(img, template, x_min_frac, x_max_frac):
             tpl_edge = cv2.resize(edge_rot, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
             tpl_mask = cv2.resize(mask_rot, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
             tpl_mask = cv2.threshold(tpl_mask, 8, 255, cv2.THRESH_BINARY)[1]
-
             th, tw = tpl_gray.shape[:2]
             if th >= sub_gray.shape[0] or tw >= sub_gray.shape[1]:
                 continue
             if th < 80 or tw < 40:
                 continue
-            if np.count_nonzero(tpl_mask) < (th * tw * 0.10):
+            if int(np.count_nonzero(tpl_mask)) < int(th * tw * 0.10):
                 continue
 
-            res_gray = cv2.matchTemplate(sub_gray, tpl_gray, cv2.TM_CCORR_NORMED, mask=tpl_mask)
-            res_edge = cv2.matchTemplate(sub_edge, tpl_edge, cv2.TM_CCORR_NORMED, mask=tpl_mask)
+            res_gray = _safe_match_template(sub_gray, tpl_gray, tpl_mask)
+            res_edge = _safe_match_template(sub_edge, tpl_edge, tpl_mask)
+            if res_gray is None or res_edge is None:
+                continue
+
             _, max_gray, _, max_loc_gray = cv2.minMaxLoc(res_gray)
             _, max_edge, _, max_loc_edge = cv2.minMaxLoc(res_edge)
-
-            score = (float(max_gray) * 0.65) + (float(max_edge) * 0.35)
+            max_gray = _bounded01(max_gray, 0.0)
+            max_edge = _bounded01(max_edge, 0.0)
+            score = _bounded01((max_gray * 0.70) + (max_edge * 0.30), 0.0)
             loc_x = int(round((max_loc_gray[0] + max_loc_edge[0]) / 2.0)) + x1
             loc_y = int(round((max_loc_gray[1] + max_loc_edge[1]) / 2.0))
-
             cand = {
-                "score": float(score),
+                "score": score,
                 "x": int(loc_x),
                 "y": int(loc_y),
                 "w": int(tw),
                 "h": int(th),
                 "angle": float(angle),
                 "scale": float(scale),
-                "gray_score": float(max_gray),
-                "edge_score": float(max_edge),
+                "gray_score": max_gray,
+                "edge_score": max_edge,
+                "path": template.get("path"),
             }
             if best is None or cand["score"] > best["score"]:
                 best = cand
@@ -5052,27 +5117,38 @@ def _match_capsule_template(img, template, x_min_frac, x_max_frac):
 
 def _detect_board_capsules(img):
     templates = _get_capsule_templates()
-
     searches = [
-        ("left", templates.get("left"), 0.00, 0.36),
-        ("middle", templates.get("middle"), 0.26, 0.74),
-        ("right", templates.get("right"), 0.58, 1.00),
+        ("left", templates.get("left"), 0.00, 0.40),
+        ("middle", templates.get("middle"), 0.20, 0.80),
+        ("right", templates.get("right"), 0.55, 1.00),
     ]
 
     found = []
+    diagnostics = []
     for label, tpl, xmin, xmax in searches:
+        info = {"label": label, "path": None, "template_ok": False, "error": None, "score": 0.0}
+        if tpl:
+            info["path"] = tpl.get("path")
+            info["template_ok"] = bool(tpl.get("ok"))
+            info["error"] = tpl.get("error")
+        if not tpl or not tpl.get("ok"):
+            diagnostics.append(info)
+            continue
         hit = _match_capsule_template(img, tpl, xmin, xmax)
         if not hit:
+            info["error"] = "no_match"
+            diagnostics.append(info)
             continue
         hit["label"] = label
         found.append(hit)
+        info["score"] = float(hit.get("score", 0.0))
+        diagnostics.append(info)
 
     found = sorted(found, key=lambda c: c["x"])
     if len(found) == 3:
         for idx, label in enumerate(["left", "middle", "right"]):
             found[idx]["label"] = label
-
-    return found
+    return found, diagnostics
 
 
 def _clip_box(x, y, w, h, img_w, img_h):
@@ -5080,21 +5156,14 @@ def _clip_box(x, y, w, h, img_w, img_h):
     y1 = max(0, int(round(y)))
     x2 = min(img_w, int(round(x + w)))
     y2 = min(img_h, int(round(y + h)))
-    return {
-        "x": x1,
-        "y": y1,
-        "w": max(0, x2 - x1),
-        "h": max(0, y2 - y1),
-    }
+    return {"x": x1, "y": y1, "w": max(0, x2 - x1), "h": max(0, y2 - y1)}
 
 
 def _build_slots_from_capsules(capsules, img_shape):
     img_h, img_w = img_shape[:2]
     if len(capsules) < 3:
         return []
-
     capsules = sorted(capsules, key=lambda c: c["x"])
-
     left, middle, right = capsules
 
     def cx(cap):
@@ -5105,30 +5174,25 @@ def _build_slots_from_capsules(capsules, img_shape):
     cxr = cx(right)
     cy_med = float(np.median([left["y"], middle["y"], right["y"]]))
     h_med = float(np.median([left["h"], middle["h"], right["h"]]))
-    w_med = float(np.median([left["w"], middle["w"], right["w"]]))
-    gap_lm = max(1.0, cxm - cxl)
-    gap_mr = max(1.0, cxr - cxm)
-    gap_med = float(np.median([gap_lm, gap_mr]))
-
-    top_w = int(round(gap_med * 0.36))
-    top_h = int(round(top_w * 1.60))
-    side_w = int(round(gap_med * 0.37))
-    side_h = int(round(side_w * 1.52))
+    gap_med = float(np.median([max(1.0, cxm - cxl), max(1.0, cxr - cxm)]))
+    top_w = int(round(gap_med * 0.34))
+    top_h = int(round(top_w * 1.58))
+    side_w = int(round(gap_med * 0.36))
+    side_h = int(round(side_w * 1.50))
     bottom_w = top_w
     bottom_h = top_h
-
-    top_y = cy_med - int(round(h_med * 1.18))
-    mid_y = cy_med - int(round(side_h * 0.38))
-    bottom_y = cy_med + int(round(h_med * 0.62))
+    top_y = cy_med - int(round(h_med * 1.08))
+    mid_y = cy_med - int(round(side_h * 0.32))
+    bottom_y = cy_med + int(round(h_med * 0.58))
 
     centers = [
         ("top_left", cxl, top_y, top_w, top_h, "top"),
         ("top_middle", cxm, top_y, top_w, top_h, "top"),
         ("top_right", cxr, top_y, top_w, top_h, "top"),
-        ("left_outer", cxl - (gap_med * 0.58), mid_y, side_w, side_h, "middle"),
+        ("left_outer", cxl - (gap_med * 0.52), mid_y, side_w, side_h, "middle"),
         ("middle_left", (cxl + cxm) / 2.0, mid_y, side_w, side_h, "middle"),
         ("middle_right", (cxm + cxr) / 2.0, mid_y, side_w, side_h, "middle"),
-        ("right_outer", cxr + (gap_med * 0.58), mid_y, side_w, side_h, "middle"),
+        ("right_outer", cxr + (gap_med * 0.52), mid_y, side_w, side_h, "middle"),
         ("bottom_left", cxl, bottom_y, bottom_w, bottom_h, "bottom"),
         ("bottom_middle", cxm, bottom_y, bottom_w, bottom_h, "bottom"),
         ("bottom_right", cxr, bottom_y, bottom_w, bottom_h, "bottom"),
@@ -5140,20 +5204,16 @@ def _build_slots_from_capsules(capsules, img_shape):
         box["slot_id"] = slot_id
         box["band"] = band
         out.append(box)
-
     return out
 
 
 def _analyze_board_slot(crop):
     if crop is None or crop.size == 0:
-        return {
-            "status": "unknown",
-            "score": 0.0,
-            "reasons": ["empty_crop"],
-            "metrics": {},
-        }
-
+        return {"status": "invalid", "score": 0.0, "reasons": ["empty_crop"], "metrics": {}}
     h, w = crop.shape[:2]
+    if h < 40 or w < 30:
+        return {"status": "invalid", "score": 0.0, "reasons": ["too_small"], "metrics": {"h": int(h), "w": int(w)}}
+
     pad_x = int(round(w * 0.10))
     pad_y = int(round(h * 0.10))
     inner = crop[pad_y:max(pad_y + 1, h - pad_y), pad_x:max(pad_x + 1, w - pad_x)]
@@ -5163,163 +5223,117 @@ def _analyze_board_slot(crop):
     gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
     hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
     edges = cv2.Canny(gray, 80, 180)
-
     area = float(max(1, inner.shape[0] * inner.shape[1]))
     sat_ratio = float(np.count_nonzero(hsv[:, :, 1] > 45)) / area
     edge_ratio = float(np.count_nonzero(edges > 0)) / area
     dark_ratio = float(np.count_nonzero(gray < 130)) / area
     std_gray = float(np.std(gray)) / 255.0
-
     pink_mask = (
-        (hsv[:, :, 0] >= 135) &
-        (hsv[:, :, 0] <= 175) &
-        (hsv[:, :, 1] >= 20) &
-        (hsv[:, :, 2] >= 145)
+        (hsv[:, :, 0] >= 135) & (hsv[:, :, 0] <= 175) &
+        (hsv[:, :, 1] >= 20) & (hsv[:, :, 2] >= 145)
     )
     pink_ratio = float(np.count_nonzero(pink_mask)) / area
-
     occupied_score = 0.0
     occupied_score += min(1.0, sat_ratio / 0.10) * 0.35
     occupied_score += min(1.0, edge_ratio / 0.06) * 0.25
     occupied_score += min(1.0, dark_ratio / 0.22) * 0.20
     occupied_score += min(1.0, std_gray / 0.20) * 0.20
     occupied_score -= min(1.0, pink_ratio / 0.06) * 0.15
-
     occupied_score = max(0.0, min(1.0, occupied_score))
     status = "occupied" if occupied_score >= 0.52 else "empty"
-
-    reasons = [
-        f"sat={sat_ratio:.3f}",
-        f"edge={edge_ratio:.3f}",
-        f"dark={dark_ratio:.3f}",
-        f"std={std_gray:.3f}",
-        f"pink={pink_ratio:.3f}",
-    ]
-
     return {
         "status": status,
         "score": float(occupied_score),
-        "reasons": reasons,
+        "reasons": [
+            f"sat={sat_ratio:.3f}", f"edge={edge_ratio:.3f}",
+            f"dark={dark_ratio:.3f}", f"std={std_gray:.3f}", f"pink={pink_ratio:.3f}",
+        ],
         "metrics": {
-            "sat_ratio": float(sat_ratio),
-            "edge_ratio": float(edge_ratio),
-            "dark_ratio": float(dark_ratio),
-            "std_gray": float(std_gray),
-            "pink_ratio": float(pink_ratio),
+            "sat_ratio": float(sat_ratio), "edge_ratio": float(edge_ratio),
+            "dark_ratio": float(dark_ratio), "std_gray": float(std_gray), "pink_ratio": float(pink_ratio),
         },
     }
 
 
 def _build_board_debug_analysis(img):
     if img is None or img.size == 0:
-        return {
-            "ok": False,
-            "reason": "empty_image",
-            "capsules": [],
-            "slots": [],
-            "legacy_candidates": [],
-        }
-
+        return {"ok": False, "reason": "empty_image", "capsules": [], "slots": [], "legacy_candidates": [], "template_diagnostics": []}
     work, scale = _resize_for_board_debug(img, max_width=1600)
-    capsules_small = _detect_board_capsules(work)
-
+    capsules_small, template_diagnostics = _detect_board_capsules(work)
     capsules = []
     for cap in capsules_small:
         capsules.append({
             "label": cap.get("label"),
-            "score": float(cap.get("score", 0.0)),
-            "gray_score": float(cap.get("gray_score", 0.0)),
-            "edge_score": float(cap.get("edge_score", 0.0)),
-            "angle": float(cap.get("angle", 0.0)),
-            "scale": float(cap.get("scale", 1.0)),
-            "x": int(round(cap["x"] / scale)),
-            "y": int(round(cap["y"] / scale)),
-            "w": int(round(cap["w"] / scale)),
-            "h": int(round(cap["h"] / scale)),
+            "score": _bounded01(cap.get("score", 0.0)),
+            "gray_score": _bounded01(cap.get("gray_score", 0.0)),
+            "edge_score": _bounded01(cap.get("edge_score", 0.0)),
+            "angle": _finite_score(cap.get("angle", 0.0), 0.0),
+            "scale": _finite_score(cap.get("scale", 1.0), 1.0),
+            "x": int(round(cap["x"] / scale)), "y": int(round(cap["y"] / scale)),
+            "w": int(round(cap["w"] / scale)), "h": int(round(cap["h"] / scale)),
+            "path": cap.get("path"),
         })
-
     capsules = sorted(capsules, key=lambda c: c["x"])
-
     slots = _build_slots_from_capsules(capsules, img.shape) if len(capsules) >= 3 else []
-
     slot_results = []
     for slot in slots:
         x, y, w, h = slot["x"], slot["y"], slot["w"], slot["h"]
-        crop = img[y:y + h, x:x + w]
-        analysis = _analyze_board_slot(crop)
+        invalid_reasons = []
+        if w <= 0 or h <= 0:
+            invalid_reasons.append("clipped_outside_image")
+        if w < 40 or h < 40:
+            invalid_reasons.append("slot_too_small")
+        if invalid_reasons:
+            analysis = {"status": "invalid", "score": 0.0, "reasons": invalid_reasons, "metrics": {"w": int(w), "h": int(h)}}
+            crop_b64 = None
+        else:
+            crop = img[y:y + h, x:x + w]
+            analysis = _analyze_board_slot(crop)
+            crop_b64 = _img_to_base64(crop)
         slot_results.append({
-            "slot_id": slot["slot_id"],
-            "band": slot["band"],
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
-            "status": analysis["status"],
-            "score": float(analysis["score"]),
-            "reasons": analysis["reasons"],
-            "metrics": analysis["metrics"],
-            "crop_b64": _img_to_base64(crop),
+            "slot_id": slot["slot_id"], "band": slot["band"], "x": x, "y": y, "w": w, "h": h,
+            "status": analysis["status"], "score": float(analysis["score"]),
+            "reasons": analysis["reasons"], "metrics": analysis["metrics"], "crop_b64": crop_b64,
         })
-
     legacy_candidates = []
     if len(capsules) < 3:
         for cand in detect_board_candidates(img)[:12]:
             legacy_candidates.append({
-                "x": int(cand["x"]),
-                "y": int(cand["y"]),
-                "w": int(cand["w"]),
-                "h": int(cand["h"]),
-                "kind": cand.get("kind", "unknown"),
-                "score": float(cand.get("kind_score", 0.0)),
-                "reasons": cand.get("reasons", []),
+                "x": int(cand["x"]), "y": int(cand["y"]), "w": int(cand["w"]), "h": int(cand["h"]),
+                "kind": cand.get("kind", "unknown"), "score": float(cand.get("kind_score", 0.0)), "reasons": cand.get("reasons", []),
             })
-
+    if len(capsules) >= 3:
+        ok, reason = True, None
+    else:
+        missing = [d.get("label") for d in template_diagnostics if not d.get("template_ok")]
+        no_match = [d.get("label") for d in template_diagnostics if d.get("template_ok") and d.get("score", 0.0) <= 0.0]
+        if missing:
+            reason = "missing_station_templates"
+        elif no_match:
+            reason = "station_templates_loaded_but_no_match"
+        else:
+            reason = "capsules_not_found"
+        ok = False
     return {
-        "ok": len(capsules) >= 3,
-        "reason": None if len(capsules) >= 3 else "capsules_not_found",
-        "capsules": capsules,
-        "slots": slot_results,
-        "legacy_candidates": legacy_candidates,
-        "image_width": int(img.shape[1]),
-        "image_height": int(img.shape[0]),
+        "ok": ok, "reason": reason, "capsules": capsules, "slots": slot_results,
+        "legacy_candidates": legacy_candidates, "template_diagnostics": template_diagnostics,
+        "image_width": int(img.shape[1]), "image_height": int(img.shape[0]),
     }
 
 
 def _board_debug_overlay(img, analysis):
     overlay = img.copy()
-
     for cap in analysis.get("capsules", []):
         x, y, w, h = cap["x"], cap["y"], cap["w"], cap["h"]
         cv2.rectangle(overlay, (x, y), (x + w, y + h), (255, 180, 0), 3)
-        cv2.putText(
-            overlay,
-            f'capsule:{cap.get("label", "?")} {cap.get("score", 0.0):.2f}',
-            (x, max(24, y - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 180, 0),
-            2,
-        )
-
+        cv2.putText(overlay, f'capsule:{cap.get("label", "?")} {cap.get("score", 0.0):.2f}', (x, max(24, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 180, 0), 2)
     for slot in analysis.get("slots", []):
         x, y, w, h = slot["x"], slot["y"], slot["w"], slot["h"]
         status = slot.get("status", "unknown")
-        color = (0, 200, 0) if status == "occupied" else (160, 100, 255)
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(
-            overlay,
-            f'{slot["slot_id"]} {slot.get("score", 0.0):.2f}',
-            (x, max(18, y - 6)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
-            color,
-            1,
-        )
-
-    for cand in analysis.get("legacy_candidates", []):
-        x, y, w, h = cand["x"], cand["y"], cand["w"], cand["h"]
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 0, 255), 2)
-
+        color = (0, 200, 0) if status == "occupied" else ((160, 100, 255) if status == "empty" else (0, 0, 255))
+        if w > 0 and h > 0:
+            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(overlay, f'{slot["slot_id"]} {status} {slot.get("score", 0.0):.2f}', (x, max(20, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
     return overlay
 
 
@@ -5347,7 +5361,7 @@ def _render_board_debug_page(img, analysis):
 
     slot_rows = []
     for idx, slot in enumerate(analysis.get("slots", []), start=1):
-        status_class = "occupied" if slot.get("status") == "occupied" else "empty"
+        status_class = slot.get("status") if slot.get("status") in {"occupied", "empty", "invalid"} else "empty"
         slot_rows.append(f"""
         <tr>
           <td>{idx}</td>
@@ -5379,6 +5393,7 @@ def _render_board_debug_page(img, analysis):
 
     export_json = {
         "ok": analysis.get("ok", False),
+        "template_diagnostics": analysis.get("template_diagnostics", []),
         "reason": analysis.get("reason"),
         "image_width": analysis.get("image_width"),
         "image_height": analysis.get("image_height"),
@@ -5418,12 +5433,17 @@ def _render_board_debug_page(img, analysis):
     }
     pretty_json = json.dumps(export_json, indent=2, ensure_ascii=False)
 
-    status_text = "OK - 3 capsules détectées" if analysis.get("ok") else "ECHEC - capsules non détectées proprement"
+    status_text = "OK - 3 capsules détectées" if analysis.get("ok") else f'ECHEC - {analysis.get("reason") or "capsules non détectées proprement"}'
     hint_html = ""
     if not analysis.get("ok"):
-        hint_html = """
+        rows = []
+        for item in analysis.get("template_diagnostics", []):
+            rows.append(f"<li>{html.escape(str(item.get('label')))} : template_ok={item.get('template_ok')} score={float(item.get('score', 0.0)):.3f} path={html.escape(str(item.get('path') or ''))} error={html.escape(str(item.get('error') or ''))}</li>")
+        hint_html = f"""
         <div class="warn">
-          La détection des 3 capsules n'a pas été jugée assez fiable.
+          La détection des 3 stations n'a pas été jugée assez fiable.<br/>
+          <strong>Diagnostic templates :</strong>
+          <ul>{''.join(rows) if rows else '<li>Aucun diagnostic disponible</li>'}</ul>
           Les encadrés rouges en bas de page viennent de l'ancienne logique libre par contours, gardée seulement comme secours de debug.
         </div>
         """
@@ -5444,7 +5464,7 @@ def _render_board_debug_page(img, analysis):
   pre {{ background:#f5f5f5; padding:12px; border:1px solid #ddd; overflow:auto; white-space:pre-wrap; }}
   .toolbar {{ margin:16px 0; display:flex; gap:10px; flex-wrap:wrap; }}
   button {{ padding:8px 12px; cursor:pointer; }}
-</style
+</style>
     </head>
     <body>
       <h1>Board Debug - capsules + slots</h1>
