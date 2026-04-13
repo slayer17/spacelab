@@ -394,7 +394,11 @@ function sendToPython() {
 // --- CAS 1 : MODE BOARD ---
 if (mode === "BOARD") {
     const boardAnalysis = json.board_analysis || {};
-    const matches = Array.isArray(boardAnalysis.board_matches) ? boardAnalysis.board_matches : [];
+    const matches = Array.isArray(boardAnalysis.board_matches)
+        ? boardAnalysis.board_matches
+        : Array.isArray(json.board_matches)
+            ? json.board_matches
+            : [];
     const slots = Array.isArray(boardAnalysis.slots) ? boardAnalysis.slots : [];
 
     if (matches.length > 0) {
@@ -404,10 +408,23 @@ if (mode === "BOARD") {
         lines.push("");
 
         matches.forEach((m, idx) => {
-            const slotName = m.slot || m.slot_id || m.band || `slot_${idx + 1}`;
-            const cardName = m.final_card_id || m.card_id || "inconnue";
-            const status = m.final_status || "detected";
-            const score = m.final_score ?? m.score ?? "n/a";
+            const slotName =
+                m.slot_id ||
+                m.slot ||
+                m.band ||
+                `slot_${idx + 1}`;
+
+            const cardName =
+                m.final_card_id ||
+                m.card_id ||
+                "inconnue";
+
+            const status =
+                m.final_status ||
+                "detected";
+
+            const score =
+                m.final_score ?? m.score ?? "n/a";
 
             lines.push(`${idx + 1}. ${slotName} : ${cardName} (${status}) score=${score}`);
         });
@@ -426,8 +443,14 @@ if (mode === "BOARD") {
         lines.push("Détail des zones :");
 
         slots.forEach((s, idx) => {
-            const slotName = s.slot || s.slot_id || s.band || `slot_${idx + 1}`;
-            lines.push(`${idx + 1}. ${slotName}`);
+            const slotName =
+                s.slot_id ||
+                s.slot ||
+                s.band ||
+                `slot_${idx + 1}`;
+
+            const status = s.status || "unknown";
+            lines.push(`${idx + 1}. ${slotName} : ${status}`);
         });
 
         resultEl.textContent = lines.join("\n");
@@ -438,8 +461,12 @@ if (mode === "BOARD") {
     resultEl.textContent = "Aucune zone détectée sur le plateau";
     lastResultText = resultEl.textContent;
     return;
-}
-            // --- CAS 2 : MODE CARDS_ONLY ---
+}           
+			
+			
+			
+			
+			// --- CAS 2 : MODE CARDS_ONLY ---
             if (json.signature) {
                 const finalCardId = json.final_card_id || "Inconnue";
                 const finalStatus = json.final_status || "rejected";
