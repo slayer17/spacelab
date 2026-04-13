@@ -73,6 +73,72 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
 
+def _decode_uploaded_image(file_storage):
+    if file_storage is None:
+        return None
+
+    data = np.frombuffer(file_storage.read(), np.uint8)
+    if data.size == 0:
+        return None
+
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def _rect_from_full_image(img):
+    if img is None or img.size == 0:
+        return None
+
+    h, w = img.shape[:2]
+    return {
+        "x": 0,
+        "y": 0,
+        "w": int(w),
+        "h": int(h),
+        "quad": [
+            [0, 0],
+            [w - 1, 0],
+            [w - 1, h - 1],
+            [0, h - 1],
+        ],
+    }
+
+
+def _warp_from_rect(img, rect):
+    if img is None or img.size == 0 or rect is None:
+        return None
+
+    try:
+        quad = np.array(rect["quad"], dtype="float32")
+    except Exception:
+        return None
+
+    warped = warp_quad(img, quad)
+    if warped is None or warped.size == 0:
+        return None
+
+    return warped
+
+
+def _detect_and_warp_single_card(img, allow_full_image_fallback=False):
+    if img is None or img.size == 0:
+        return None, None, "invalid_image"
+
+    rect = detect_main_card(img)
+    if rect is None:
+        if not allow_full_image_fallback:
+            return None, None, "no_card_detected"
+        rect = _rect_from_full_image(img)
+
+    warped = _warp_from_rect(img, rect)
+    if warped is None:
+        if not allow_full_image_fallback:
+            return rect, None, "warp_failed"
+        rect = _rect_from_full_image(img)
+        warped = img.copy()
+
+    return rect, warped, "ok"
+
+
 
 # =====================================================
 # SYMBOL DETECTION
@@ -2941,9 +3007,7 @@ def upload():
             })
 
         file = request.files["image"]
-
-        data = np.frombuffer(file.read(), np.uint8)
-        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        img = _decode_uploaded_image(file)
 
         if img is None:
             return jsonify({
@@ -2955,34 +3019,30 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "reason": "invalid_image",
             })
 
-        rect = detect_main_card(img)
+        rect, warped, detect_reason = _detect_and_warp_single_card(
+            img,
+            allow_full_image_fallback=False,
+        )
 
-        if rect is None:
-            h, w = img.shape[:2]
-            rect = {
-                "x": 0,
-                "y": 0,
-                "w": int(w),
-                "h": int(h),
-                "quad": [
-                    [0, 0],
-                    [w - 1, 0],
-                    [w - 1, h - 1],
-                    [0, h - 1]
-                ]
-            }
-
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
+        if detect_reason != "ok" or warped is None or warped.size == 0:
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "reason": detect_reason,
+            })
 
         sig = None
         rois = []
         card_match = None
-
-        if warped is None or warped.size == 0:
-            warped = img.copy()
 
         if warped is not None and warped.size != 0:
             cv2.imwrite(WARP_PATH, warped)
@@ -3008,6 +3068,7 @@ def upload():
             "symbol_name": (card_match or {}).get("symbol_name"),
             "bottom_layout": (card_match or {}).get("bottom_layout"),
             "points": (card_match or {}).get("points"),
+            "reason": "ok",
         })
 
     except Exception as e:
@@ -3088,20 +3149,7 @@ def build_signatures():
                 })
                 continue
 
-            quad = np.array([
-                [0, 0],
-                [w - 1, 0],
-                [w - 1, h - 1],
-                [0, h - 1]
-            ], dtype="float32")
-
-            warped = warp_quad(img, quad)
-            if warped is None or warped.size == 0:
-                skipped.append({
-                    "id": card_id,
-                    "reason": "warp_failed"
-                })
-                continue
+            warped = img.copy()
 
             try:
                 sig, _ = compute_signature(warped)
@@ -3187,15 +3235,12 @@ def symbol_test():
     if img is None:
         return "Image invalide", 400
 
-    rect = detect_main_card(img)
-    warped = None
-
-    if rect is not None:
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
-    if warped is None or warped.size == 0:
-        warped = img.copy()
+    rect, warped, detect_reason = _detect_and_warp_single_card(
+        img,
+        allow_full_image_fallback=False,
+    )
+    if detect_reason != "ok" or warped is None or warped.size == 0:
+        return "Aucune carte unique détectée", 400
 
     warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
@@ -3349,15 +3394,12 @@ def symbol_batch_test():
                 )
                 continue
 
-            rect = detect_main_card(img)
-            warped = None
-
-            if rect is not None:
-                quad = np.array(rect["quad"], dtype="float32")
-                warped = warp_quad(img, quad)
-
-            if warped is None or warped.size == 0:
-                warped = img.copy()
+            rect, warped, detect_reason = _detect_and_warp_single_card(
+                img,
+                allow_full_image_fallback=False,
+            )
+            if detect_reason != "ok" or warped is None or warped.size == 0:
+                raise ValueError(detect_reason)
 
             warped = cv2.resize(warped, (200, 300))
             zone = _extract_symbol_zone_from_card(warped)
@@ -3659,15 +3701,12 @@ def card_batch_test():
             if img is None:
                 raise ValueError("invalid_image")
 
-            rect = detect_main_card(img)
-            if rect is not None:
-                quad = np.array(rect["quad"], dtype="float32")
-                warped = warp_quad(img, quad)
-            else:
-                warped = None
-
-            if warped is None or warped.size == 0:
-                warped = img.copy()
+            rect, warped, detect_reason = _detect_and_warp_single_card(
+                img,
+                allow_full_image_fallback=False,
+            )
+            if detect_reason != "ok" or warped is None or warped.size == 0:
+                raise ValueError(detect_reason)
 
             warped = cv2.resize(warped, (200, 300))
             sig, _ = compute_signature(warped)
@@ -4079,13 +4118,12 @@ def _load_bottom_reference_library():
             continue
 
         try:
-            rect = detect_main_card(img)
-            warped = None
-            if rect is not None:
-                quad = np.array(rect["quad"], dtype="float32")
-                warped = warp_quad(img, quad)
-            if warped is None or warped.size == 0:
-                warped = img.copy()
+            rect, warped, detect_reason = _detect_and_warp_single_card(
+                img,
+                allow_full_image_fallback=False,
+            )
+            if detect_reason != "ok" or warped is None or warped.size == 0:
+                continue
             warped = cv2.resize(warped, (200, 300))
             _, bottom_roi, _ = extract_bottom_roi_from_full_card(warped)
         except Exception:
@@ -4841,698 +4879,350 @@ def detect_board_candidates(img):
 # BOARD DEBUG - VERSION NETTOYÉE
 # =====================================================
 
+
 _CAPSULE_TEMPLATE_CACHE = None
-
-_LEFT_CAPSULE_TEMPLATE_B64 = """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"""
-_MID_CAPSULE_TEMPLATE_B64 = """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"""
-_RIGHT_CAPSULE_TEMPLATE_B64 = """iVBORw0KGgoAAAANSUhEUgAAAD0AAABzCAIAAACkUp2iAAArCUlEQVR4nMW82Zsk13EvFhFny72qunqbHQtBEAAByhQl2bRk3U3+7De/+z/zu7dnL0++4nd5
-fXW1kbREACQAAhgMZqanl+racjtr+KF6emZAcGhC8uXpr6s6s7IzfxkZESdOxC8Kf/I3P62buqwKIhq6fn25Yk6ImBd5M2m00UPXdZutGx0AkhST/T2TZ877
-zXrTb1tiIKKyrutJo42RSmZFppSC/58H/uTv/j6llFICAEJAJNx9woljJAQpBApiRAZQUh3euNlMp/8JkL18yF/82/8YU4ohBOdj8AioELSAjDjXWGeqLnRV
-ZSoTIfpt252++nZ48929oxu/X+iy3W9SiokTMxCDElIIKSikZDu/Xawv/Omq6dVsryhLLar48V/9T+bjt97+L//bN979PiL+3nAf3rwhhBBEAASRU4wco4Ag
-2LsuW67X5+thw9HWxaGuZoWub4ZP338/BFPWs1uvvvZ7w53nRV1VRmlEij4O/dB3HSSJqDBPotxXEwe19vXe0OzlZVaLGX902V6sLp+c/j5xI6IxJjcZADp0
-zjpABCQUJE1ZTQ+SkFhINa1TVQ1GNcWemh74ltfni98XaACQSMQALvjggx2s804QSa2MksgZeIcQ2JDJtBYiJS/KTGRy+/j8/PHj3yfuru+6bmtHOwxDdKEu
-69lkmhtdZJoggi+JHeuktCYBlh2ISBms1hdffvYr55zW+veDWwjyzjs7Dn3PIdZFabTMjFICIYAmMiSs98NmG8fkZEgYMdeT48P9mzeFEP90BCklZk4xpZR2
-DooEEREA7HYyMwICgpQCEHc7ZV2WWFdVUVRlF71vqibPjRJEzClFiBESC0REAimzOkct9m/e2Kf9W69855+Cu+/65fmSgSeTCUbYLtbrs6UgqbVp9ifFrBRS
-jJtxc7pygyVElenmeKJy7UffLTZSS2GyrMiyqiiiD0brTGsphGSOkYA5pQQIkqTUStdlktAcSBAwPzr6xqDHcTw7ObVPhqzIAzqOabzou5NWoPDK6ag0Ks6U
-uxzbhxvXWyFEXmbOZBgx9NZejHIchhSClFIJkSsthVBCKCkVYkRGIWJKngN5giBNwExKrdCis/3wjXF3my1t08nffHbj2/eKohCZMvNmYhQwCCDKVGSGEEGT
-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
-rkJggg=="""
+_STATIONS_DIR = os.path.join(BASE_DIR, "stations")
+_STATION_FILENAMES = {
+    "left": "station_gauche.png",
+    "middle": "station_milieu.png",
+    "right": "station_droite.png",
+}
 
 
-def _decode_inline_png_b64(b64_text):
-    raw = base64.b64decode((b64_text or "").encode("utf-8"))
-    arr = np.frombuffer(raw, np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+def _safe_float01(value):
+    try:
+        value = float(value)
+    except Exception:
+        return 0.0
+    if np.isnan(value) or np.isinf(value):
+        return 0.0
+    return max(0.0, min(1.0, value))
+
+
+def _load_capsule_template_image(label):
+    filename = _STATION_FILENAMES.get(label)
+    if not filename:
+        return None
+    path = os.path.join(_STATIONS_DIR, filename)
+    if not os.path.exists(path):
+        return None
+    return cv2.imread(path, cv2.IMREAD_COLOR)
+
+
+def _mask_pink_background(img_bgr):
+    if img_bgr is None or img_bgr.size == 0:
+        return None
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    pink = (
+        (hsv[:, :, 0] >= 135) &
+        (hsv[:, :, 0] <= 179) &
+        (hsv[:, :, 1] >= 20) &
+        (hsv[:, :, 2] >= 110)
+    )
+    mask = np.where(pink, 0, 255).astype(np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    return mask
+
+
+def _crop_to_mask_bbox(img_bgr, mask):
+    if img_bgr is None or mask is None or img_bgr.size == 0 or mask.size == 0:
+        return img_bgr, mask
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return img_bgr, mask
+    x1 = max(0, int(xs.min()))
+    y1 = max(0, int(ys.min()))
+    x2 = min(img_bgr.shape[1], int(xs.max()) + 1)
+    y2 = min(img_bgr.shape[0], int(ys.max()) + 1)
+    if x2 <= x1 or y2 <= y1:
+        return img_bgr, mask
+    return img_bgr[y1:y2, x1:x2], mask[y1:y2, x1:x2]
+
+
+def _preprocess_capsule_template(img_bgr):
+    if img_bgr is None or img_bgr.size == 0:
+        return None
+    mask = _mask_pink_background(img_bgr)
+    img_bgr, mask = _crop_to_mask_bbox(img_bgr, mask)
+    if img_bgr is None or img_bgr.size == 0:
+        return None
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    edge = cv2.Canny(gray, 60, 160)
+    if mask is None or mask.size == 0:
+        mask = np.full(gray.shape, 255, dtype=np.uint8)
+    return {
+        "img": img_bgr,
+        "gray": gray,
+        "edge": edge,
+        "mask": mask,
+    }
 
 
 def _get_capsule_templates():
     global _CAPSULE_TEMPLATE_CACHE
     if _CAPSULE_TEMPLATE_CACHE is not None:
         return _CAPSULE_TEMPLATE_CACHE
-
-    _CAPSULE_TEMPLATE_CACHE = {
-        "left": _decode_inline_png_b64(_LEFT_CAPSULE_TEMPLATE_B64),
-        "middle": _decode_inline_png_b64(_MID_CAPSULE_TEMPLATE_B64),
-        "right": _decode_inline_png_b64(_RIGHT_CAPSULE_TEMPLATE_B64),
-    }
+    cache = {}
+    for label in ("left", "middle", "right"):
+        cache[label] = _preprocess_capsule_template(_load_capsule_template_image(label))
+    _CAPSULE_TEMPLATE_CACHE = cache
     return _CAPSULE_TEMPLATE_CACHE
 
 
-def _rotate_bound(img, angle_deg):
+def _rotate_bound_gray(img, angle_deg, border_value=0):
+    if img is None or img.size == 0:
+        return img
     h, w = img.shape[:2]
     cx = w / 2.0
     cy = h / 2.0
-
     M = cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
     cos = abs(M[0, 0])
     sin = abs(M[0, 1])
-
     new_w = int((h * sin) + (w * cos))
     new_h = int((h * cos) + (w * sin))
-
     M[0, 2] += (new_w / 2.0) - cx
     M[1, 2] += (new_h / 2.0) - cy
-
     return cv2.warpAffine(
         img,
         M,
         (new_w, new_h),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(255, 255, 255),
+        borderValue=border_value,
     )
 
 
 def _resize_for_board_debug(img, max_width=1600):
     if img is None or img.size == 0:
         return img, 1.0
-
     h, w = img.shape[:2]
     if w <= max_width:
         return img.copy(), 1.0
-
     scale = max_width / float(w)
     out = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
     return out, scale
 
 
+def _search_window(img_w, x_min_frac, x_max_frac):
+    x1 = max(0, int(round(img_w * float(x_min_frac))))
+    x2 = min(img_w, int(round(img_w * float(x_max_frac))))
+    if x2 <= x1 + 40:
+        return 0, img_w
+    return x1, x2
+
+
 def _match_capsule_template(img, template, x_min_frac, x_max_frac):
+    if img is None or img.size == 0 or not template:
+        return None
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    edge = cv2.Canny(gray, 80, 180)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    edge = cv2.Canny(gray, 60, 160)
 
     h, w = gray.shape[:2]
-    x1 = max(0, int(round(w * float(x_min_frac))))
-    x2 = min(w, int(round(w * float(x_max_frac))))
-    if x2 <= x1 + 20:
-        x1, x2 = 0, w
-
+    x1, x2 = _search_window(w, x_min_frac, x_max_frac)
     sub_gray = gray[:, x1:x2]
     sub_edge = edge[:, x1:x2]
 
-    scales = [0.75, 0.85, 0.95, 1.00, 1.10, 1.20, 1.30, 1.40]
-    angles = [-10, -6, -3, 0, 3, 6, 10]
-
+    scales = [0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20]
+    angles = [-8, -4, 0, 4, 8]
     best = None
 
     for angle in angles:
-        rotated = _rotate_bound(template, angle)
-        tpl_gray_base = cv2.cvtColor(rotated, cv2.COLOR_BGR2GRAY)
-        tpl_edge_base = cv2.Canny(tpl_gray_base, 80, 180)
+        tpl_gray_base = _rotate_bound_gray(template["gray"], angle, border_value=255)
+        tpl_edge_base = _rotate_bound_gray(template["edge"], angle, border_value=0)
+        tpl_mask_base = _rotate_bound_gray(template["mask"], angle, border_value=0)
 
         for scale in scales:
-            tpl_gray = cv2.resize(
-                tpl_gray_base,
-                None,
-                fx=scale,
-                fy=scale,
-                interpolation=cv2.INTER_LINEAR,
-            )
-            tpl_edge = cv2.resize(
-                tpl_edge_base,
-                None,
-                fx=scale,
-                fy=scale,
-                interpolation=cv2.INTER_NEAREST,
-            )
+            tpl_gray = cv2.resize(tpl_gray_base, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            tpl_edge = cv2.resize(tpl_edge_base, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            tpl_mask = cv2.resize(tpl_mask_base, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
 
             th, tw = tpl_gray.shape[:2]
+            if th < 50 or tw < 30:
+                continue
             if th >= sub_gray.shape[0] or tw >= sub_gray.shape[1]:
                 continue
-            if th < 40 or tw < 20:
+
+            valid_ratio = float(np.count_nonzero(tpl_mask > 0)) / float(max(1, tpl_mask.size))
+            if valid_ratio < 0.18:
                 continue
 
             res_gray = cv2.matchTemplate(sub_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
-            res_edge = cv2.matchTemplate(sub_edge, tpl_edge, cv2.TM_CCOEFF_NORMED)
+            res_edge = cv2.matchTemplate(sub_edge, tpl_edge, cv2.TM_CCORR_NORMED)
 
             _, max_gray, _, max_loc_gray = cv2.minMaxLoc(res_gray)
             _, max_edge, _, max_loc_edge = cv2.minMaxLoc(res_edge)
 
-            score = (float(max_gray) + float(max_edge)) / 2.0
+            gray_score = _safe_float01(max_gray)
+            edge_score = _safe_float01(max_edge)
+            score = _safe_float01((gray_score * 0.70) + (edge_score * 0.30))
             loc_x = int(round((max_loc_gray[0] + max_loc_edge[0]) / 2.0)) + x1
             loc_y = int(round((max_loc_gray[1] + max_loc_edge[1]) / 2.0))
 
             cand = {
                 "score": score,
-                "x": loc_x,
-                "y": loc_y,
+                "x": int(loc_x),
+                "y": int(loc_y),
                 "w": int(tw),
                 "h": int(th),
                 "angle": float(angle),
                 "scale": float(scale),
-                "gray_score": float(max_gray),
-                "edge_score": float(max_edge),
+                "gray_score": gray_score,
+                "edge_score": edge_score,
+                "window": [int(x1), int(x2)],
             }
-
             if best is None or cand["score"] > best["score"]:
                 best = cand
 
     return best
 
 
-def _refine_detected_capsule_box(hit, label, img_shape):
-    """
-    Réduit légèrement la bbox brute issue du template matching.
-    Le template capture souvent un peu trop large / trop haut.
-    Ici on recentre la zone utile pour obtenir des coordonnées plus propres.
-    """
-    if not hit:
-        return hit
-
-    img_h, img_w = img_shape[:2]
-
-    x = float(hit.get("x", 0.0))
-    y = float(hit.get("y", 0.0))
-    w = float(hit.get("w", 0.0))
-    h = float(hit.get("h", 0.0))
-
-    if w <= 1 or h <= 1:
-        return hit
-
-    # Réglages empiriques basés sur les captures du plateau.
-    # left/right : on garde presque toute la capsule, mais on coupe les bords morts.
-    # middle     : la détection brute prend souvent trop large ; on resserre davantage.
-    presets = {
-        "left":   {"dx": 0.08, "dy": 0.03, "dw": 0.82, "dh": 0.88},
-        "middle": {"dx": 0.30, "dy": 0.32, "dw": 0.42, "dh": 0.58},
-        "right":  {"dx": 0.08, "dy": 0.03, "dw": 0.82, "dh": 0.88},
-    }
-    p = presets.get(label, {"dx": 0.0, "dy": 0.0, "dw": 1.0, "dh": 1.0})
-
-    nx = x + (w * p["dx"])
-    ny = y + (h * p["dy"])
-    nw = w * p["dw"]
-    nh = h * p["dh"]
-
-    nx = max(0, int(round(nx)))
-    ny = max(0, int(round(ny)))
-    nw = max(1, int(round(nw)))
-    nh = max(1, int(round(nh)))
-
-    if nx + nw > img_w:
-        nw = max(1, img_w - nx)
-    if ny + nh > img_h:
-        nh = max(1, img_h - ny)
-
-    out = dict(hit)
-    out["x"] = int(nx)
-    out["y"] = int(ny)
-    out["w"] = int(nw)
-    out["h"] = int(nh)
-    return out
-
-
 def _detect_board_capsules(img):
     templates = _get_capsule_templates()
-
     searches = [
-        ("left", templates["left"], 0.00, 0.52),
-        ("middle", templates["middle"], 0.18, 0.82),
-        ("right", templates["right"], 0.48, 1.00),
+        ("left", templates.get("left"), 0.00, 0.42),
+        ("middle", templates.get("middle"), 0.24, 0.76),
+        ("right", templates.get("right"), 0.58, 1.00),
     ]
-
     found = []
     for label, tpl, xmin, xmax in searches:
-        if tpl is None or tpl.size == 0:
-            continue
-
         hit = _match_capsule_template(img, tpl, xmin, xmax)
         if not hit:
             continue
-
         hit["label"] = label
-        hit = _refine_detected_capsule_box(hit, label, img.shape)
         found.append(hit)
-
-    found.sort(key=lambda c: c["x"])
-
-    if len(found) == 3:
-        found[0]["label"] = "left"
-        found[1]["label"] = "middle"
-        found[2]["label"] = "right"
-
     return found
 
 
-def _clip_box(x, y, w, h, img_w, img_h):
+def _clip_rect(x, y, w, h, img_w, img_h):
     x1 = max(0, int(round(x)))
     y1 = max(0, int(round(y)))
     x2 = min(img_w, int(round(x + w)))
     y2 = min(img_h, int(round(y + h)))
-    return {
-        "x": x1,
-        "y": y1,
-        "w": max(0, x2 - x1),
-        "h": max(0, y2 - y1),
-    }
+    return x1, y1, max(0, x2 - x1), max(0, y2 - y1)
+
+
+def _clip_box_dict(x, y, w, h, img_w, img_h):
+    x1, y1, ww, hh = _clip_rect(x, y, w, h, img_w, img_h)
+    return {"x": x1, "y": y1, "w": ww, "h": hh}
+
+
+def _validate_capsule_triplet(capsules, img_shape):
+    if len(capsules) != 3:
+        return False, "capsules_not_found"
+    caps = sorted(capsules, key=lambda c: c["x"])
+    cxs = [c["x"] + c["w"] / 2.0 for c in caps]
+    cys = [c["y"] + c["h"] / 2.0 for c in caps]
+    widths = [max(1, c["w"]) for c in caps]
+    heights = [max(1, c["h"]) for c in caps]
+    if not (cxs[0] < cxs[1] < cxs[2]):
+        return False, "capsule_order_invalid"
+    median_w = float(np.median(widths))
+    median_h = float(np.median(heights))
+    for w in widths:
+        if abs(w - median_w) / max(1.0, median_w) > 0.35:
+            return False, "capsule_width_mismatch"
+    for h in heights:
+        if abs(h - median_h) / max(1.0, median_h) > 0.35:
+            return False, "capsule_height_mismatch"
+    if max(cys) - min(cys) > median_h * 0.30:
+        return False, "capsule_alignment_invalid"
+    gaps = [cxs[1] - cxs[0], cxs[2] - cxs[1]]
+    if min(gaps) < median_w * 1.10:
+        return False, "capsule_gap_too_small"
+    if max(gaps) / max(1.0, min(gaps)) > 1.60:
+        return False, "capsule_gap_mismatch"
+    return True, None
+
+
+def _box_is_valid(box, img_shape):
+    img_h, img_w = img_shape[:2]
+    w = int(box.get("w", 0) or 0)
+    h = int(box.get("h", 0) or 0)
+    x = int(box.get("x", 0) or 0)
+    y = int(box.get("y", 0) or 0)
+    if w < 60 or h < 80:
+        return False, "too_small"
+    if x < 0 or y < 0 or x + w > img_w or y + h > img_h:
+        return False, "out_of_image"
+    area = float(w * h)
+    if area < float(img_w * img_h) * 0.003:
+        return False, "area_too_small"
+    return True, None
 
 
 def _build_slots_from_capsules(capsules, img_shape):
     img_h, img_w = img_shape[:2]
     if len(capsules) < 3:
         return []
+    caps = sorted(capsules, key=lambda c: c["x"])
+    cxs = np.array([c["x"] + c["w"] / 2.0 for c in caps], dtype=np.float32)
+    cys = np.array([c["y"] + c["h"] / 2.0 for c in caps], dtype=np.float32)
+    ws = np.array([c["w"] for c in caps], dtype=np.float32)
+    hs = np.array([c["h"] for c in caps], dtype=np.float32)
 
-    capsules = sorted(capsules, key=lambda c: c["x"])
+    med_w = float(np.median(ws))
+    med_h = float(np.median(hs))
+    gap_lm = float(cxs[1] - cxs[0])
+    gap_mr = float(cxs[2] - cxs[1])
+    outer_gap = float(np.median([gap_lm, gap_mr]))
 
-    xs = np.array([c["x"] for c in capsules], dtype=np.float32)
-    ys = np.array([c["y"] for c in capsules], dtype=np.float32)
-    ws = np.array([c["w"] for c in capsules], dtype=np.float32)
-    hs = np.array([c["h"] for c in capsules], dtype=np.float32)
-    cxs = xs + (ws / 2.0)
+    top_w = med_w * 1.05
+    top_h = med_h * 0.62
+    mid_w = med_w * 1.00
+    mid_h = med_h * 0.62
+    bottom_w = med_w * 1.05
+    bottom_h = med_h * 0.95
 
-    slot_w = int(round(float(np.median(ws)) * 1.05))
-    slot_h = int(round(float(np.median(hs)) * 0.92))
-    mid_slot_h = int(round(slot_h * 0.92))
+    top_y = float(np.median([c["y"] for c in caps])) - top_h * 0.80
+    mid_y = float(np.median(cys)) + med_h * 0.02
+    bottom_y = float(np.median([c["y"] + c["h"] for c in caps])) - bottom_h * 0.12
 
-    top_y = int(round(float(np.median(ys)) - (slot_h * 0.60)))
-    mid_y = int(round(float(np.median(ys)) + (float(np.median(hs)) * 0.12)))
-    bottom_y = int(round(float(np.median(ys)) + (float(np.median(hs)) * 0.95)))
-
-    left_cx = float(cxs[0])
-    mid_cx = float(cxs[1])
-    right_cx = float(cxs[2])
-
-    centers = [
-        ("top_left", left_cx, top_y, slot_w, slot_h, "top"),
-        ("top_middle", mid_cx, top_y, slot_w, slot_h, "top"),
-        ("top_right", right_cx, top_y, slot_w, slot_h, "top"),
-        ("left_outer", left_cx - (slot_w * 1.55), mid_y, slot_w, mid_slot_h, "middle"),
-        ("middle_left", (left_cx + mid_cx) / 2.0, mid_y, slot_w, mid_slot_h, "middle"),
-        ("middle_right", (mid_cx + right_cx) / 2.0, mid_y, slot_w, mid_slot_h, "middle"),
-        ("right_outer", right_cx + (slot_w * 1.25), mid_y, slot_w, mid_slot_h, "middle"),
-        ("bottom_left", left_cx, bottom_y, slot_w, slot_h, "bottom"),
-        ("bottom_middle", mid_cx, bottom_y, slot_w, slot_h, "bottom"),
-        ("bottom_right", right_cx, bottom_y, slot_w, slot_h, "bottom"),
+    definitions = [
+        ("top_left", cxs[0], top_y, top_w, top_h, "top"),
+        ("top_middle", cxs[1], top_y, top_w, top_h, "top"),
+        ("top_right", cxs[2], top_y, top_w, top_h, "top"),
+        ("left_outer", cxs[0] - outer_gap * 0.78, mid_y, mid_w, mid_h, "middle"),
+        ("middle_left", (cxs[0] + cxs[1]) / 2.0, mid_y, mid_w, mid_h, "middle"),
+        ("middle_right", (cxs[1] + cxs[2]) / 2.0, mid_y, mid_w, mid_h, "middle"),
+        ("right_outer", cxs[2] + outer_gap * 0.78, mid_y, mid_w, mid_h, "middle"),
+        ("bottom_left", cxs[0], bottom_y, bottom_w, bottom_h, "bottom"),
+        ("bottom_middle", cxs[1], bottom_y, bottom_w, bottom_h, "bottom"),
+        ("bottom_right", cxs[2], bottom_y, bottom_w, bottom_h, "bottom"),
     ]
 
-    out = []
-    for slot_id, cx, y, w, h, band in centers:
-        box = _clip_box(cx - (w / 2.0), y, w, h, img_w, img_h)
-        box["slot_id"] = slot_id
-        box["band"] = band
-        out.append(box)
+    slots = []
+    for slot_id, cx, y, bw, bh, band in definitions:
+        x1, y1, ww, hh = _clip_rect(cx - bw / 2.0, y, bw, bh, img_w, img_h)
+        valid, invalid_reason = _box_is_valid({"x": x1, "y": y1, "w": ww, "h": hh}, img_shape)
+        slots.append({
+            "slot_id": slot_id,
+            "band": band,
+            "x": x1,
+            "y": y1,
+            "w": ww,
+            "h": hh,
+            "valid": bool(valid),
+            "invalid_reason": invalid_reason,
+        })
+    return slots
 
-    return out
 
-
-def _analyze_board_slot(crop):
+def _analyze_board_slot(crop, valid=True, invalid_reason=None):
+    if not valid:
+        return {
+            "status": "invalid",
+            "score": 0.0,
+            "reasons": [invalid_reason or "invalid_slot"],
+            "metrics": {},
+        }
     if crop is None or crop.size == 0:
         return {
-            "status": "unknown",
+            "status": "invalid",
             "score": 0.0,
             "reasons": ["empty_crop"],
             "metrics": {},
@@ -5554,25 +5244,23 @@ def _analyze_board_slot(crop):
     edge_ratio = float(np.count_nonzero(edges > 0)) / area
     dark_ratio = float(np.count_nonzero(gray < 130)) / area
     std_gray = float(np.std(gray)) / 255.0
-
     pink_mask = (
         (hsv[:, :, 0] >= 135) &
-        (hsv[:, :, 0] <= 175) &
+        (hsv[:, :, 0] <= 179) &
         (hsv[:, :, 1] >= 20) &
         (hsv[:, :, 2] >= 145)
     )
     pink_ratio = float(np.count_nonzero(pink_mask)) / area
 
     occupied_score = 0.0
-    occupied_score += min(1.0, sat_ratio / 0.10) * 0.35
-    occupied_score += min(1.0, edge_ratio / 0.06) * 0.25
-    occupied_score += min(1.0, dark_ratio / 0.22) * 0.20
-    occupied_score += min(1.0, std_gray / 0.20) * 0.20
-    occupied_score -= min(1.0, pink_ratio / 0.06) * 0.15
+    occupied_score += min(1.0, sat_ratio / 0.11) * 0.34
+    occupied_score += min(1.0, edge_ratio / 0.06) * 0.24
+    occupied_score += min(1.0, dark_ratio / 0.22) * 0.18
+    occupied_score += min(1.0, std_gray / 0.20) * 0.24
+    occupied_score -= min(1.0, pink_ratio / 0.05) * 0.25
+    occupied_score = _safe_float01(occupied_score)
 
-    occupied_score = max(0.0, min(1.0, occupied_score))
-    status = "occupied" if occupied_score >= 0.52 else "empty"
-
+    status = "occupied" if occupied_score >= 0.58 else "empty"
     reasons = [
         f"sat={sat_ratio:.3f}",
         f"edge={edge_ratio:.3f}",
@@ -5580,10 +5268,9 @@ def _analyze_board_slot(crop):
         f"std={std_gray:.3f}",
         f"pink={pink_ratio:.3f}",
     ]
-
     return {
         "status": status,
-        "score": float(occupied_score),
+        "score": occupied_score,
         "reasons": reasons,
         "metrics": {
             "sat_ratio": float(sat_ratio),
@@ -5603,6 +5290,8 @@ def _build_board_debug_analysis(img):
             "capsules": [],
             "slots": [],
             "legacy_candidates": [],
+            "image_width": 0,
+            "image_height": 0,
         }
 
     work, scale = _resize_for_board_debug(img, max_width=1600)
@@ -5612,9 +5301,9 @@ def _build_board_debug_analysis(img):
     for cap in capsules_small:
         capsules.append({
             "label": cap.get("label"),
-            "score": float(cap.get("score", 0.0)),
-            "gray_score": float(cap.get("gray_score", 0.0)),
-            "edge_score": float(cap.get("edge_score", 0.0)),
+            "score": _safe_float01(cap.get("score", 0.0)),
+            "gray_score": _safe_float01(cap.get("gray_score", 0.0)),
+            "edge_score": _safe_float01(cap.get("edge_score", 0.0)),
             "angle": float(cap.get("angle", 0.0)),
             "scale": float(cap.get("scale", 1.0)),
             "x": int(round(cap["x"] / scale)),
@@ -5624,14 +5313,14 @@ def _build_board_debug_analysis(img):
         })
 
     capsules = sorted(capsules, key=lambda c: c["x"])
-
-    slots = _build_slots_from_capsules(capsules, img.shape) if len(capsules) >= 3 else []
+    valid_capsules, reason = _validate_capsule_triplet(capsules, img.shape)
+    slots = _build_slots_from_capsules(capsules, img.shape) if valid_capsules else []
 
     slot_results = []
     for slot in slots:
         x, y, w, h = slot["x"], slot["y"], slot["w"], slot["h"]
-        crop = img[y:y + h, x:x + w]
-        analysis = _analyze_board_slot(crop)
+        crop = img[y:y + h, x:x + w] if w > 0 and h > 0 else None
+        analysis = _analyze_board_slot(crop, valid=slot.get("valid", False), invalid_reason=slot.get("invalid_reason"))
         slot_results.append({
             "slot_id": slot["slot_id"],
             "band": slot["band"],
@@ -5639,15 +5328,17 @@ def _build_board_debug_analysis(img):
             "y": y,
             "w": w,
             "h": h,
+            "valid": bool(slot.get("valid", False)),
+            "invalid_reason": slot.get("invalid_reason"),
             "status": analysis["status"],
             "score": float(analysis["score"]),
             "reasons": analysis["reasons"],
             "metrics": analysis["metrics"],
-            "crop_b64": _img_to_base64(crop),
+            "crop_b64": _img_to_base64(crop) if crop is not None and crop.size != 0 else None,
         })
 
     legacy_candidates = []
-    if len(capsules) < 3:
+    if not valid_capsules:
         for cand in detect_board_candidates(img)[:12]:
             legacy_candidates.append({
                 "x": int(cand["x"]),
@@ -5660,8 +5351,8 @@ def _build_board_debug_analysis(img):
             })
 
     return {
-        "ok": len(capsules) >= 3,
-        "reason": None if len(capsules) >= 3 else "capsules_not_found",
+        "ok": bool(valid_capsules),
+        "reason": None if valid_capsules else reason,
         "capsules": capsules,
         "slots": slot_results,
         "legacy_candidates": legacy_candidates,
@@ -5689,11 +5380,16 @@ def _board_debug_overlay(img, analysis):
     for slot in analysis.get("slots", []):
         x, y, w, h = slot["x"], slot["y"], slot["w"], slot["h"]
         status = slot.get("status", "unknown")
-        color = (0, 200, 0) if status == "occupied" else (160, 100, 255)
+        if status == "occupied":
+            color = (0, 200, 0)
+        elif status == "empty":
+            color = (160, 100, 255)
+        else:
+            color = (0, 0, 255)
         cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
         cv2.putText(
             overlay,
-            f'{slot["slot_id"]} {slot.get("score", 0.0):.2f}',
+            f'{slot["slot_id"]} {status} {slot.get("score", 0.0):.2f}',
             (x, max(18, y - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.48,
@@ -5701,12 +5397,7 @@ def _board_debug_overlay(img, analysis):
             1,
         )
 
-    for cand in analysis.get("legacy_candidates", []):
-        x, y, w, h = cand["x"], cand["y"], cand["w"], cand["h"]
-        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 0, 255), 2)
-
     return overlay
-
 
 def _render_board_debug_page(img, analysis):
     overlay = _board_debug_overlay(img, analysis)
