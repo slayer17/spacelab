@@ -2905,6 +2905,129 @@ def detect_main_card(img):
     }
 
 
+def _recognize_card_from_crop(crop):
+    result = {
+        "rect": None,
+        "signature": None,
+        "rois": [],
+        "card_match": None,
+        "final_card_id": None,
+        "final_status": None,
+        "final_score": 0.0,
+        "final_gap": 0.0,
+        "color_name": None,
+        "symbol_name": None,
+        "bottom_layout": None,
+        "points": None,
+    }
+    if crop is None or crop.size == 0:
+        return result
+
+    rect = detect_main_card(crop)
+    if rect is None:
+        h, w = crop.shape[:2]
+        rect = {
+            "x": 0,
+            "y": 0,
+            "w": int(w),
+            "h": int(h),
+            "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]],
+        }
+
+    warped = None
+    try:
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(crop, quad)
+    except Exception:
+        warped = None
+    if warped is None or warped.size == 0:
+        warped = crop.copy()
+
+    sig = None
+    rois = []
+    card_match = None
+    try:
+        sig, rois = compute_signature(warped)
+    except Exception:
+        sig, rois = None, []
+
+    if sig is not None:
+        try:
+            card_match = resolve_final_card(sig)
+            sig["card_match"] = card_match
+        except Exception:
+            card_match = None
+
+    result.update({
+        "rect": rect,
+        "signature": sig,
+        "rois": rois,
+        "card_match": card_match,
+        "final_card_id": (card_match or {}).get("final_card_id"),
+        "final_status": (card_match or {}).get("final_status"),
+        "final_score": float((card_match or {}).get("final_score", 0.0)),
+        "final_gap": float((card_match or {}).get("final_gap", 0.0)),
+        "color_name": (card_match or {}).get("color_name"),
+        "symbol_name": (card_match or {}).get("symbol_name"),
+        "bottom_layout": (card_match or {}).get("bottom_layout"),
+        "points": (card_match or {}).get("points"),
+    })
+    return result
+
+
+def _build_board_matches(img):
+    analysis = _build_board_debug_analysis(img)
+    rects = []
+    for cap in analysis.get("capsules", []):
+        rects.append({
+            "x": int(cap["x"]), "y": int(cap["y"]), "w": int(cap["w"]), "h": int(cap["h"]),
+            "type": "STATION", "name": f"capsule:{cap.get('label', '?')}"
+        })
+
+    board_matches = []
+    for slot in analysis.get("slots", []):
+        if slot.get("status") != "occupied":
+            continue
+        x, y, w, h = int(slot["x"]), int(slot["y"]), int(slot["w"]), int(slot["h"])
+        crop = img[y:y + h, x:x + w]
+        rec = _recognize_card_from_crop(crop)
+        local_rect = rec.get("rect") or {"x": 0, "y": 0, "w": w, "h": h, "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]]}
+        global_rect = {
+            "x": int(x + local_rect.get("x", 0)),
+            "y": int(y + local_rect.get("y", 0)),
+            "w": int(local_rect.get("w", w)),
+            "h": int(local_rect.get("h", h)),
+            "type": "CARD",
+            "name": rec.get("final_card_id") or slot.get("slot_id"),
+        }
+        rects.append(global_rect)
+        board_matches.append({
+            "slot_id": slot.get("slot_id"),
+            "band": slot.get("band"),
+            "occupied_status": slot.get("status"),
+            "occupied_score": float(slot.get("score", 0.0)),
+            "x": x, "y": y, "w": w, "h": h,
+            "rect": global_rect,
+            "signature": rec.get("signature"),
+            "rois": rec.get("rois", []),
+            "card_match": rec.get("card_match"),
+            "final_card_id": rec.get("final_card_id"),
+            "final_status": rec.get("final_status"),
+            "final_score": float(rec.get("final_score", 0.0)),
+            "final_gap": float(rec.get("final_gap", 0.0)),
+            "color_name": rec.get("color_name"),
+            "symbol_name": rec.get("symbol_name"),
+            "bottom_layout": rec.get("bottom_layout"),
+            "points": rec.get("points"),
+        })
+
+    return {
+        "analysis": analysis,
+        "board_matches": board_matches,
+        "rects": rects,
+    }
+
+
 # =====================================================
 # ROUTES
 # =====================================================
@@ -2938,9 +3061,11 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "board_matches": [],
             })
 
         file = request.files["image"]
+        mode = (request.form.get("mode") or "CARDS_ONLY").upper().strip()
 
         data = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -2955,10 +3080,26 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "board_matches": [],
             })
 
-        rect = detect_main_card(img)
+        if mode == "BOARD":
+            board = _build_board_matches(img)
+            return jsonify({
+                "rects": board.get("rects", []),
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "board_matches": board.get("board_matches", []),
+                "board_analysis": board.get("analysis"),
+            })
 
+        rec = _recognize_card_from_crop(img)
+        rect = rec.get("rect")
         if rect is None:
             h, w = img.shape[:2]
             rect = {
@@ -2966,48 +3107,34 @@ def upload():
                 "y": 0,
                 "w": int(w),
                 "h": int(h),
-                "quad": [
-                    [0, 0],
-                    [w - 1, 0],
-                    [w - 1, h - 1],
-                    [0, h - 1]
-                ]
+                "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]],
             }
 
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
-        sig = None
-        rois = []
-        card_match = None
-
+        warped = None
+        try:
+            quad = np.array(rect["quad"], dtype="float32")
+            warped = warp_quad(img, quad)
+        except Exception:
+            warped = None
         if warped is None or warped.size == 0:
             warped = img.copy()
-
         if warped is not None and warped.size != 0:
             cv2.imwrite(WARP_PATH, warped)
-            sig, rois = compute_signature(warped)
-
-        if sig is not None:
-            try:
-                card_match = resolve_final_card(sig)
-                sig["card_match"] = card_match
-            except Exception:
-                card_match = None
 
         return jsonify({
             "rects": [rect],
-            "signature": sig,
-            "rois": rois,
-            "card_match": card_match,
-            "final_card_id": (card_match or {}).get("final_card_id"),
-            "final_status": (card_match or {}).get("final_status"),
-            "final_score": float((card_match or {}).get("final_score", 0.0)),
-            "final_gap": float((card_match or {}).get("final_gap", 0.0)),
-            "color_name": (card_match or {}).get("color_name"),
-            "symbol_name": (card_match or {}).get("symbol_name"),
-            "bottom_layout": (card_match or {}).get("bottom_layout"),
-            "points": (card_match or {}).get("points"),
+            "signature": rec.get("signature"),
+            "rois": rec.get("rois", []),
+            "card_match": rec.get("card_match"),
+            "final_card_id": rec.get("final_card_id"),
+            "final_status": rec.get("final_status"),
+            "final_score": float(rec.get("final_score", 0.0)),
+            "final_gap": float(rec.get("final_gap", 0.0)),
+            "color_name": rec.get("color_name"),
+            "symbol_name": rec.get("symbol_name"),
+            "bottom_layout": rec.get("bottom_layout"),
+            "points": rec.get("points"),
+            "board_matches": [],
         })
 
     except Exception as e:
@@ -3021,6 +3148,8 @@ def upload():
             "final_status": None,
             "final_score": 0.0,
             "final_gap": 0.0,
+            "board_matches": [],
+            "error": str(e),
         })
 
 
