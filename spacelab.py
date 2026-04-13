@@ -2978,35 +2978,55 @@ def _recognize_card_from_crop(crop):
 def _build_board_matches(img):
     analysis = _build_board_debug_analysis(img)
     rects = []
+
+    # On garde les stations en rouge pour debug
     for cap in analysis.get("capsules", []):
         rects.append({
-            "x": int(cap["x"]), "y": int(cap["y"]), "w": int(cap["w"]), "h": int(cap["h"]),
-            "type": "STATION", "name": f"capsule:{cap.get('label', '?')}"
+            "x": int(cap["x"]),
+            "y": int(cap["y"]),
+            "w": int(cap["w"]),
+            "h": int(cap["h"]),
+            "type": "STATION",
+            "name": f"capsule:{cap.get('label', '?')}",
         })
 
     board_matches = []
+
     for slot in analysis.get("slots", []):
         if slot.get("status") != "occupied":
             continue
-        x, y, w, h = int(slot["x"]), int(slot["y"]), int(slot["w"]), int(slot["h"])
+
+        x = int(slot["x"])
+        y = int(slot["y"])
+        w = int(slot["w"])
+        h = int(slot["h"])
+
         crop = img[y:y + h, x:x + w]
         rec = _recognize_card_from_crop(crop)
-        local_rect = rec.get("rect") or {"x": 0, "y": 0, "w": w, "h": h, "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]]}
+
+        # IMPORTANT :
+        # pour l'affichage BOARD, on utilise la box complète du slot
+        # et non la petite rect interne détectée dans le crop
         global_rect = {
-            "x": int(x + local_rect.get("x", 0)),
-            "y": int(y + local_rect.get("y", 0)),
-            "w": int(local_rect.get("w", w)),
-            "h": int(local_rect.get("h", h)),
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
             "type": "CARD",
             "name": rec.get("final_card_id") or slot.get("slot_id"),
         }
+
         rects.append(global_rect)
+
         board_matches.append({
             "slot_id": slot.get("slot_id"),
             "band": slot.get("band"),
             "occupied_status": slot.get("status"),
             "occupied_score": float(slot.get("score", 0.0)),
-            "x": x, "y": y, "w": w, "h": h,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
             "rect": global_rect,
             "signature": rec.get("signature"),
             "rois": rec.get("rois", []),
@@ -3026,7 +3046,6 @@ def _build_board_matches(img):
         "board_matches": board_matches,
         "rects": rects,
     }
-
 
 # =====================================================
 # ROUTES
