@@ -238,34 +238,52 @@ function exportHtmlAndJson() {
 function buildReadableResult(json) {
     if (!json) return "Aucun résultat.";
 
-    // MODE BOARD
     const boardMatches = Array.isArray(json.board_analysis?.board_matches)
         ? json.board_analysis.board_matches
         : Array.isArray(json.board_matches)
             ? json.board_matches
-            : [];
+            : Array.isArray(json.board_analysis?.slots)
+                ? json.board_analysis.slots
+                : [];
 
     if (boardMatches.length > 0) {
         const lines = [];
         lines.push("=== MODE : BOARD ===");
 
         boardMatches.forEach((item, index) => {
-            const slot = item.slot_id || item.slot_label || item.slot || `slot_${index + 1}`;
-            const card = item.final_card_id || item.card_id || "inconnue";
-            const status = item.final_status || "unknown";
-            const score = item.final_score ?? item.score ?? "n/a";
+            const slot =
+                item.slot_id ||
+                item.slot_label ||
+                item.slot ||
+                item.band ||
+                `slot_${index + 1}`;
+
+            const card =
+                item.final_card_id ||
+                item.card_id ||
+                item.label ||
+                "carte détectée";
+
+            const status =
+                item.final_status ||
+                (item.final_card_id ? "accepted" : "detected");
+
+            const score =
+                item.final_score ??
+                item.score ??
+                item.match_score ??
+                "n/a";
+
             lines.push(`${index + 1}. ${slot} : ${card} (${status}) score=${score}`);
         });
 
         return lines.join("\n");
     }
 
-    // cas où le backend renvoie bien une structure board mais vide
     if (json.board_analysis || json.board_matches) {
         return "Aucune carte détectée sur le plateau.";
     }
 
-    // MODE carte unique
     if (json.final_card_id) {
         return `Carte détectée : ${json.final_card_id} (score: ${json.final_score ?? "n/a"}, statut: ${json.final_status ?? "unknown"})`;
     }
@@ -279,7 +297,6 @@ function buildReadableResult(json) {
 
     return "Résultat disponible dans le JSON.";
 }
-
 // =========================
 // JSON TOOLS
 // =========================
@@ -374,46 +391,60 @@ function sendToPython() {
                 drawRois(json.rois, r);
             }
 
-            // --- CAS 1 : MODE BOARD ---
-            if (mode === "BOARD") {
-                const matches = Array.isArray(json.board_analysis?.board_matches)
-    ? json.board_analysis.board_matches
-    : [];
+// --- CAS 1 : MODE BOARD ---
+if (mode === "BOARD") {
+    const matches = Array.isArray(json.board_analysis?.board_matches)
+        ? json.board_analysis.board_matches
+        : Array.isArray(json.board_matches)
+            ? json.board_matches
+            : Array.isArray(json.board_analysis?.slots)
+                ? json.board_analysis.slots
+                : [];
 
-                if (!matches.length) {
-                    resultEl.textContent = "Aucune carte détectée sur le plateau";
-                    lastResultText = resultEl.textContent;
-                    return;
-                }
+    if (!matches.length) {
+        resultEl.textContent = "Aucune carte détectée sur le plateau";
+        lastResultText = resultEl.textContent;
+        return;
+    }
 
-                const accepted = matches.filter(m => m.final_card_id && m.final_status === "accepted");
-                const proposed = matches.filter(m => m.final_card_id && m.final_status && m.final_status !== "accepted");
-                const failed = matches.filter(m => !m.final_card_id);
+    const lines = [];
+    lines.push("=== MODE : BOARD ===");
+    lines.push(`Total détecté : ${matches.length}`);
+    lines.push("");
 
-                const lines = [];
-                lines.push("=== MODE : BOARD ===");
-                lines.push(`Total : ${matches.length} | OK : ${accepted.length} | ?? : ${proposed.length} | KO : ${failed.length}`);
-                lines.push("");
+    matches.forEach((m, idx) => {
+        const num = idx + 1;
 
-                matches.forEach((m, idx) => {
-                    const num = idx + 1;
-                    if (m.final_card_id) {
-                        const statusIcon = m.final_status === "accepted" ? "✅" : "⚠️";
-                        lines.push(`${num}. ${statusIcon} ${m.final_card_id} (${m.final_status})`);
-                        lines.push(`   - slot: ${m.slot_id || "?"}`);
-                        lines.push(`   - ${m.color_name || "?"} | ${m.symbol_name || "?"} | pts:${m.points ?? "?"}`);
-                        lines.push(`   - score:${Number(m.final_score ?? 0).toFixed(3)} | gap:${Number(m.final_gap ?? 0).toFixed(3)}`);
-                    } else {
-                        lines.push(`${num}. ❌ Non reconnue`);
-                        lines.push(`   - slot: ${m.slot_id || "?"}`);
-                    }
-                });
+        const slotName =
+            m.slot_id ||
+            m.slot_label ||
+            m.slot ||
+            m.band ||
+            `slot_${num}`;
 
-                resultEl.textContent = lines.join("\n");
-                lastResultText = resultEl.textContent;
-                return;
-            }
+        const cardName =
+            m.final_card_id ||
+            m.card_id ||
+            m.label ||
+            "carte détectée";
 
+        const status =
+            m.final_status ||
+            (m.final_card_id ? "accepted" : "detected");
+
+        const score =
+            m.final_score ??
+            m.score ??
+            m.match_score ??
+            "n/a";
+
+        lines.push(`${num}. ${slotName} : ${cardName} (${status}) score=${score}`);
+    });
+
+    resultEl.textContent = lines.join("\n");
+    lastResultText = resultEl.textContent;
+    return;
+}
             // --- CAS 2 : MODE CARDS_ONLY ---
             if (json.signature) {
                 const finalCardId = json.final_card_id || "Inconnue";
