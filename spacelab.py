@@ -73,72 +73,6 @@ CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
 
 
-def _decode_uploaded_image(file_storage):
-    if file_storage is None:
-        return None
-
-    data = np.frombuffer(file_storage.read(), np.uint8)
-    if data.size == 0:
-        return None
-
-    return cv2.imdecode(data, cv2.IMREAD_COLOR)
-
-
-def _rect_from_full_image(img):
-    if img is None or img.size == 0:
-        return None
-
-    h, w = img.shape[:2]
-    return {
-        "x": 0,
-        "y": 0,
-        "w": int(w),
-        "h": int(h),
-        "quad": [
-            [0, 0],
-            [w - 1, 0],
-            [w - 1, h - 1],
-            [0, h - 1],
-        ],
-    }
-
-
-def _warp_from_rect(img, rect):
-    if img is None or img.size == 0 or rect is None:
-        return None
-
-    try:
-        quad = np.array(rect["quad"], dtype="float32")
-    except Exception:
-        return None
-
-    warped = warp_quad(img, quad)
-    if warped is None or warped.size == 0:
-        return None
-
-    return warped
-
-
-def _detect_and_warp_single_card(img, allow_full_image_fallback=False):
-    if img is None or img.size == 0:
-        return None, None, "invalid_image"
-
-    rect = detect_main_card(img)
-    if rect is None:
-        if not allow_full_image_fallback:
-            return None, None, "no_card_detected"
-        rect = _rect_from_full_image(img)
-
-    warped = _warp_from_rect(img, rect)
-    if warped is None:
-        if not allow_full_image_fallback:
-            return rect, None, "warp_failed"
-        rect = _rect_from_full_image(img)
-        warped = img.copy()
-
-    return rect, warped, "ok"
-
-
 
 # =====================================================
 # SYMBOL DETECTION
@@ -2991,74 +2925,185 @@ def index():
 # UPLOAD
 # =====================================================
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        if "image" not in request.files:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "rois": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-            })
 
-        file = request.files["image"]
-        img = _decode_uploaded_image(file)
+def _empty_upload_response(extra=None):
+    base = {
+        "rects": [],
+        "signature": None,
+        "rois": [],
+        "card_match": None,
+        "final_card_id": None,
+        "final_status": None,
+        "final_score": 0.0,
+        "final_gap": 0.0,
+        "board_matches": [],
+        "board_analysis": None,
+        "mode": None,
+    }
+    if extra:
+        base.update(extra)
+    return base
 
-        if img is None:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "rois": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-                "reason": "invalid_image",
-            })
 
-        rect, warped, detect_reason = _detect_and_warp_single_card(
-            img,
-            allow_full_image_fallback=False,
+def _analyze_single_card_upload(img):
+    rect = detect_main_card(img)
+
+    if rect is None:
+        return _empty_upload_response({
+            "rects": [],
+            "signature": None,
+            "rois": [],
+            "card_match": None,
+            "mode": "CARDS_ONLY",
+            "error": "Aucune carte détectée",
+        })
+
+    quad = np.array(rect["quad"], dtype="float32")
+    warped = warp_quad(img, quad)
+
+    sig = None
+    rois = []
+    card_match = None
+
+    if warped is None or warped.size == 0:
+        return _empty_upload_response({
+            "rects": [rect],
+            "signature": None,
+            "rois": [],
+            "card_match": None,
+            "mode": "CARDS_ONLY",
+            "error": "Warp impossible",
+        })
+
+    cv2.imwrite(WARP_PATH, warped)
+    sig, rois = compute_signature(warped)
+
+    if sig is not None:
+        try:
+            card_match = resolve_final_card(sig)
+            sig["card_match"] = card_match
+        except Exception:
+            card_match = None
+
+    return _empty_upload_response({
+        "rects": [rect],
+        "signature": sig,
+        "rois": rois,
+        "card_match": card_match,
+        "final_card_id": (card_match or {}).get("final_card_id"),
+        "final_status": (card_match or {}).get("final_status"),
+        "final_score": float((card_match or {}).get("final_score", 0.0)),
+        "final_gap": float((card_match or {}).get("final_gap", 0.0)),
+        "color_name": (card_match or {}).get("color_name"),
+        "symbol_name": (card_match or {}).get("symbol_name"),
+        "bottom_layout": (card_match or {}).get("bottom_layout"),
+        "points": (card_match or {}).get("points"),
+        "mode": "CARDS_ONLY",
+    })
+
+
+def _fit_rect_inside_image(x, y, w, h, shape):
+    img_h, img_w = shape[:2]
+    x = max(0, int(x))
+    y = max(0, int(y))
+    w = max(0, int(w))
+    h = max(0, int(h))
+    if x >= img_w or y >= img_h:
+        return None
+    w = min(w, img_w - x)
+    h = min(h, img_h - y)
+    if w <= 0 or h <= 0:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+def _slot_rect_to_quad(rect):
+    x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
+    return [
+        [x, y],
+        [x + w - 1, y],
+        [x + w - 1, y + h - 1],
+        [x, y + h - 1],
+    ]
+
+
+def _analyze_board_upload(img):
+    analysis = _build_board_debug_analysis(img)
+    board_matches = []
+    rects = []
+
+    for slot in analysis.get("slots", []):
+        if slot.get("status") != "occupied":
+            continue
+
+        slot_rect = _fit_rect_inside_image(
+            slot.get("x", 0),
+            slot.get("y", 0),
+            slot.get("w", 0),
+            slot.get("h", 0),
+            img.shape,
         )
+        if slot_rect is None:
+            continue
 
-        if detect_reason != "ok" or warped is None or warped.size == 0:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "rois": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-                "reason": detect_reason,
-            })
+        x, y, w, h = slot_rect["x"], slot_rect["y"], slot_rect["w"], slot_rect["h"]
+        crop = img[y:y + h, x:x + w]
+        if crop is None or crop.size == 0:
+            continue
+
+        local_rect = detect_main_card(crop)
+        if local_rect is not None:
+            quad = np.array(local_rect["quad"], dtype="float32")
+            warped = warp_quad(crop, quad)
+            global_rect = {
+                "x": int(x + local_rect["x"]),
+                "y": int(y + local_rect["y"]),
+                "w": int(local_rect["w"]),
+                "h": int(local_rect["h"]),
+                "quad": [
+                    [int(x + pt[0]), int(y + pt[1])] for pt in local_rect["quad"]
+                ],
+            }
+        else:
+            warped = crop.copy()
+            global_rect = {
+                "x": int(x),
+                "y": int(y),
+                "w": int(w),
+                "h": int(h),
+                "quad": _slot_rect_to_quad(slot_rect),
+            }
+
+        if warped is None or warped.size == 0:
+            continue
 
         sig = None
         rois = []
         card_match = None
-
-        if warped is not None and warped.size != 0:
-            cv2.imwrite(WARP_PATH, warped)
+        try:
             sig, rois = compute_signature(warped)
-
-        if sig is not None:
-            try:
+            if sig is not None:
                 card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
-            except Exception:
-                card_match = None
+        except Exception as exc:
+            card_match = {
+                "final_card_id": None,
+                "final_status": "error",
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "reason": str(exc),
+            }
 
-        return jsonify({
-            "rects": [rect],
-            "signature": sig,
+        result = {
+            "slot_id": slot.get("slot_id"),
+            "band": slot.get("band"),
+            "status": slot.get("status"),
+            "slot_score": float(slot.get("score", 0.0)),
+            "slot_reasons": slot.get("reasons", []),
+            "rect": global_rect,
+            "rects": [global_rect],
             "rois": rois,
+            "signature": sig,
             "card_match": card_match,
             "final_card_id": (card_match or {}).get("final_card_id"),
             "final_status": (card_match or {}).get("final_status"),
@@ -3068,21 +3113,44 @@ def upload():
             "symbol_name": (card_match or {}).get("symbol_name"),
             "bottom_layout": (card_match or {}).get("bottom_layout"),
             "points": (card_match or {}).get("points"),
-            "reason": "ok",
-        })
+        }
+        board_matches.append(result)
+        rects.append(global_rect)
+
+    return _empty_upload_response({
+        "rects": rects,
+        "board_analysis": analysis,
+        "board_matches": board_matches,
+        "mode": "BOARD",
+    })
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    try:
+        if "image" not in request.files:
+            return jsonify(_empty_upload_response())
+
+        file = request.files["image"]
+        raw = file.read()
+        data = np.frombuffer(raw, np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return jsonify(_empty_upload_response())
+
+        mode = (request.form.get("mode") or "").strip().upper()
+
+        if mode == "BOARD":
+            return jsonify(_analyze_board_upload(img))
+
+        return jsonify(_analyze_single_card_upload(img))
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
-        return jsonify({
-            "rects": [],
-            "signature": None,
-            "rois": [],
-            "card_match": None,
-            "final_card_id": None,
-            "final_status": None,
-            "final_score": 0.0,
-            "final_gap": 0.0,
-        })
+        return jsonify(_empty_upload_response({
+            "error": str(e),
+        }))
 
 
 @app.route("/warp")
@@ -3149,7 +3217,20 @@ def build_signatures():
                 })
                 continue
 
-            warped = img.copy()
+            quad = np.array([
+                [0, 0],
+                [w - 1, 0],
+                [w - 1, h - 1],
+                [0, h - 1]
+            ], dtype="float32")
+
+            warped = warp_quad(img, quad)
+            if warped is None or warped.size == 0:
+                skipped.append({
+                    "id": card_id,
+                    "reason": "warp_failed"
+                })
+                continue
 
             try:
                 sig, _ = compute_signature(warped)
@@ -3235,12 +3316,15 @@ def symbol_test():
     if img is None:
         return "Image invalide", 400
 
-    rect, warped, detect_reason = _detect_and_warp_single_card(
-        img,
-        allow_full_image_fallback=False,
-    )
-    if detect_reason != "ok" or warped is None or warped.size == 0:
-        return "Aucune carte unique détectée", 400
+    rect = detect_main_card(img)
+    warped = None
+
+    if rect is not None:
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(img, quad)
+
+    if warped is None or warped.size == 0:
+        warped = img.copy()
 
     warped = cv2.resize(warped, (200, 300))
     zone = _extract_symbol_zone_from_card(warped)
@@ -3394,12 +3478,15 @@ def symbol_batch_test():
                 )
                 continue
 
-            rect, warped, detect_reason = _detect_and_warp_single_card(
-                img,
-                allow_full_image_fallback=False,
-            )
-            if detect_reason != "ok" or warped is None or warped.size == 0:
-                raise ValueError(detect_reason)
+            rect = detect_main_card(img)
+            warped = None
+
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+
+            if warped is None or warped.size == 0:
+                warped = img.copy()
 
             warped = cv2.resize(warped, (200, 300))
             zone = _extract_symbol_zone_from_card(warped)
@@ -3701,12 +3788,15 @@ def card_batch_test():
             if img is None:
                 raise ValueError("invalid_image")
 
-            rect, warped, detect_reason = _detect_and_warp_single_card(
-                img,
-                allow_full_image_fallback=False,
-            )
-            if detect_reason != "ok" or warped is None or warped.size == 0:
-                raise ValueError(detect_reason)
+            rect = detect_main_card(img)
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+            else:
+                warped = None
+
+            if warped is None or warped.size == 0:
+                warped = img.copy()
 
             warped = cv2.resize(warped, (200, 300))
             sig, _ = compute_signature(warped)
@@ -4118,12 +4208,13 @@ def _load_bottom_reference_library():
             continue
 
         try:
-            rect, warped, detect_reason = _detect_and_warp_single_card(
-                img,
-                allow_full_image_fallback=False,
-            )
-            if detect_reason != "ok" or warped is None or warped.size == 0:
-                continue
+            rect = detect_main_card(img)
+            warped = None
+            if rect is not None:
+                quad = np.array(rect["quad"], dtype="float32")
+                warped = warp_quad(img, quad)
+            if warped is None or warped.size == 0:
+                warped = img.copy()
             warped = cv2.resize(warped, (200, 300))
             _, bottom_roi, _ = extract_bottom_roi_from_full_card(warped)
         except Exception:
