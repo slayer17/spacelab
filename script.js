@@ -1,6 +1,7 @@
 console.log("CARDS =", CARDS);
 
 let mode = "BOARD";
+window.lastUploadJson = null;
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -16,6 +17,10 @@ const boardBtn = document.getElementById("boardBtn");
 const cardsBtn = document.getElementById("cardsBtn");
 
 const resultEl = document.getElementById("result");
+
+const btnShowJson = document.getElementById("btnShowJson");
+const btnCopyJson = document.getElementById("btnCopyJson");
+const jsonOutput = document.getElementById("jsonOutput");
 
 let currentStream = null;
 
@@ -96,26 +101,49 @@ fileInput.onchange = e => {
     img.src = URL.createObjectURL(file);
 };
 
+
+// =========================
+// JSON TOOLS
+// =========================
+
 function showLastJson() {
-  const el = document.getElementById("jsonOutput");
-  if (!window.lastUploadJson) {
-    el.style.display = "block";
-    el.textContent = "Aucun JSON disponible pour le moment.";
-    return;
-  }
-  el.style.display = "block";
-  el.textContent = JSON.stringify(window.lastUploadJson, null, 2);
+    if (!jsonOutput) return;
+
+    jsonOutput.style.display = "block";
+
+    if (!window.lastUploadJson) {
+        jsonOutput.textContent = "Aucun JSON disponible pour le moment.";
+        return;
+    }
+
+    jsonOutput.textContent = JSON.stringify(window.lastUploadJson, null, 2);
 }
 
 async function copyLastJson() {
-  if (!window.lastUploadJson) {
-    alert("Aucun JSON disponible pour le moment.");
-    return;
-  }
-  const txt = JSON.stringify(window.lastUploadJson, null, 2);
-  await navigator.clipboard.writeText(txt);
-  alert("JSON copié.");
+    if (!window.lastUploadJson) {
+        alert("Aucun JSON disponible pour le moment.");
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(
+            JSON.stringify(window.lastUploadJson, null, 2)
+        );
+        alert("JSON copié.");
+    } catch (err) {
+        console.error(err);
+        alert("Impossible de copier le JSON.");
+    }
 }
+
+if (btnShowJson) {
+    btnShowJson.addEventListener("click", showLastJson);
+}
+
+if (btnCopyJson) {
+    btnCopyJson.addEventListener("click", copyLastJson);
+}
+
 
 // =========================
 // SEND TO PYTHON
@@ -137,12 +165,17 @@ function sendToPython() {
             });
 
             const json = await res.json();
+            window.lastUploadJson = json;
+
             console.log("UPLOAD JSON =", json);
 
             if (json.error) {
                 resultEl.textContent = "Erreur : " + json.error;
                 return;
             }
+
+            // Redessine l'image courante avant de tracer les rectangles
+            // si nécessaire, le canvas contient déjà l'image uploadée/capturée
 
             // Dessin des rectangles de détection
             drawRects(json.rects || []);
@@ -168,7 +201,7 @@ function sendToPython() {
 
                 const lines = [];
                 lines.push("=== MODE : BOARD ===");
-                lines.push(`Total : ${matches.length} | OK : ${accepted.length} | ?? : ${proposed.length}`);
+                lines.push(`Total : ${matches.length} | OK : ${accepted.length} | ?? : ${proposed.length} | KO : ${failed.length}`);
                 lines.push("");
 
                 matches.forEach((m, idx) => {
@@ -176,9 +209,12 @@ function sendToPython() {
                     if (m.final_card_id) {
                         const statusIcon = m.final_status === "accepted" ? "✅" : "⚠️";
                         lines.push(`${num}. ${statusIcon} ${m.final_card_id} (${m.final_status})`);
+                        lines.push(`   - slot: ${m.slot_id || "?"}`);
                         lines.push(`   - ${m.color_name || "?"} | ${m.symbol_name || "?"} | pts:${m.points ?? "?"}`);
+                        lines.push(`   - score:${Number(m.final_score ?? 0).toFixed(3)} | gap:${Number(m.final_gap ?? 0).toFixed(3)}`);
                     } else {
                         lines.push(`${num}. ❌ Non reconnue`);
+                        lines.push(`   - slot: ${m.slot_id || "?"}`);
                     }
                 });
 
@@ -258,12 +294,21 @@ function drawRois(rois, rect) {
     rois.forEach(r => {
         if (r.type === "GLOBAL") return;
 
-        switch(r.type) {
-            case "COLOR": ctx.strokeStyle = "red"; break;
-            case "SYMBOL": ctx.strokeStyle = "blue"; break;
-            case "BOTTOM": ctx.strokeStyle = "violet"; break;
-            case "POINTS_BADGE": ctx.strokeStyle = "white"; break;
-            default: ctx.strokeStyle = "cyan";
+        switch (r.type) {
+            case "COLOR":
+                ctx.strokeStyle = "red";
+                break;
+            case "SYMBOL":
+                ctx.strokeStyle = "blue";
+                break;
+            case "BOTTOM":
+                ctx.strokeStyle = "violet";
+                break;
+            case "POINTS_BADGE":
+                ctx.strokeStyle = "white";
+                break;
+            default:
+                ctx.strokeStyle = "cyan";
         }
 
         ctx.lineWidth = 2;
