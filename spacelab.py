@@ -5339,8 +5339,19 @@ def _build_board_debug_analysis(img):
         })
 
     capsules = sorted(capsules, key=lambda c: c["x"])
-    valid_capsules, reason = _validate_capsule_triplet(capsules, img.shape)
-    slots = _build_slots_from_capsules(capsules, img.shape) if valid_capsules else []
+
+valid_capsules, reason = _validate_capsule_triplet(capsules, img.shape)
+
+# Fallback : si au moins 3 capsules ont été trouvées,
+# on construit quand même les slots.
+if valid_capsules:
+    slots = _build_slots_from_capsules(capsules, img.shape)
+elif len(capsules) >= 3:
+    reason = "validation_failed_but_fallback_used"
+    slots = _build_slots_from_capsules(capsules, img.shape)
+    valid_capsules = True
+else:
+    slots = []
 
     slot_results = []
     for slot in slots:
