@@ -10,13 +10,8 @@ import re
 from datetime import datetime
 
 
-from bottom import (
-    extract_bottom_roi_from_full_card,
-    analyze_bottom,
-    _normalize_badge,
-    _extract_digit_mask,
-    build_overlay,
-)
+# Helpers bottom.py intégrés ici pour éviter tout plantage à l'import.
+# Le fichier devient autonome : spacelab.py suffit à lui seul.
 
 app = Flask(__name__)
 def _img_to_base64(img):
@@ -71,6 +66,65 @@ SYMBOLS_DIR = os.path.join(BASE_DIR, "symbols")
 DIGITS_DIR = os.path.join(BASE_DIR, "digits")
 CARDS_JS_PATH = os.path.join(BASE_DIR, "cards.js")
 WARP_PATH = os.path.join(BASE_DIR, "warp.jpg")
+
+
+# =====================================================
+# LOCAL BOTTOM HELPERS (standalone fallback)
+# =====================================================
+
+def extract_bottom_roi_from_full_card(img):
+    if img is None or img.size == 0:
+        return None, None, (0, 0, 0, 0)
+
+    full_img = cv2.resize(img, (200, 300))
+    h, w = full_img.shape[:2]
+
+    x1 = 0
+    x2 = w
+    y1 = int(round(h * 0.66))
+    y2 = h
+
+    bottom_roi = full_img[y1:y2, x1:x2]
+    return full_img, bottom_roi, (x1, y1, x2 - x1, y2 - y1)
+
+
+def analyze_bottom(bottom_zone, digits_dir=None):
+    return analyze_bottom_layout(bottom_zone)
+
+
+def _normalize_badge(img):
+    return _normalize_digit_mask(img)
+
+
+def _extract_digit_mask(img):
+    return _extract_digit_only_mask(img)
+
+
+def build_overlay(full_img, bottom_box, result):
+    if full_img is None or getattr(full_img, 'size', 0) == 0:
+        return None
+
+    overlay = full_img.copy()
+    bx, by, bw, bh = bottom_box
+    cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (255, 0, 0), 2)
+
+    box_colors = {
+        'panel_box': (0, 255, 255),
+        'points_box': (0, 255, 0),
+        'slash_box': (255, 255, 0),
+        'right_icon_box': (255, 0, 255),
+        'bottom_line_box': (0, 128, 255),
+        'special_box': (0, 0, 255),
+    }
+
+    for key, color in box_colors.items():
+        box = (result or {}).get(key)
+        if not box:
+            continue
+        x, y, w, h = box
+        cv2.rectangle(overlay, (bx + x, by + y), (bx + x + w, by + y + h), color, 2)
+
+    return overlay
 
 
 
@@ -2483,21 +2537,10 @@ def _build_observed_bottom_profile(scan_sig):
     if raw_points is None:
         raw_points = _safe_int(points_sig.get("raw_digit"))
 
-    points_score = float(bottom_layout.get("points_score", points_sig.get("score", 0.0)) or 0.0)
-    points_gap = float(bottom_layout.get("points_gap", points_sig.get("gap", 0.0)) or 0.0)
-
-    # Fallback souple : si le chiffre brut est crédible, on le remonte dans points
-    # pour éviter les matches "couleur seule".
-    if points is None and raw_points is not None:
-        if points_score >= 0.72 or (points_score >= 0.60 and points_gap >= 0.02):
-            points = raw_points
-
     return {
         "layout": layout,
         "points": points,
         "raw_points": raw_points,
-        "points_score": points_score,
-        "points_gap": points_gap,
         "has_special_white_panel": bool(bottom_layout.get("has_special_white_panel", False)),
         "has_slash": bool(bottom_layout.get("has_slash", False)),
         "has_right_icon": bool(bottom_layout.get("has_right_icon", False)),
@@ -2734,32 +2777,10 @@ def resolve_final_card(scan_sig, cards=None):
     runner_up = scored[1] if len(scored) > 1 else None
     final_gap = float((best["score"] - runner_up["score"]) if best and runner_up else (best["score"] if best else 0.0))
 
-    tied_count = 0
-    if best is not None:
-        tied_count = sum(1 for item in scored if abs(float(item["score"]) - float(best["score"])) < 1e-6)
-
-    best_details = set(best.get("details", [])) if best else set()
-    has_symbol_evidence = any(d.startswith("symbol_") for d in best_details)
-    has_points_evidence = ("points_exact" in best_details) or ("points_raw" in best_details)
-    has_bottom_ref_evidence = "bottom_ref_exact" in best_details
-    has_real_discriminant = has_symbol_evidence or has_points_evidence or has_bottom_ref_evidence
-
     if best is None:
         final_status = "rejected"
         final_card_id = None
         reason = "no_candidate"
-    elif tied_count > 1:
-        final_status = "rejected"
-        final_card_id = None
-        reason = "tie_after_scoring"
-    elif final_gap <= 0.0:
-        final_status = "rejected"
-        final_card_id = None
-        reason = "gap_zero"
-    elif not has_real_discriminant:
-        final_status = "rejected"
-        final_card_id = None
-        reason = "color_only_match"
     elif final_gap >= 1.0 and best["score"] >= 18.0:
         final_status = "accepted"
         final_card_id = best["card_id"]
@@ -2958,185 +2979,80 @@ def index():
 # UPLOAD
 # =====================================================
 
+@app.route("/upload", methods=["POST"])
+def upload():
+    try:
+        if "image" not in request.files:
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+            })
 
-def _empty_upload_response(extra=None):
-    base = {
-        "rects": [],
-        "signature": None,
-        "rois": [],
-        "card_match": None,
-        "final_card_id": None,
-        "final_status": None,
-        "final_score": 0.0,
-        "final_gap": 0.0,
-        "board_matches": [],
-        "board_analysis": None,
-        "mode": None,
-    }
-    if extra:
-        base.update(extra)
-    return base
+        file = request.files["image"]
 
+        data = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
-def _analyze_single_card_upload(img):
-    rect = detect_main_card(img)
+        if img is None:
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+            })
 
-    if rect is None:
-        return _empty_upload_response({
-            "rects": [],
-            "signature": None,
-            "rois": [],
-            "card_match": None,
-            "mode": "CARDS_ONLY",
-            "error": "Aucune carte détectée",
-        })
+        rect = detect_main_card(img)
 
-    quad = np.array(rect["quad"], dtype="float32")
-    warped = warp_quad(img, quad)
-
-    sig = None
-    rois = []
-    card_match = None
-
-    if warped is None or warped.size == 0:
-        return _empty_upload_response({
-            "rects": [rect],
-            "signature": None,
-            "rois": [],
-            "card_match": None,
-            "mode": "CARDS_ONLY",
-            "error": "Warp impossible",
-        })
-
-    cv2.imwrite(WARP_PATH, warped)
-    sig, rois = compute_signature(warped)
-
-    if sig is not None:
-        try:
-            card_match = resolve_final_card(sig)
-            sig["card_match"] = card_match
-        except Exception:
-            card_match = None
-
-    return _empty_upload_response({
-        "rects": [rect],
-        "signature": sig,
-        "rois": rois,
-        "card_match": card_match,
-        "final_card_id": (card_match or {}).get("final_card_id"),
-        "final_status": (card_match or {}).get("final_status"),
-        "final_score": float((card_match or {}).get("final_score", 0.0)),
-        "final_gap": float((card_match or {}).get("final_gap", 0.0)),
-        "color_name": (card_match or {}).get("color_name"),
-        "symbol_name": (card_match or {}).get("symbol_name"),
-        "bottom_layout": (card_match or {}).get("bottom_layout"),
-        "points": (card_match or {}).get("points"),
-        "mode": "CARDS_ONLY",
-    })
-
-
-def _fit_rect_inside_image(x, y, w, h, shape):
-    img_h, img_w = shape[:2]
-    x = max(0, int(x))
-    y = max(0, int(y))
-    w = max(0, int(w))
-    h = max(0, int(h))
-    if x >= img_w or y >= img_h:
-        return None
-    w = min(w, img_w - x)
-    h = min(h, img_h - y)
-    if w <= 0 or h <= 0:
-        return None
-    return {"x": x, "y": y, "w": w, "h": h}
-
-
-def _slot_rect_to_quad(rect):
-    x, y, w, h = rect["x"], rect["y"], rect["w"], rect["h"]
-    return [
-        [x, y],
-        [x + w - 1, y],
-        [x + w - 1, y + h - 1],
-        [x, y + h - 1],
-    ]
-
-
-def _analyze_board_upload(img):
-    analysis = _build_board_debug_analysis(img)
-    board_matches = []
-    rects = []
-
-    for slot in analysis.get("slots", []):
-        if slot.get("status") != "occupied":
-            continue
-
-        slot_rect = _fit_rect_inside_image(
-            slot.get("x", 0),
-            slot.get("y", 0),
-            slot.get("w", 0),
-            slot.get("h", 0),
-            img.shape,
-        )
-        if slot_rect is None:
-            continue
-
-        x, y, w, h = slot_rect["x"], slot_rect["y"], slot_rect["w"], slot_rect["h"]
-        crop = img[y:y + h, x:x + w]
-        if crop is None or crop.size == 0:
-            continue
-
-        local_rect = detect_main_card(crop)
-        if local_rect is not None:
-            quad = np.array(local_rect["quad"], dtype="float32")
-            warped = warp_quad(crop, quad)
-            global_rect = {
-                "x": int(x + local_rect["x"]),
-                "y": int(y + local_rect["y"]),
-                "w": int(local_rect["w"]),
-                "h": int(local_rect["h"]),
-                "quad": [
-                    [int(x + pt[0]), int(y + pt[1])] for pt in local_rect["quad"]
-                ],
-            }
-        else:
-            warped = crop.copy()
-            global_rect = {
-                "x": int(x),
-                "y": int(y),
+        if rect is None:
+            h, w = img.shape[:2]
+            rect = {
+                "x": 0,
+                "y": 0,
                 "w": int(w),
                 "h": int(h),
-                "quad": _slot_rect_to_quad(slot_rect),
+                "quad": [
+                    [0, 0],
+                    [w - 1, 0],
+                    [w - 1, h - 1],
+                    [0, h - 1]
+                ]
             }
 
-        if warped is None or warped.size == 0:
-            continue
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(img, quad)
 
         sig = None
         rois = []
         card_match = None
-        try:
+
+        if warped is None or warped.size == 0:
+            warped = img.copy()
+
+        if warped is not None and warped.size != 0:
+            cv2.imwrite(WARP_PATH, warped)
             sig, rois = compute_signature(warped)
-            if sig is not None:
+
+        if sig is not None:
+            try:
                 card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
-        except Exception as exc:
-            card_match = {
-                "final_card_id": None,
-                "final_status": "error",
-                "final_score": 0.0,
-                "final_gap": 0.0,
-                "reason": str(exc),
-            }
+            except Exception:
+                card_match = None
 
-        result = {
-            "slot_id": slot.get("slot_id"),
-            "band": slot.get("band"),
-            "status": slot.get("status"),
-            "slot_score": float(slot.get("score", 0.0)),
-            "slot_reasons": slot.get("reasons", []),
-            "rect": global_rect,
-            "rects": [global_rect],
-            "rois": rois,
+        return jsonify({
+            "rects": [rect],
             "signature": sig,
+            "rois": rois,
             "card_match": card_match,
             "final_card_id": (card_match or {}).get("final_card_id"),
             "final_status": (card_match or {}).get("final_status"),
@@ -3146,44 +3062,20 @@ def _analyze_board_upload(img):
             "symbol_name": (card_match or {}).get("symbol_name"),
             "bottom_layout": (card_match or {}).get("bottom_layout"),
             "points": (card_match or {}).get("points"),
-        }
-        board_matches.append(result)
-        rects.append(global_rect)
-
-    return _empty_upload_response({
-        "rects": rects,
-        "board_analysis": analysis,
-        "board_matches": board_matches,
-        "mode": "BOARD",
-    })
-
-
-@app.route("/upload", methods=["POST"])
-def upload():
-    try:
-        if "image" not in request.files:
-            return jsonify(_empty_upload_response())
-
-        file = request.files["image"]
-        raw = file.read()
-        data = np.frombuffer(raw, np.uint8)
-        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-
-        if img is None:
-            return jsonify(_empty_upload_response())
-
-        mode = (request.form.get("mode") or "").strip().upper()
-
-        if mode == "BOARD":
-            return jsonify(_analyze_board_upload(img))
-
-        return jsonify(_analyze_single_card_upload(img))
+        })
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
-        return jsonify(_empty_upload_response({
-            "error": str(e),
-        }))
+        return jsonify({
+            "rects": [],
+            "signature": None,
+            "rois": [],
+            "card_match": None,
+            "final_card_id": None,
+            "final_status": None,
+            "final_score": 0.0,
+            "final_gap": 0.0,
+        })
 
 
 @app.route("/warp")
