@@ -5175,58 +5175,68 @@ def _build_slots_from_capsules(capsules, img_shape):
     img_h, img_w = img_shape[:2]
     if len(capsules) < 3:
         return []
-    caps = sorted(capsules, key=lambda c: c["x"])
-    cxs = np.array([c["x"] + c["w"] / 2.0 for c in caps], dtype=np.float32)
-    cys = np.array([c["y"] + c["h"] / 2.0 for c in caps], dtype=np.float32)
-    ws = np.array([c["w"] for c in caps], dtype=np.float32)
-    hs = np.array([c["h"] for c in caps], dtype=np.float32)
 
-    med_w = float(np.median(ws))
-    med_h = float(np.median(hs))
-    gap_lm = float(cxs[1] - cxs[0])
-    gap_mr = float(cxs[2] - cxs[1])
-    outer_gap = float(np.median([gap_lm, gap_mr]))
+    capsules = sorted(capsules, key=lambda c: c["x"])
+    left, middle, right = capsules
 
-    top_w = med_w * 1.05
-    top_h = med_h * 0.62
-    mid_w = med_w * 1.00
-    mid_h = med_h * 0.62
-    bottom_w = med_w * 1.05
-    bottom_h = med_h * 0.95
+    def cx(cap):
+        return float(cap["x"] + (cap["w"] / 2.0))
 
-    top_y = float(np.median([c["y"] for c in caps])) - top_h * 0.80
-    mid_y = float(np.median(cys)) + med_h * 0.02
-    bottom_y = float(np.median([c["y"] + c["h"] for c in caps])) - bottom_h * 0.12
+    def cy(cap):
+        return float(cap["y"] + (cap["h"] / 2.0))
 
-    definitions = [
-        ("top_left", cxs[0], top_y, top_w, top_h, "top"),
-        ("top_middle", cxs[1], top_y, top_w, top_h, "top"),
-        ("top_right", cxs[2], top_y, top_w, top_h, "top"),
-        ("left_outer", cxs[0] - outer_gap * 0.78, mid_y, mid_w, mid_h, "middle"),
-        ("middle_left", (cxs[0] + cxs[1]) / 2.0, mid_y, mid_w, mid_h, "middle"),
-        ("middle_right", (cxs[1] + cxs[2]) / 2.0, mid_y, mid_w, mid_h, "middle"),
-        ("right_outer", cxs[2] + outer_gap * 0.78, mid_y, mid_w, mid_h, "middle"),
-        ("bottom_left", cxs[0], bottom_y, bottom_w, bottom_h, "bottom"),
-        ("bottom_middle", cxs[1], bottom_y, bottom_w, bottom_h, "bottom"),
-        ("bottom_right", cxs[2], bottom_y, bottom_w, bottom_h, "bottom"),
+    cxl, cxm, cxr = cx(left), cx(middle), cx(right)
+    cyl, cym, cyr = cy(left), cy(middle), cy(right)
+
+    cy_med = float(np.median([cyl, cym, cyr]))
+    h_med = float(np.median([left["h"], middle["h"], right["h"]]))
+    gap_lm = max(1.0, cxm - cxl)
+    gap_mr = max(1.0, cxr - cxm)
+    gap_med = float(np.median([gap_lm, gap_mr]))
+
+    # Boîtes un peu plus petites que ta version actuelle
+    top_w = int(round(gap_med * 0.31))
+    top_h = int(round(top_w * 1.52))
+
+    side_w = int(round(gap_med * 0.32))
+    side_h = int(round(side_w * 1.48))
+
+    bottom_w = int(round(gap_med * 0.31))
+    bottom_h = int(round(bottom_w * 1.52))
+
+    # Positions corrigées
+    # Haut : remonter franchement
+    top_y = int(round(cy_med - h_med * 1.05 - top_h * 0.55))
+
+    # Milieu : légèrement plus haut et plus proche des capsules
+    mid_y = int(round(cy_med - side_h * 0.42))
+
+    # Bas : légèrement plus bas
+    bottom_y = int(round(cy_med + h_med * 0.70))
+
+    centers = [
+        ("top_left", cxl, top_y, top_w, top_h, "top"),
+        ("top_middle", cxm, top_y, top_w, top_h, "top"),
+        ("top_right", cxr, top_y, top_w, top_h, "top"),
+
+        ("left_outer", cxl - (gap_med * 0.54), mid_y, side_w, side_h, "middle"),
+        ("middle_left", (cxl + cxm) / 2.0, mid_y, side_w, side_h, "middle"),
+        ("middle_right", (cxm + cxr) / 2.0, mid_y, side_w, side_h, "middle"),
+        ("right_outer", cxr + (gap_med * 0.54), mid_y, side_w, side_h, "middle"),
+
+        ("bottom_left", cxl, bottom_y, bottom_w, bottom_h, "bottom"),
+        ("bottom_middle", cxm, bottom_y, bottom_w, bottom_h, "bottom"),
+        ("bottom_right", cxr, bottom_y, bottom_w, bottom_h, "bottom"),
     ]
 
-    slots = []
-    for slot_id, cx, y, bw, bh, band in definitions:
-        x1, y1, ww, hh = _clip_rect(cx - bw / 2.0, y, bw, bh, img_w, img_h)
-        valid, invalid_reason = _box_is_valid({"x": x1, "y": y1, "w": ww, "h": hh}, img_shape)
-        slots.append({
-            "slot_id": slot_id,
-            "band": band,
-            "x": x1,
-            "y": y1,
-            "w": ww,
-            "h": hh,
-            "valid": bool(valid),
-            "invalid_reason": invalid_reason,
-        })
-    return slots
+    out = []
+    for slot_id, center_x, top, bw, bh, band in centers:
+        box = _clip_box(center_x - (bw / 2.0), top, bw, bh, img_w, img_h)
+        box["slot_id"] = slot_id
+        box["band"] = band
+        out.append(box)
 
+    return out
 
 def _analyze_board_slot(crop, valid=True, invalid_reason=None):
     if not valid:
