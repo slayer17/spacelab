@@ -11,7 +11,7 @@ import numpy as np
 # =====================================================
 
 def _clip_box(x, y, w, h, max_w, max_h):
-    x = max(0, int(x))a
+    x = max(0, int(x))
     y = max(0, int(y))
     w = max(1, int(w))
     h = max(1, int(h))
