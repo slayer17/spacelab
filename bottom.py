@@ -11,7 +11,7 @@ import numpy as np
 # =====================================================
 
 def _clip_box(x, y, w, h, max_w, max_h):
-    x = max(0, int(x))
+    x = max(0, int(x))a
     y = max(0, int(y))
     w = max(1, int(w))
     h = max(1, int(h))
@@ -516,53 +516,66 @@ def _make_bottom_light_mask(zone):
 
 def _find_black_panel_box(bottom_zone):
     """
-    Cherche le grand panneau noir du bas.
-    Si ça échoue, on renvoie un fallback fixe.
+    Cherche le grand panneau noir du bas
+    pour les cartes classiques.
+
+    Important :
+    si la détection par contours échoue,
+    on renvoie un fallback fixe raisonnable
+    pour ne pas perdre les cas simples comme BLEU_1.
     """
     if bottom_zone is None or bottom_zone.size == 0:
         return None
 
     gray = cv2.cvtColor(bottom_zone, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
     _, dark_mask = cv2.threshold(blur, 95, 255, cv2.THRESH_BINARY_INV)
 
     kernel = np.ones((5, 5), np.uint8)
     dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        dark_mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
 
     h, w = gray.shape[:2]
+    image_area = float(max(w * h, 1))
     candidates = []
 
     if contours:
         for c in contours:
             x, y, bw, bh = cv2.boundingRect(c)
             area = cv2.contourArea(c)
+
             if area <= 0:
                 continue
 
-            area_ratio = area / float(max(w * h, 1))
-            if area_ratio < 0.12:
+            area_ratio = area / image_area
+
+            if area_ratio < 0.18:
                 continue
-            if x < w * 0.10:
+
+            if bw < w * 0.45:
                 continue
-            if bw < w * 0.35:
+
+            if bh < h * 0.45:
                 continue
-            if bh < h * 0.42:
-                continue
-            if y > h * 0.35:
+
+            if x > w * 0.20:
                 continue
 
             ratio = bw / float(max(bh, 1))
-            if ratio < 0.6 or ratio > 1.8:
+            if ratio < 1.2 or ratio > 4.8:
                 continue
 
             cx = x + (bw / 2.0)
-            cy = y + (bh / 2.0)
-            center_x_score = 1.0 - min(abs(cx - (w * 0.55)) / float(max(w * 0.35, 1)), 1.0)
-            center_y_score = 1.0 - min(abs(cy - (h * 0.52)) / float(max(h * 0.35, 1)), 1.0)
-            size_score = min(area_ratio / 0.28, 1.0)
-            score = (center_x_score * 2.0) + (center_y_score * 2.0) + (size_score * 2.0)
+            left_score = 1.0 - min(cx / float(max(w, 1)), 1.0)
+            size_score = min(area_ratio / 0.45, 1.0)
+
+            score = (size_score * 3.0) + (left_score * 1.0)
             candidates.append((score, x, y, bw, bh))
 
     if candidates:
@@ -570,10 +583,12 @@ def _find_black_panel_box(bottom_zone):
         _, x, y, bw, bh = candidates[0]
         return _clip_box(x, y, bw, bh, w, h)
 
+    # Fallback simple si aucun contour n'est assez bon
     fx = int(w * 0.02)
     fy = int(h * 0.08)
     fw = int(w * 0.50)
     fh = int(h * 0.84)
+
     return _clip_box(fx, fy, fw, fh, w, h)
 
 
