@@ -833,10 +833,17 @@ def run_cli(image_path: str):
 # ============================================================
 
 if __name__ == "__main__":
+    import os
     import sys
+
+    railway = os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("PORT")
 
     if len(sys.argv) > 1:
         run_cli(sys.argv[1])
+    elif railway:
+        print("Environnement Railway détecté : interface Tkinter désactivée.")
+        print("Ce fichier spacelab.py est une version locale desktop, pas une app web.")
+        print("Déploie une version Gradio/Flask pour Railway.")
     else:
         if not TK_AVAILABLE:
             print("Tkinter indisponible. Lance avec un chemin image en argument.")
