@@ -523,7 +523,7 @@ def _score_candidate(sig: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any
     layout = (sig.get("bottom_layout", {}) or {}).get("layout")
     points = (sig.get("bottom_layout", {}) or {}).get("points")
 
-    expected_color = item.get("color_name") or item.get("color")
+    expected_color = item.get("color_name") or item.get("color") or item.get("couleur")
     expected_symbol = item.get("symbol_name") or item.get("symbol") or item.get("target")
     expected_layout = item.get("bottom_layout") or item.get("layout")
     expected_points = item.get("points")
