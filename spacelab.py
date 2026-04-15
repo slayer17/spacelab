@@ -144,11 +144,11 @@ def load_optional_card_db() -> List[Dict[str, Any]]:
         try:
             raw = path.read_text(encoding="utf-8").strip()
 
-            # JSON direct
+            # Cas JSON classique
             if path.suffix.lower() == ".json":
                 data = json.loads(raw)
             else:
-                # cards.js du type: window.CARDS = [...]
+                # Cas cards.js du type : window.CARDS = [...]
                 txt = raw
 
                 if txt.startswith("window.CARDS"):
