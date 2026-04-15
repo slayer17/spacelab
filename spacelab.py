@@ -2961,22 +2961,20 @@ def upload():
 
         rect = detect_main_card(img)
 
-        if rect is None:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "rois": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-                "color_name": None,
-                "symbol_name": None,
-                "bottom_layout": None,
-                "points": None,
-                "error": "main_card_not_detected"
-            })
+      if rect is None:
+    h, w = img.shape[:2]
+    rect = {
+        "x": 0,
+        "y": 0,
+        "w": int(w),
+        "h": int(h),
+        "quad": [
+            [0, 0],
+            [w - 1, 0],
+            [w - 1, h - 1],
+            [0, h - 1]
+        ]
+    }
 
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
