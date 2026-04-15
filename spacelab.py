@@ -2938,6 +2938,11 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "color_name": None,
+                "symbol_name": None,
+                "bottom_layout": None,
+                "points": None,
+                "error": "missing_image"
             })
 
         file = request.files["image"]
@@ -2955,24 +2960,31 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "color_name": None,
+                "symbol_name": None,
+                "bottom_layout": None,
+                "points": None,
+                "error": "invalid_image"
             })
 
         rect = detect_main_card(img)
 
         if rect is None:
-            h, w = img.shape[:2]
-            rect = {
-                "x": 0,
-                "y": 0,
-                "w": int(w),
-                "h": int(h),
-                "quad": [
-                    [0, 0],
-                    [w - 1, 0],
-                    [w - 1, h - 1],
-                    [0, h - 1]
-                ]
-            }
+            return jsonify({
+                "rects": [],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "color_name": None,
+                "symbol_name": None,
+                "bottom_layout": None,
+                "points": None,
+                "error": "main_card_not_detected"
+            })
 
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
@@ -2982,17 +2994,31 @@ def upload():
         card_match = None
 
         if warped is None or warped.size == 0:
-            warped = img.copy()
+            return jsonify({
+                "rects": [rect],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "color_name": None,
+                "symbol_name": None,
+                "bottom_layout": None,
+                "points": None,
+                "error": "warp_failed"
+            })
 
-        if warped is not None and warped.size != 0:
-            cv2.imwrite(WARP_PATH, warped)
-            sig, rois = compute_signature(warped)
+        cv2.imwrite(WARP_PATH, warped)
+        sig, rois = compute_signature(warped)
 
         if sig is not None:
             try:
                 card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
-            except Exception:
+            except Exception as e:
+                print("CARD MATCH ERROR:", e)
                 card_match = None
 
         return jsonify({
@@ -3008,6 +3034,7 @@ def upload():
             "symbol_name": (card_match or {}).get("symbol_name"),
             "bottom_layout": (card_match or {}).get("bottom_layout"),
             "points": (card_match or {}).get("points"),
+            "error": None
         })
 
     except Exception as e:
@@ -3021,8 +3048,12 @@ def upload():
             "final_status": None,
             "final_score": 0.0,
             "final_gap": 0.0,
+            "color_name": None,
+            "symbol_name": None,
+            "bottom_layout": None,
+            "points": None,
+            "error": str(e)
         })
-
 
 @app.route("/warp")
 def warp():
