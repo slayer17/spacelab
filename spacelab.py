@@ -672,7 +672,263 @@ def empty_upload_payload(error: Optional[str] = None) -> Dict[str, Any]:
         "points": None,
         "error": error,
     }
+# -----------------------------------------------------
+# BOARD MODE
+# -----------------------------------------------------
 
+BOARD_SLOT_LAYOUT = [
+    ("top_left",     0.20, 0.03, 0.33, 0.28),
+    ("top_middle",   0.42, 0.03, 0.55, 0.28),
+    ("top_right",    0.65, 0.03, 0.78, 0.28),
+
+    ("left_outer",   0.08, 0.31, 0.19, 0.62),
+    ("middle_left",  0.28, 0.32, 0.40, 0.61),
+    ("middle_right", 0.53, 0.32, 0.65, 0.60),
+    ("right_outer",  0.78, 0.31, 0.89, 0.62),
+
+    ("bottom_left",  0.18, 0.70, 0.31, 0.98),
+    ("bottom_middle",0.44, 0.68, 0.54, 0.96),
+    ("bottom_right", 0.66, 0.69, 0.79, 0.98),
+]
+
+
+def _board_crop_box(img: np.ndarray, xr1: float, yr1: float, xr2: float, yr2: float) -> Tuple[np.ndarray, Dict[str, int]]:
+    h, w = img.shape[:2]
+    x1 = clamp_int(int(round(w * xr1)), 0, w - 1)
+    y1 = clamp_int(int(round(h * yr1)), 0, h - 1)
+    x2 = clamp_int(int(round(w * xr2)), x1 + 1, w)
+    y2 = clamp_int(int(round(h * yr2)), y1 + 1, h)
+    crop = img[y1:y2, x1:x2].copy()
+    return crop, {"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
+
+
+def _board_slot_occupied(crop: np.ndarray) -> Tuple[bool, Dict[str, float]]:
+    if crop is None or crop.size == 0:
+        return False, {"sat_ratio": 0.0, "edge_ratio": 0.0, "dark_ratio": 0.0}
+
+    h, w = crop.shape[:2]
+    pad_x = max(1, int(w * 0.08))
+    pad_y = max(1, int(h * 0.08))
+    inner = crop[pad_y:h - pad_y, pad_x:w - pad_x]
+    if inner.size == 0:
+        inner = crop
+
+    gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
+    edges = cv2.Canny(gray, 80, 180)
+
+    area = float(max(1, inner.shape[0] * inner.shape[1]))
+    sat_ratio = float(np.count_nonzero(hsv[:, :, 1] > 45)) / area
+    edge_ratio = float(np.count_nonzero(edges > 0)) / area
+    dark_ratio = float(np.count_nonzero(gray < 180)) / area
+
+    occupied = (
+        sat_ratio >= 0.05 or
+        edge_ratio >= 0.025 or
+        dark_ratio >= 0.18
+    )
+
+    return occupied, {
+        "sat_ratio": float(sat_ratio),
+        "edge_ratio": float(edge_ratio),
+        "dark_ratio": float(dark_ratio),
+    }
+
+
+def _extract_ref_scan(card_item: Dict[str, Any]) -> Dict[str, Any]:
+    return (((card_item or {}).get("signature") or {}).get("scan") or {})
+
+
+def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not sig or not CARD_DB:
+        return None
+
+    query_color = (((sig.get("color") or {}).get("detected")) or "").upper()
+    query_symbol = ((((sig.get("symbol") or {}).get("name")) or ((sig.get("symbol") or {}).get("raw_name")) or "")).upper()
+    query_points = int((((sig.get("bottom_layout") or {}).get("points")) or 0))
+    query_layout = (((sig.get("bottom_layout") or {}).get("layout")) or "").upper()
+
+    query_global_vec = (((sig.get("global") or {}).get("vector")) or [])
+    query_bottom_vec = (((sig.get("bottom") or {}).get("vector")) or [])
+
+    candidates = []
+
+    for item in CARD_DB:
+        card_id = item.get("id")
+        if not card_id:
+            continue
+
+        ref_scan = _extract_ref_scan(item)
+
+        ref_color = str(
+            item.get("couleur")
+            or item.get("color")
+            or item.get("color_name")
+            or ((ref_scan.get("color") or {}).get("detected"))
+            or ""
+        ).upper()
+
+        ref_symbol = str(
+            item.get("symbol")
+            or item.get("symbol_name")
+            or ""
+        ).upper()
+
+        ref_points = int(item.get("points") or ((ref_scan.get("bottom_layout") or {}).get("points")) or 0)
+        ref_layout = str(
+            ((ref_scan.get("bottom_layout") or {}).get("layout"))
+            or item.get("layout")
+            or item.get("bottom_layout")
+            or ""
+        ).upper()
+
+        ref_global_vec = (((ref_scan.get("global") or {}).get("vector")) or [])
+        ref_bottom_vec = (((ref_scan.get("bottom") or {}).get("vector")) or [])
+
+        score = 0.0
+        details = []
+
+        if query_color and ref_color and query_color == ref_color:
+            score += 25.0
+            details.append("color_exact")
+
+        if query_symbol and query_symbol != "INCONNU" and ref_symbol and query_symbol == ref_symbol:
+            score += 22.0
+            details.append("symbol_exact")
+
+        if query_points > 0 and ref_points > 0 and query_points == ref_points:
+            score += 10.0
+            details.append("points_exact")
+
+        if query_layout and ref_layout and query_layout == ref_layout:
+            score += 8.0
+            details.append("layout_exact")
+
+        global_sim = 0.0
+        if query_global_vec and ref_global_vec and len(query_global_vec) == len(ref_global_vec):
+            global_sim = cosine_similarity(query_global_vec, ref_global_vec)
+            score += 18.0 * global_sim
+            details.append(f"global={global_sim:.3f}")
+
+        bottom_sim = 0.0
+        if query_bottom_vec and ref_bottom_vec and len(query_bottom_vec) == len(ref_bottom_vec):
+            bottom_sim = cosine_similarity(query_bottom_vec, ref_bottom_vec)
+            score += 14.0 * bottom_sim
+            details.append(f"bottom={bottom_sim:.3f}")
+
+        candidates.append({
+            "card_id": card_id,
+            "score": float(score),
+            "details": details,
+            "global_similarity": float(global_sim),
+            "bottom_similarity": float(bottom_sim),
+            "color": ref_color,
+            "symbol": ref_symbol,
+            "points": ref_points,
+            "layout": ref_layout,
+        })
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    best = candidates[0]
+    second = candidates[1] if len(candidates) > 1 else {"score": 0.0}
+    gap = float(best["score"] - second["score"])
+
+    status = "accepted" if best["score"] >= 28.0 and gap >= 3.0 else "candidate" if best["score"] >= 18.0 else "unknown"
+
+    return {
+        "final_card_id": best["card_id"] if status != "unknown" else None,
+        "final_status": status,
+        "final_score": float(best["score"]),
+        "final_gap": gap,
+        "candidates": candidates[:5],
+    }
+
+
+def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) -> Dict[str, Any]:
+    occupied, metrics = _board_slot_occupied(crop)
+
+    slot = {
+        "slot_id": slot_id,
+        "x": box["x"],
+        "y": box["y"],
+        "w": box["w"],
+        "h": box["h"],
+        "occupied": bool(occupied),
+        "metrics": metrics,
+        "signature": None,
+        "match": None,
+    }
+
+    if not occupied:
+        return slot
+
+    rect = detect_main_card(crop)
+    if rect is None:
+        h, w = crop.shape[:2]
+        rect = {
+            "x": 0,
+            "y": 0,
+            "w": int(w),
+            "h": int(h),
+            "quad": [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]],
+        }
+
+    quad = np.array(rect["quad"], dtype=np.float32)
+    warped = warp_quad(crop, quad)
+    if warped is None or warped.size == 0:
+        warped = crop.copy()
+
+    sig, rois = compute_signature(warped)
+    slot["signature"] = sig
+    slot["rois"] = rois
+
+    if sig is not None:
+        slot["match"] = _match_card_from_signature(sig)
+
+    return slot
+
+
+def analyze_board(img: np.ndarray) -> Dict[str, Any]:
+    slots = []
+    board_matches = []
+    rects = []
+
+    for slot_id, xr1, yr1, xr2, yr2 in BOARD_SLOT_LAYOUT:
+        crop, box = _board_crop_box(img, xr1, yr1, xr2, yr2)
+        slot = _analyze_single_slot(slot_id, crop, box)
+        slots.append(slot)
+
+        rects.append({
+            "x": box["x"],
+            "y": box["y"],
+            "w": box["w"],
+            "h": box["h"],
+            "slot_id": slot_id,
+        })
+
+        if slot.get("occupied") and slot.get("match"):
+            board_matches.append({
+                "slot_id": slot_id,
+                "final_card_id": (slot["match"] or {}).get("final_card_id"),
+                "final_status": (slot["match"] or {}).get("final_status"),
+                "final_score": (slot["match"] or {}).get("final_score", 0.0),
+                "final_gap": (slot["match"] or {}).get("final_gap", 0.0),
+                "signature": slot.get("signature"),
+                "candidates": (slot["match"] or {}).get("candidates", []),
+            })
+
+    return {
+        "board_analysis": {
+            "slots": slots,
+            "slots_count": len(slots),
+            "occupied_count": sum(1 for s in slots if s.get("occupied")),
+        },
+        "board_matches": board_matches,
+        "rects": rects,
+    }
 
 # -----------------------------------------------------
 # ROUTES
@@ -710,6 +966,8 @@ def upload():
         if file is None or not getattr(file, "filename", ""):
             return jsonify(empty_upload_payload("empty_upload"))
 
+        mode = str(request.form.get("mode") or "BOARD").upper()
+
         data = np.frombuffer(file.read(), np.uint8)
         if data.size == 0:
             return jsonify(empty_upload_payload("empty_file"))
@@ -719,12 +977,36 @@ def upload():
             return jsonify(empty_upload_payload("image_decode_failed"))
 
         img = ensure_color_image(img)
-        h, w = img.shape[:2]
 
+        # -----------------------------
+        # MODE BOARD
+        # -----------------------------
+        if mode == "BOARD":
+            board_result = analyze_board(img)
+            return jsonify({
+                "rects": board_result["rects"],
+                "signature": None,
+                "rois": [],
+                "card_match": None,
+                "final_card_id": None,
+                "final_status": None,
+                "final_score": 0.0,
+                "final_gap": 0.0,
+                "color_name": None,
+                "symbol_name": None,
+                "bottom_layout": None,
+                "points": None,
+                "board_analysis": board_result["board_analysis"],
+                "board_matches": board_result["board_matches"],
+                "error": None,
+            })
+
+        # -----------------------------
+        # MODE SINGLE CARD
+        # -----------------------------
+        h, w = img.shape[:2]
         rect = detect_main_card(img)
 
-        # Fallback provisoire : si la carte n'est pas détectée proprement,
-        # on prend toute l'image pour laisser le front matcher sur la signature.
         if rect is None:
             rect = {
                 "x": 0,
@@ -751,9 +1033,6 @@ def upload():
 
         sig, rois = compute_signature(warped)
 
-        # IMPORTANT :
-        # on ne fait plus le matching final côté Python.
-        # Le front utilise matcher.js + cards.js pour ça.
         return jsonify({
             "rects": [rect],
             "signature": sig,
@@ -767,13 +1046,17 @@ def upload():
             "symbol_name": None,
             "bottom_layout": None,
             "points": None,
+            "board_analysis": None,
+            "board_matches": [],
             "error": None,
         })
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
-        return jsonify(empty_upload_payload(f"upload_exception: {e}"))
-
+        payload = empty_upload_payload(f"upload_exception: {e}")
+        payload["board_analysis"] = None
+        payload["board_matches"] = []
+        return jsonify(payload)
 
 # -----------------------------------------------------
 # MAIN
