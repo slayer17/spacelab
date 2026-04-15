@@ -466,40 +466,62 @@ if (mode === "BOARD") {
 			
 			
 			
-			// --- CAS 2 : MODE CARDS_ONLY ---
-            if (json.signature) {
-                const finalCardId = json.final_card_id || "Inconnue";
-                const finalStatus = json.final_status || "rejected";
-                const finalScore = Number(json.final_score ?? 0);
-                const finalGap = Number(json.final_gap ?? 0);
+// --- CAS 2 : MODE CARDS_ONLY ---
+if (json.signature) {
+    let frontMatch = null;
 
-                const color = json.color_name || json.signature?.color?.detected || "??";
-                const symbol = json.symbol_name || json.signature?.symbol?.name || "??";
-                const points = json.points ?? json.signature?.points?.digit ?? "??";
-                const layout = json.bottom_layout || json.signature?.bottom_layout?.layout || "??";
+    try {
+        if (typeof matchSignature === "function" && Array.isArray(CARDS)) {
+            frontMatch = matchSignature(json.signature, CARDS);
+            console.log("FRONT MATCH =", frontMatch);
+        }
+    } catch (e) {
+        console.error("matchSignature ERROR", e);
+    }
 
-                let message = "";
-                if (finalStatus === "accepted") {
-                    message += `✅ CARTE CONFIRMÉE : ${finalCardId}\n`;
-                } else {
-                    message += `⚠️ CARTE PROPOSÉE : ${finalCardId}\n`;
-                }
+    const color = json.signature?.color?.detected || "??";
+    const symbol = json.signature?.symbol?.name || json.signature?.symbol?.raw_name || "??";
+    const points =
+        json.signature?.bottom_layout?.points ??
+        json.signature?.points?.digit ??
+        "??";
+    const layout = json.signature?.bottom_layout?.layout || "??";
 
-                message += `Statut : ${finalStatus}\n`;
-                message += `---------------------------\n`;
-                message += `Couleur  : ${color}\n`;
-                message += `Symbole  : ${symbol}\n`;
-                message += `Points   : ${points}\n`;
-                message += `Layout   : ${layout}\n`;
-                message += `Score    : ${finalScore.toFixed(3)}\n`;
-                message += `Gap      : ${finalGap.toFixed(3)}`;
+    let message = "";
 
-                resultEl.textContent = message;
-                lastResultText = resultEl.textContent;
-            } else {
-                resultEl.textContent = "Pas de signature détectée par le serveur.";
-                lastResultText = resultEl.textContent;
-            }
+    if (frontMatch && frontMatch.card) {
+        const matchedCard = frontMatch.card.id || "Inconnue";
+        const matchedScore = Number(frontMatch.score ?? 0);
+
+        message += `✅ CARTE MATCHÉE : ${matchedCard}\n`;
+        message += `Score match JS : ${matchedScore.toFixed(3)}\n`;
+        message += `---------------------------\n`;
+        message += `Couleur  : ${color}\n`;
+        message += `Symbole  : ${symbol}\n`;
+        message += `Points   : ${points}\n`;
+        message += `Layout   : ${layout}`;
+    } else {
+        message += `⚠️ AUCUN MATCH FINAL JS\n`;
+        message += `---------------------------\n`;
+        message += `Couleur  : ${color}\n`;
+        message += `Symbole  : ${symbol}\n`;
+        message += `Points   : ${points}\n`;
+        message += `Layout   : ${layout}`;
+    }
+
+    resultEl.textContent = message;
+    lastResultText = resultEl.textContent;
+
+    // On stocke aussi le match front dans le JSON exporté
+    if (!window.lastUploadJson) {
+        window.lastUploadJson = json;
+    }
+    window.lastUploadJson.front_match = frontMatch || null;
+
+} else {
+    resultEl.textContent = "Pas de signature détectée par le serveur.";
+    lastResultText = resultEl.textContent;
+}
 
         } catch (err) {
             console.error(err);
