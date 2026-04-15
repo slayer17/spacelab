@@ -2959,35 +2959,11 @@ def upload():
                 "error": "invalid_image"
             })
 
-     rect = detect_main_card(img)
+        rect = detect_main_card(img)
 
-if rect is None:
-    return jsonify({
-        "rects": [],
-        "signature": None,
-        "rois": [],
-        "card_match": None,
-        "final_card_id": None,
-        "final_status": None,
-        "final_score": 0.0,
-        "final_gap": 0.0,
-        "color_name": None,
-        "symbol_name": None,
-        "bottom_layout": None,
-        "points": None,
-        "error": "main_card_not_detected"
-    })
-
-        quad = np.array(rect["quad"], dtype="float32")
-        warped = warp_quad(img, quad)
-
-        sig = None
-        rois = []
-        card_match = None
-
-        if warped is None or warped.size == 0:
+        if rect is None:
             return jsonify({
-                "rects": [rect],
+                "rects": [],
                 "signature": None,
                 "rois": [],
                 "card_match": None,
@@ -2999,10 +2975,21 @@ if rect is None:
                 "symbol_name": None,
                 "bottom_layout": None,
                 "points": None,
-                "error": "warp_failed"
+                "error": "main_card_not_detected"
             })
 
+        quad = np.array(rect["quad"], dtype="float32")
+        warped = warp_quad(img, quad)
+
+        if warped is None or warped.size == 0:
+            warped = img.copy()
+
         cv2.imwrite(WARP_PATH, warped)
+
+        sig = None
+        rois = []
+        card_match = None
+
         sig, rois = compute_signature(warped)
 
         if sig is not None:
@@ -3010,7 +2997,7 @@ if rect is None:
                 card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
             except Exception as e:
-                print("CARD MATCH ERROR:", e)
+                print("resolve_final_card ERROR:", e)
                 card_match = None
 
         return jsonify({
@@ -3046,7 +3033,10 @@ if rect is None:
             "points": None,
             "error": str(e)
         })
-
+        
+        
+        
+        
 @app.route("/warp")
 def warp():
     if not os.path.exists(WARP_PATH):
