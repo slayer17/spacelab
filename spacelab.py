@@ -723,6 +723,8 @@ def upload():
 
         rect = detect_main_card(img)
 
+        # Fallback provisoire : si la carte n'est pas détectée proprement,
+        # on prend toute l'image pour laisser le front matcher sur la signature.
         if rect is None:
             rect = {
                 "x": 0,
@@ -749,42 +751,24 @@ def upload():
 
         sig, rois = compute_signature(warped)
 
-        card_match = None
-        if sig is not None:
-            try:
-                card_match = resolve_final_card(sig)
-                sig["card_match"] = card_match
-            except Exception as exc:
-                card_match = {
-                    "candidate_cards": [],
-                    "color_name": (sig.get("color", {}) or {}).get("detected"),
-                    "symbol_name": (sig.get("symbol", {}) or {}).get("name"),
-                    "symbol_source": (sig.get("symbol", {}) or {}).get("threshold_mode"),
-                    "bottom_layout": (sig.get("bottom_layout", {}) or {}).get("layout"),
-                    "points": (sig.get("bottom_layout", {}) or {}).get("points"),
-                    "final_card_id": None,
-                    "final_status": "error",
-                    "final_score": 0.0,
-                    "final_gap": 0.0,
-                    "reason": f"resolve_final_card_failed: {exc}",
-                }
-
-        payload = {
+        # IMPORTANT :
+        # on ne fait plus le matching final côté Python.
+        # Le front utilise matcher.js + cards.js pour ça.
+        return jsonify({
             "rects": [rect],
             "signature": sig,
             "rois": rois,
-            "card_match": card_match,
-            "final_card_id": (card_match or {}).get("final_card_id"),
-            "final_status": (card_match or {}).get("final_status"),
-            "final_score": float((card_match or {}).get("final_score", 0.0)),
-            "final_gap": float((card_match or {}).get("final_gap", 0.0)),
-            "color_name": (card_match or {}).get("color_name"),
-            "symbol_name": (card_match or {}).get("symbol_name"),
-            "bottom_layout": (card_match or {}).get("bottom_layout"),
-            "points": (card_match or {}).get("points"),
+            "card_match": None,
+            "final_card_id": None,
+            "final_status": None,
+            "final_score": 0.0,
+            "final_gap": 0.0,
+            "color_name": None,
+            "symbol_name": None,
+            "bottom_layout": None,
+            "points": None,
             "error": None,
-        }
-        return jsonify(payload)
+        })
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
