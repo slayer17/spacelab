@@ -2815,95 +2815,87 @@ def find_card_image(card_id):
 # =====================================================
 
 def detect_main_card(img):
-    if img is None or img.size == 0:
+    try:
+        if img is None or img.size == 0:
+            return None
+
+        h, w = img.shape[:2]
+        img_area = h * w
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+        # Essai 1 : Canny
+        edges = cv2.Canny(gray, 50, 150)
+        edges = cv2.dilate(edges, None, iterations=2)
+        edges = cv2.erode(edges, None, iterations=1)
+
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        best = None
+        best_area = 0
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < img_area * 0.08:
+                continue
+
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+
+            if len(approx) == 4 and area > best_area:
+                best = approx
+                best_area = area
+
+        # Essai 2 : si aucun quad trouvé, prendre le plus grand rectangle englobant
+        if best is None:
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if area < img_area * 0.08:
+                    continue
+
+                x, y, ww, hh = cv2.boundingRect(cnt)
+                rect_area = ww * hh
+                ratio = ww / float(hh) if hh > 0 else 0
+
+                if rect_area > best_area and 0.45 < ratio < 0.85:
+                    best_area = rect_area
+                    best = np.array([
+                        [[x, y]],
+                        [[x + ww, y]],
+                        [[x + ww, y + hh]],
+                        [[x, y + hh]]
+                    ], dtype=np.int32)
+
+        if best is None:
+            return None
+
+        pts = best.reshape(4, 2).astype("float32")
+
+        # ordre : haut-gauche, haut-droite, bas-droite, bas-gauche
+        s = pts.sum(axis=1)
+        diff = np.diff(pts, axis=1)
+
+        ordered = np.array([
+            pts[np.argmin(s)],
+            pts[np.argmin(diff)],
+            pts[np.argmax(s)],
+            pts[np.argmax(diff)]
+        ], dtype="float32")
+
+        x, y, ww, hh = cv2.boundingRect(ordered.astype(np.int32))
+
+        return {
+            "x": int(x),
+            "y": int(y),
+            "w": int(ww),
+            "h": int(hh),
+            "quad": ordered.astype(int).tolist()
+        }
+
+    except Exception as e:
+        print("detect_main_card ERROR:", e)
         return None
-
-    max_dim = 1400
-
-    h, w = img.shape[:2]
-    scale = 1.0
-
-    if max(h, w) > max_dim:
-        scale = max_dim / float(max(h, w))
-        img = cv2.resize(img, (int(w * scale), int(h * scale)))
-
-    h, w = img.shape[:2]
-    image_area = h * w
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    edges = cv2.Canny(blur, 60, 150)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    edges = cv2.dilate(edges, kernel, iterations=1)
-    edges = cv2.erode(edges, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(
-        edges,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-
-    if not contours:
-        return None
-
-    candidates = []
-
-    for c in contours:
-        area = cv2.contourArea(c)
-
-        if area < image_area * 0.15:
-            continue
-
-        if area > image_area * 0.98:
-            continue
-
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-
-        if len(approx) == 4:
-            quad = approx.reshape(4, 2).astype("float32")
-        else:
-            rect = cv2.minAreaRect(c)
-            quad = cv2.boxPoints(rect).astype("float32")
-
-        warp = warp_quad(img, quad)
-        if warp is None:
-            continue
-
-        wh, ww = warp.shape[:2]
-        if ww == 0 or wh == 0:
-            continue
-
-        ratio = wh / float(ww)
-
-        if ratio < 1.2 or ratio > 1.8:
-            continue
-
-        candidates.append((area, quad))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    quad = candidates[0][1]
-
-    if scale != 1.0:
-        quad = quad / scale
-
-    quad = order_points(quad)
-
-    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
-
-    return {
-        "x": int(x),
-        "y": int(y),
-        "w": int(bw),
-        "h": int(bh),
-        "quad": quad.astype(int).tolist()
-    }
-
 
 # =====================================================
 # ROUTES
@@ -2967,24 +2959,24 @@ def upload():
                 "error": "invalid_image"
             })
 
-        rect = detect_main_card(img)
+     rect = detect_main_card(img)
 
-        if rect is None:
-            return jsonify({
-                "rects": [],
-                "signature": None,
-                "rois": [],
-                "card_match": None,
-                "final_card_id": None,
-                "final_status": None,
-                "final_score": 0.0,
-                "final_gap": 0.0,
-                "color_name": None,
-                "symbol_name": None,
-                "bottom_layout": None,
-                "points": None,
-                "error": "main_card_not_detected"
-            })
+if rect is None:
+    return jsonify({
+        "rects": [],
+        "signature": None,
+        "rois": [],
+        "card_match": None,
+        "final_card_id": None,
+        "final_status": None,
+        "final_score": 0.0,
+        "final_gap": 0.0,
+        "color_name": None,
+        "symbol_name": None,
+        "bottom_layout": None,
+        "points": None,
+        "error": "main_card_not_detected"
+    })
 
         quad = np.array(rect["quad"], dtype="float32")
         warped = warp_quad(img, quad)
