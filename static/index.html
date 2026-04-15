@@ -1,1 +1,117 @@
 
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SpaceLab – Card Reader</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <h2>Lecteur SpaceLab</h2>
+
+    <!-- =======================
+         MODE
+    ======================= -->
+    <button id="boardBtn">Mode BOARD</button>
+    <button id="cardsBtn">Mode CARDS</button>
+
+    <br><br>
+
+    <!-- =======================
+         CAMERA
+    ======================= -->
+    <button id="startBtn">Démarrer caméra</button>
+    <button id="captureBtn">Capturer</button>
+
+    <br><br>
+
+    <!-- =======================
+         LOAD IMAGE
+    ======================= -->
+    <button id="loadBtn">Charger image</button>
+
+    <input
+        type="file"
+        id="file"
+        accept="image/*"
+        style="display:none"
+    >
+
+    <br><br>
+
+    <!-- =======================
+         VIDEO
+    ======================= -->
+    <video
+        id="video"
+        autoplay
+        playsinline
+        style="max-width:600px"
+    ></video>
+
+    <br><br>
+
+    <!-- =======================
+         CANVAS + RESULTAT
+    ======================= -->
+    <div style="display:flex; gap:20px; align-items:flex-start;">
+
+        <div>
+            <canvas
+                id="canvas"
+                width="600"
+                height="900"
+                style="border:1px solid black"
+            ></canvas>
+        </div>
+
+        <div>
+            <h3 style="margin-top:0;">Résultat</h3>
+            <pre
+                id="result"
+                style="background:#f4f4f4; padding:10px; border-radius:5px; min-width:200px;"
+            ></pre>
+        </div>
+
+    </div>
+
+    <br>
+
+    <!-- =======================
+         JSON UPLOAD
+    ======================= -->
+    <div id="jsonTools" style="margin-top:16px;">
+        <h3 style="margin:0 0 10px 0;">JSON /upload</h3>
+
+        <button id="btnShowJson" type="button">Afficher JSON</button>
+        <button id="btnCopyJson" type="button">Copier JSON</button>
+        <button id="exportReportBtn" type="button">Exporter HTML + JSON</button>
+
+        <pre
+            id="jsonOutput"
+            style="
+                display:none;
+                margin-top:10px;
+                background:#f5f5f5;
+                border:1px solid #ccc;
+                padding:10px;
+                white-space:pre-wrap;
+                max-height:300px;
+                overflow:auto;
+            "
+        ></pre>
+    </div>
+
+    <!-- =======================
+         SCRIPTS
+    ======================= -->
+    <script src="cards.js"></script>
+    <script src="color.js"></script>
+    <script src="matcher.js"></script>
+    <script src="script.js"></script>
+
+</body>
+</html>
