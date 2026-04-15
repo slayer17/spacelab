@@ -138,19 +138,39 @@ def warp_quad(img: np.ndarray, quad: np.ndarray) -> Optional[np.ndarray]:
 
 def load_optional_card_db() -> List[Dict[str, Any]]:
     for path in CARD_DB_CANDIDATES:
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict):
-                    for key in ("cards", "items", "data"):
-                        if isinstance(data.get(key), list):
-                            return data[key]
-            except Exception:
-                pass
-    return []
+        if not path.exists():
+            continue
 
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+
+            # JSON direct
+            if path.suffix.lower() == ".json":
+                data = json.loads(raw)
+            else:
+                # cards.js du type: window.CARDS = [...]
+                txt = raw
+
+                if txt.startswith("window.CARDS"):
+                    txt = txt.split("=", 1)[1].strip()
+
+                if txt.endswith(";"):
+                    txt = txt[:-1].strip()
+
+                data = json.loads(txt)
+
+            if isinstance(data, list):
+                return data
+
+            if isinstance(data, dict):
+                for key in ("cards", "items", "data"):
+                    if isinstance(data.get(key), list):
+                        return data[key]
+
+        except Exception as e:
+            print(f"load_optional_card_db ERROR on {path}: {e}")
+
+    return []
 
 CARD_DB = load_optional_card_db()
 
