@@ -2930,6 +2930,7 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "error": "missing_image"
             })
 
         file = request.files["image"]
@@ -2946,6 +2947,7 @@ def upload():
                 "final_status": None,
                 "final_score": 0.0,
                 "final_gap": 0.0,
+                "error": "invalid_image"
             })
 
         h, w = img.shape[:2]
@@ -2980,7 +2982,8 @@ def upload():
             try:
                 card_match = resolve_final_card(sig)
                 sig["card_match"] = card_match
-            except Exception:
+            except Exception as e:
+                print("resolve_final_card ERROR:", e)
                 card_match = None
 
         return jsonify({
@@ -2996,6 +2999,7 @@ def upload():
             "symbol_name": (card_match or {}).get("symbol_name"),
             "bottom_layout": (card_match or {}).get("bottom_layout"),
             "points": (card_match or {}).get("points"),
+            "error": None
         })
 
     except Exception as e:
