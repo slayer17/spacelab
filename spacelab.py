@@ -49,6 +49,8 @@ CARD_DB_CANDIDATES = [
     BASE_DIR / "card_db.json",
     BASE_DIR / "cards.json",
     BASE_DIR / "references.json",
+    BASE_DIR / "cards.js",
+    BASE_DIR / "static" / "cards.js",
 ]
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
