@@ -715,16 +715,18 @@ def _box_from_margins(box: Dict[str, int], left: float, top: float, right: float
 
 
 def _default_board_inner_box(slot_id: str, box: Dict[str, int]) -> Dict[str, int]:
+    # Boîte "safe" : on préfère garder toute la carte avec un peu de fond,
+    # plutôt que couper un bord utile.
     if slot_id.startswith("top_"):
-        return _box_from_margins(box, left=0.16, top=0.00, right=0.20, bottom=0.05)
+        return _box_from_margins(box, left=0.12, top=0.00, right=0.12, bottom=0.02)
     if slot_id.startswith("bottom_"):
-        return _box_from_margins(box, left=0.12, top=0.00, right=0.12, bottom=0.06)
+        return _box_from_margins(box, left=0.08, top=0.00, right=0.08, bottom=0.02)
     if slot_id in ("left_outer", "right_outer"):
-        return _box_from_margins(box, left=0.05, top=0.00, right=0.05, bottom=0.04)
-    return _box_from_margins(box, left=0.12, top=0.00, right=0.12, bottom=0.05)
+        return _box_from_margins(box, left=0.03, top=0.00, right=0.03, bottom=0.02)
+    return _box_from_margins(box, left=0.08, top=0.00, right=0.08, bottom=0.02)
 
 
-def _projection_bounds(values: np.ndarray, threshold_ratio: float = 0.35, pad: int = 6) -> Optional[Tuple[int, int]]:
+def _projection_bounds(values: np.ndarray, threshold_ratio: float = 0.28, pad: int = 8) -> Optional[Tuple[int, int]]:
     if values is None or len(values) == 0:
         return None
 
@@ -777,14 +779,14 @@ def _largest_contour_box(mask: np.ndarray) -> Optional[Dict[str, int]]:
         area_ratio = rect_area / full_area
         aspect = w / float(max(1, h))
 
-        if fill_ratio < 0.25:
+        if fill_ratio < 0.18:
             continue
-        if area_ratio < 0.10 or area_ratio > 0.92:
+        if area_ratio < 0.08 or area_ratio > 0.96:
             continue
-        if aspect < 0.35 or aspect > 0.95:
+        if aspect < 0.30 or aspect > 1.05:
             continue
 
-        score = area * (0.50 + fill_ratio)
+        score = area * (0.45 + fill_ratio)
         if score > best_score:
             best_score = score
             best = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
@@ -799,6 +801,23 @@ def _merge_local_boxes(primary: Dict[str, int], secondary: Dict[str, int], alpha
     w = int(round(primary["w"] * alpha + secondary["w"] * beta))
     h = int(round(primary["h"] * alpha + secondary["h"] * beta))
     return {"x": x, "y": y, "w": max(1, w), "h": max(1, h)}
+
+
+def _union_local_boxes(a: Dict[str, int], b: Dict[str, int]) -> Dict[str, int]:
+    x1 = min(int(a["x"]), int(b["x"]))
+    y1 = min(int(a["y"]), int(b["y"]))
+    x2 = max(int(a["x"] + a["w"]), int(b["x"] + b["w"]))
+    y2 = max(int(a["y"] + a["h"]), int(b["y"] + b["h"]))
+    return {"x": x1, "y": y1, "w": max(1, x2 - x1), "h": max(1, y2 - y1)}
+
+
+def _expand_local_box(local_box: Dict[str, int], crop_shape: Tuple[int, int, int], pad_x: int, pad_y: int) -> Dict[str, int]:
+    h, w = crop_shape[:2]
+    x1 = max(0, int(local_box["x"]) - int(pad_x))
+    y1 = max(0, int(local_box["y"]) - int(pad_y))
+    x2 = min(w, int(local_box["x"] + local_box["w"]) + int(pad_x))
+    y2 = min(h, int(local_box["y"] + local_box["h"]) + int(pad_y))
+    return {"x": x1, "y": y1, "w": max(1, x2 - x1), "h": max(1, y2 - y1)}
 
 
 def _clip_local_box(local_box: Dict[str, int], crop_shape: Tuple[int, int, int]) -> Dict[str, int]:
@@ -826,18 +845,18 @@ def _refine_board_card_box(slot_id: str, crop: np.ndarray, base_box: Dict[str, i
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 60, 160)
+    edges = cv2.Canny(blur, 50, 150)
 
-    pad_x = max(4, int(base_box["w"] * 0.03))
-    pad_y = max(4, int(base_box["h"] * 0.03))
+    pad_x = max(4, int(base_box["w"] * 0.02))
+    pad_y = max(4, int(base_box["h"] * 0.02))
     inner = edges[pad_y:max(pad_y + 1, edges.shape[0] - pad_y), pad_x:max(pad_x + 1, edges.shape[1] - pad_x)]
     projection_box = None
 
     if inner.size > 0:
         xproj = np.mean(inner > 0, axis=0).astype(np.float32)
         yproj = np.mean(inner > 0, axis=1).astype(np.float32)
-        xb = _projection_bounds(xproj, threshold_ratio=0.33, pad=max(4, int(base_box["w"] * 0.02)))
-        yb = _projection_bounds(yproj, threshold_ratio=0.33, pad=max(4, int(base_box["h"] * 0.02)))
+        xb = _projection_bounds(xproj, threshold_ratio=0.28, pad=max(6, int(base_box["w"] * 0.03)))
+        yb = _projection_bounds(yproj, threshold_ratio=0.28, pad=max(6, int(base_box["h"] * 0.03)))
         if xb and yb:
             projection_box = {
                 "x": int(xb[0] + pad_x),
@@ -848,39 +867,42 @@ def _refine_board_card_box(slot_id: str, crop: np.ndarray, base_box: Dict[str, i
             projection_box = _clip_local_box(projection_box, crop.shape)
 
     foreground_mask = np.zeros_like(gray)
-    foreground_mask[(gray < 215) | (hsv[:, :, 1] > 45)] = 255
+    foreground_mask[(gray < 228) | (hsv[:, :, 1] > 28)] = 255
     k = np.ones((5, 5), np.uint8)
     foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_OPEN, k)
     foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_CLOSE, k)
     contour_box = _largest_contour_box(foreground_mask)
 
-    candidate = None
+    candidate = default_box
     if projection_box and contour_box:
-        candidate = _merge_local_boxes(projection_box, contour_box, alpha=0.55)
+        candidate = _union_local_boxes(projection_box, contour_box)
     elif projection_box:
-        candidate = projection_box
+        candidate = _union_local_boxes(projection_box, default_box)
     elif contour_box:
-        candidate = contour_box
+        candidate = _union_local_boxes(contour_box, default_box)
 
-    if candidate is not None:
-        candidate = _clip_local_box(candidate, crop.shape)
-        aspect = candidate["w"] / float(max(1, candidate["h"]))
-        area_ratio = (candidate["w"] * candidate["h"]) / float(max(1, base_box["w"] * base_box["h"]))
-        if 0.35 <= aspect <= 0.95 and 0.12 <= area_ratio <= 0.90:
-            local_box = _merge_local_boxes(candidate, default_box, alpha=0.72)
-        else:
-            local_box = default_box
-    else:
-        local_box = default_box
+    candidate = _clip_local_box(candidate, crop.shape)
 
+    # On élargit volontairement pour garantir la carte complète.
+    extra_x = max(6, int(candidate["w"] * 0.06))
+    extra_y = max(6, int(candidate["h"] * 0.04))
+    if slot_id.startswith("top_") or slot_id.startswith("bottom_"):
+        extra_x = max(extra_x, int(base_box["w"] * 0.04))
+    if slot_id in ("left_outer", "right_outer"):
+        extra_x = max(extra_x, int(base_box["w"] * 0.03))
+        extra_y = max(extra_y, int(base_box["h"] * 0.03))
+
+    local_box = _expand_local_box(candidate, crop.shape, pad_x=extra_x, pad_y=extra_y)
+    local_box = _union_local_boxes(local_box, default_box)
     local_box = _clip_local_box(local_box, crop.shape)
+
     abs_box = _local_box_to_abs(base_box, local_box)
-    tight_crop = crop[local_box["y"]:local_box["y"] + local_box["h"], local_box["x"]:local_box["x"] + local_box["w"]].copy()
+    card_crop = crop[local_box["y"]:local_box["y"] + local_box["h"], local_box["x"]:local_box["x"] + local_box["w"]].copy()
 
     return {
         "local_box": local_box,
         "abs_box": abs_box,
-        "tight_crop": tight_crop,
+        "tight_crop": card_crop,
         "default_local_box": default_box,
         "projection_local_box": projection_box,
         "contour_local_box": contour_box,
