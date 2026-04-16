@@ -1836,6 +1836,275 @@ def upload():
         payload["board_matches"] = []
         return jsonify(payload)
 
+
+# -----------------------------------------------------
+# CARD OVERRIDES - ROI FIX
+# -----------------------------------------------------
+
+def _roi_dict(name: str, box: Tuple[int, int, int, int]) -> Dict[str, int]:
+    x, y, w, h = box
+    return {"type": name, "x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+
+
+def _crop_box(img: np.ndarray, box: Tuple[int, int, int, int]) -> np.ndarray:
+    x, y, w, h = box
+    x, y, w, h = _clip_box_tuple(x, y, w, h, img.shape[1], img.shape[0])
+    return img[y:y+h, x:x+w].copy()
+
+
+def _find_symbol_box(card_norm: np.ndarray) -> Tuple[Tuple[int, int, int, int], np.ndarray]:
+    h, w = card_norm.shape[:2]
+    sx1, sy1, sx2, sy2 = 0, int(h * 0.12), int(w * 0.32), int(h * 0.38)
+    search = card_norm[sy1:sy2, sx1:sx2]
+    if search.size == 0:
+        box = _clip_box_tuple(0, int(h * 0.14), int(w * 0.24), int(h * 0.20), w, h)
+        return box, _crop_box(card_norm, box)
+
+    gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    # Chercher une forme contrastée dans la zone symbole plutôt que garder un crop fixe aveugle.
+    th_dark = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    th_light = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY)[1]
+    mask = cv2.bitwise_or(th_dark, th_light)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_score = -1.0
+    sh, sw = gray.shape[:2]
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = float(cv2.contourArea(c))
+        if bw < max(10, int(sw * 0.18)) or bh < max(10, int(sh * 0.18)):
+            continue
+        if x + bw >= sw - 1 or y + bh >= sh - 1:
+            continue
+        ratio = bw / float(max(1, bh))
+        if ratio < 0.45 or ratio > 1.75:
+            continue
+        area_ratio = area / float(max(1, sw * sh))
+        score = area_ratio * 4.0 + (bh / float(max(1, sh)))
+        if score > best_score:
+            best_score = score
+            best = (x, y, bw, bh)
+
+    if best is None:
+        box = _clip_box_tuple(0, int(h * 0.14), int(w * 0.24), int(h * 0.20), w, h)
+        return box, _crop_box(card_norm, box)
+
+    x, y, bw, bh = best
+    pad_x = max(3, int(bw * 0.18))
+    pad_y = max(3, int(bh * 0.18))
+    box = _clip_box_tuple(sx1 + x - pad_x, sy1 + y - pad_y, bw + pad_x * 2, bh + pad_y * 2, w, h)
+    return box, _crop_box(card_norm, box)
+
+
+def _build_bottom_rois(card_norm: np.ndarray) -> Tuple[Dict[str, Any], List[Dict[str, int]], np.ndarray]:
+    h, w = card_norm.shape[:2]
+    bx1, by1, bx2, by2 = 0, int(h * 0.82), int(w * 0.55), h
+    bottom_box = _clip_box_tuple(bx1, by1, bx2 - bx1, by2 - by1, w, h)
+    bottom_crop = _crop_box(card_norm, bottom_box)
+    bottom_info = analyze_bottom_zone(bottom_crop)
+
+    rois = [_roi_dict('BOTTOM', bottom_box)]
+    mapping = [
+        ('panel_box', 'BOTTOM_PANEL'),
+        ('special_box', 'BOTTOM_SPECIAL'),
+        ('points_box', 'POINTS_BADGE'),
+        ('slash_box', 'BOTTOM_SLASH'),
+        ('right_icon_box', 'BOTTOM_RIGHT_ICON'),
+        ('bottom_line_box', 'BOTTOM_LINE'),
+    ]
+    for key, name in mapping:
+        box = bottom_info.get(key)
+        if box is None:
+            continue
+        ox, oy, ow, oh = box
+        abs_box = _clip_box_tuple(bottom_box[0] + ox, bottom_box[1] + oy, ow, oh, w, h)
+        rois.append(_roi_dict(name, abs_box))
+
+    # bottom vector prioritaire : panneau noir si trouvé, sinon toute la zone bottom.
+    panel_box = bottom_info.get('panel_box')
+    if panel_box is not None:
+        px, py, pw, ph = panel_box
+        panel_crop = bottom_crop[py:py+ph, px:px+pw].copy()
+        panel_gray = cv2.cvtColor(panel_crop, cv2.COLOR_BGR2GRAY) if panel_crop.size else cv2.cvtColor(bottom_crop, cv2.COLOR_BGR2GRAY)
+    else:
+        panel_gray = cv2.cvtColor(bottom_crop, cv2.COLOR_BGR2GRAY)
+
+    bottom_signature = {
+        'vector': image_to_vector(panel_gray, size=(16, 16)),
+        'mean': safe_float(np.mean(panel_gray)),
+        'std': safe_float(np.std(panel_gray)),
+    }
+    return bottom_info, rois, bottom_crop, bottom_signature
+
+
+def _normalize_points_payload(points_info: Dict[str, Any], bottom_info: Dict[str, Any]) -> Dict[str, Any]:
+    digit = int(bottom_info.get('points') or points_info.get('digit') or 0)
+    raw_digit = int(bottom_info.get('raw_points') or points_info.get('raw_digit') or digit)
+    score = float(bottom_info.get('points_score', points_info.get('score', 0.0)))
+    gap = float(bottom_info.get('points_gap', points_info.get('gap', 1.0)))
+    found = bool(digit > 0 and (score >= 0.40 or bottom_info.get('points_box') is not None))
+    return {
+        'digit': digit,
+        'raw_digit': raw_digit,
+        'score': score,
+        'gap': gap,
+        'found': found,
+        'mean': float(points_info.get('mean', 0.0)),
+        'std': float(points_info.get('std', 0.0)),
+        'scores': bottom_info.get('digit_scores', []),
+    }
+
+
+def detect_main_card(img: np.ndarray) -> Optional[Dict[str, Any]]:
+    try:
+        img = ensure_color_image(img)
+        h, w = img.shape[:2]
+        if h < 20 or w < 20:
+            return None
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+        edges = cv2.Canny(blur, 55, 165)
+        edges = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=1)
+        edges = cv2.erode(edges, np.ones((5, 5), np.uint8), iterations=1)
+
+        bright = cv2.threshold(blur, 165, 255, cv2.THRESH_BINARY)[1]
+        bright = cv2.morphologyEx(bright, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+
+        contours = []
+        for mask in (edges, bright):
+            cts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours.extend(cts)
+
+        image_area = float(w * h)
+        best = None
+        best_score = -1.0
+
+        for cnt in contours:
+            area = float(cv2.contourArea(cnt))
+            if area < image_area * 0.06:
+                continue
+
+            quad = contour_to_quad(cnt)
+            if quad is None:
+                continue
+
+            ordered = order_quad_points(quad)
+            width_a = np.linalg.norm(ordered[2] - ordered[3])
+            width_b = np.linalg.norm(ordered[1] - ordered[0])
+            height_a = np.linalg.norm(ordered[1] - ordered[2])
+            height_b = np.linalg.norm(ordered[0] - ordered[3])
+            card_w = float(max(width_a, width_b, 1.0))
+            card_h = float(max(height_a, height_b, 1.0))
+            portrait_ratio = max(card_h / card_w, card_w / card_h)
+            if card_h <= card_w:
+                continue
+            if portrait_ratio < 1.20 or portrait_ratio > 1.95:
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(ordered.astype(np.int32))
+            if bw < 40 or bh < 60:
+                continue
+            rect_area = float(max(1, bw * bh))
+            fill_ratio = area / rect_area
+            if fill_ratio < 0.38:
+                continue
+
+            ratio_penalty = abs(portrait_ratio - 1.5)
+            ratio_score = max(0.0, 1.0 - (ratio_penalty / 0.55))
+            center_x = x + bw / 2.0
+            center_y = y + bh / 2.0
+            dx = abs(center_x - (w / 2.0)) / max(1.0, w / 2.0)
+            dy = abs(center_y - (h / 2.0)) / max(1.0, h / 2.0)
+            center_score = max(0.0, 1.0 - (dx * 0.35 + dy * 0.20))
+            score = area * (0.45 + fill_ratio) * (0.60 + 0.40 * ratio_score) * (0.65 + 0.35 * center_score)
+
+            if score > best_score:
+                best_score = score
+                best = {
+                    'x': int(x),
+                    'y': int(y),
+                    'w': int(bw),
+                    'h': int(bh),
+                    'quad': [[int(px), int(py)] for px, py in ordered],
+                }
+        return best
+    except Exception:
+        return None
+
+
+def compute_signature(warped: np.ndarray) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    try:
+        warped = ensure_color_image(warped)
+        if warped.shape[0] < 20 or warped.shape[1] < 20:
+            return None, []
+
+        card_norm = normalize_card_image(warped)
+        h, w = card_norm.shape[:2]
+
+        color_box = _clip_box_tuple(0, 0, int(w * 0.38), int(h * 0.18), w, h)
+        global_box = _clip_box_tuple(0, 0, w, h, w, h)
+        symbol_box, symbol_crop = _find_symbol_box(card_norm)
+
+        color_crop = _crop_box(card_norm, color_box)
+        global_crop = _crop_box(card_norm, global_box)
+        bottom_info, bottom_rois, bottom_crop, bottom_signature = _build_bottom_rois(card_norm)
+
+        rois = [
+            _roi_dict('COLOR', color_box),
+            _roi_dict('SYMBOL', symbol_box),
+            _roi_dict('GLOBAL', global_box),
+        ] + bottom_rois
+
+        color_info = detect_dominant_color_name(color_crop)
+        symbol_gray = cv2.cvtColor(symbol_crop, cv2.COLOR_BGR2GRAY) if symbol_crop.size else np.zeros((8, 8), dtype=np.uint8)
+        bottom_gray = cv2.cvtColor(bottom_crop, cv2.COLOR_BGR2GRAY) if bottom_crop.size else np.zeros((8, 8), dtype=np.uint8)
+        global_gray = cv2.cvtColor(global_crop, cv2.COLOR_BGR2GRAY)
+
+        symbol_info = detect_symbol_name(symbol_gray)
+        points_info = detect_points_from_bottom(bottom_gray)
+        points_payload = _normalize_points_payload(points_info, bottom_info)
+
+        bottom_layout = {
+            'layout': bottom_info.get('layout', 'UNKNOWN'),
+            'has_slash': bool(bottom_info.get('has_slash')),
+            'has_right_icon': bool(bottom_info.get('has_right_icon')),
+            'has_bottom_line': bool(bottom_info.get('has_bottom_line')),
+            'has_special_white_panel': bool(bottom_info.get('has_special_white_panel')),
+            'points': int(points_payload.get('digit', 0)),
+            'raw_points': int(points_payload.get('raw_digit', 0)),
+            'points_score': float(points_payload.get('score', 0.0)),
+            'points_gap': float(points_payload.get('gap', 1.0)),
+            'range': 'GLOBAL' if bottom_info.get('has_slash') else '',
+            'target': '',
+            'ref_card_id': None,
+            'ref_score': float(points_payload.get('score', 0.0)),
+            'ref_gap': float(points_payload.get('gap', 1.0)),
+        }
+
+        signature = {
+            'color': color_info,
+            'symbol': symbol_info,
+            'bottom': bottom_signature,
+            'global': {
+                'vector': image_to_vector(global_gray, size=(16, 16)),
+                'mean': safe_float(np.mean(global_gray)),
+                'std': safe_float(np.std(global_gray)),
+            },
+            'points': points_payload,
+            'bottom_layout': bottom_layout,
+            'normalized_size': {'w': w, 'h': h},
+        }
+        return signature, rois
+    except Exception:
+        return None, []
+
 # -----------------------------------------------------
 # MAIN
 # -----------------------------------------------------
