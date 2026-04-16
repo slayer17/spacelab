@@ -702,6 +702,191 @@ def _board_crop_box(img: np.ndarray, xr1: float, yr1: float, xr2: float, yr2: fl
     return crop, {"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1}
 
 
+def _box_from_margins(box: Dict[str, int], left: float, top: float, right: float, bottom: float) -> Dict[str, int]:
+    w = int(box["w"])
+    h = int(box["h"])
+    x = int(round(left * w))
+    y = int(round(top * h))
+    x2 = int(round(w * (1.0 - right)))
+    y2 = int(round(h * (1.0 - bottom)))
+    x2 = max(x + 1, x2)
+    y2 = max(y + 1, y2)
+    return {"x": x, "y": y, "w": x2 - x, "h": y2 - y}
+
+
+def _default_board_inner_box(slot_id: str, box: Dict[str, int]) -> Dict[str, int]:
+    if slot_id.startswith("top_"):
+        return _box_from_margins(box, left=0.16, top=0.00, right=0.20, bottom=0.05)
+    if slot_id.startswith("bottom_"):
+        return _box_from_margins(box, left=0.12, top=0.00, right=0.12, bottom=0.06)
+    if slot_id in ("left_outer", "right_outer"):
+        return _box_from_margins(box, left=0.05, top=0.00, right=0.05, bottom=0.04)
+    return _box_from_margins(box, left=0.12, top=0.00, right=0.12, bottom=0.05)
+
+
+def _projection_bounds(values: np.ndarray, threshold_ratio: float = 0.35, pad: int = 6) -> Optional[Tuple[int, int]]:
+    if values is None or len(values) == 0:
+        return None
+
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    if arr.size < 3:
+        return None
+
+    win = max(5, int(arr.size * 0.05))
+    if win % 2 == 0:
+        win += 1
+    kernel = np.ones(win, dtype=np.float32) / float(win)
+    smooth = np.convolve(arr, kernel, mode="same")
+
+    vmax = float(np.max(smooth))
+    vmed = float(np.median(smooth))
+    if vmax <= 1e-6:
+        return None
+
+    threshold = vmed + (vmax - vmed) * threshold_ratio
+    idx = np.where(smooth >= threshold)[0]
+    if idx.size == 0:
+        return None
+
+    start = max(0, int(idx[0]) - pad)
+    end = min(arr.size - 1, int(idx[-1]) + pad)
+    return start, end
+
+
+def _largest_contour_box(mask: np.ndarray) -> Optional[Dict[str, int]]:
+    if mask is None or mask.size == 0:
+        return None
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    best = None
+    best_score = -1.0
+    mh, mw = mask.shape[:2]
+    full_area = float(max(1, mh * mw))
+
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < 20 or h < 30:
+            continue
+
+        area = float(cv2.contourArea(cnt))
+        rect_area = float(max(1, w * h))
+        fill_ratio = area / rect_area
+        area_ratio = rect_area / full_area
+        aspect = w / float(max(1, h))
+
+        if fill_ratio < 0.25:
+            continue
+        if area_ratio < 0.10 or area_ratio > 0.92:
+            continue
+        if aspect < 0.35 or aspect > 0.95:
+            continue
+
+        score = area * (0.50 + fill_ratio)
+        if score > best_score:
+            best_score = score
+            best = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+
+    return best
+
+
+def _merge_local_boxes(primary: Dict[str, int], secondary: Dict[str, int], alpha: float = 0.65) -> Dict[str, int]:
+    beta = 1.0 - alpha
+    x = int(round(primary["x"] * alpha + secondary["x"] * beta))
+    y = int(round(primary["y"] * alpha + secondary["y"] * beta))
+    w = int(round(primary["w"] * alpha + secondary["w"] * beta))
+    h = int(round(primary["h"] * alpha + secondary["h"] * beta))
+    return {"x": x, "y": y, "w": max(1, w), "h": max(1, h)}
+
+
+def _clip_local_box(local_box: Dict[str, int], crop_shape: Tuple[int, int, int]) -> Dict[str, int]:
+    h, w = crop_shape[:2]
+    x = clamp_int(local_box.get("x", 0), 0, max(0, w - 1))
+    y = clamp_int(local_box.get("y", 0), 0, max(0, h - 1))
+    bw = clamp_int(local_box.get("w", 1), 1, max(1, w - x))
+    bh = clamp_int(local_box.get("h", 1), 1, max(1, h - y))
+    return {"x": x, "y": y, "w": bw, "h": bh}
+
+
+def _local_box_to_abs(base_box: Dict[str, int], local_box: Dict[str, int]) -> Dict[str, int]:
+    return {
+        "x": int(base_box["x"] + local_box["x"]),
+        "y": int(base_box["y"] + local_box["y"]),
+        "w": int(local_box["w"]),
+        "h": int(local_box["h"]),
+    }
+
+
+def _refine_board_card_box(slot_id: str, crop: np.ndarray, base_box: Dict[str, int]) -> Dict[str, Any]:
+    default_box = _default_board_inner_box(slot_id, base_box)
+    default_box = _clip_local_box(default_box, crop.shape)
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 60, 160)
+
+    pad_x = max(4, int(base_box["w"] * 0.03))
+    pad_y = max(4, int(base_box["h"] * 0.03))
+    inner = edges[pad_y:max(pad_y + 1, edges.shape[0] - pad_y), pad_x:max(pad_x + 1, edges.shape[1] - pad_x)]
+    projection_box = None
+
+    if inner.size > 0:
+        xproj = np.mean(inner > 0, axis=0).astype(np.float32)
+        yproj = np.mean(inner > 0, axis=1).astype(np.float32)
+        xb = _projection_bounds(xproj, threshold_ratio=0.33, pad=max(4, int(base_box["w"] * 0.02)))
+        yb = _projection_bounds(yproj, threshold_ratio=0.33, pad=max(4, int(base_box["h"] * 0.02)))
+        if xb and yb:
+            projection_box = {
+                "x": int(xb[0] + pad_x),
+                "y": int(yb[0] + pad_y),
+                "w": int(xb[1] - xb[0] + 1),
+                "h": int(yb[1] - yb[0] + 1),
+            }
+            projection_box = _clip_local_box(projection_box, crop.shape)
+
+    foreground_mask = np.zeros_like(gray)
+    foreground_mask[(gray < 215) | (hsv[:, :, 1] > 45)] = 255
+    k = np.ones((5, 5), np.uint8)
+    foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_OPEN, k)
+    foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_CLOSE, k)
+    contour_box = _largest_contour_box(foreground_mask)
+
+    candidate = None
+    if projection_box and contour_box:
+        candidate = _merge_local_boxes(projection_box, contour_box, alpha=0.55)
+    elif projection_box:
+        candidate = projection_box
+    elif contour_box:
+        candidate = contour_box
+
+    if candidate is not None:
+        candidate = _clip_local_box(candidate, crop.shape)
+        aspect = candidate["w"] / float(max(1, candidate["h"]))
+        area_ratio = (candidate["w"] * candidate["h"]) / float(max(1, base_box["w"] * base_box["h"]))
+        if 0.35 <= aspect <= 0.95 and 0.12 <= area_ratio <= 0.90:
+            local_box = _merge_local_boxes(candidate, default_box, alpha=0.72)
+        else:
+            local_box = default_box
+    else:
+        local_box = default_box
+
+    local_box = _clip_local_box(local_box, crop.shape)
+    abs_box = _local_box_to_abs(base_box, local_box)
+    tight_crop = crop[local_box["y"]:local_box["y"] + local_box["h"], local_box["x"]:local_box["x"] + local_box["w"]].copy()
+
+    return {
+        "local_box": local_box,
+        "abs_box": abs_box,
+        "tight_crop": tight_crop,
+        "default_local_box": default_box,
+        "projection_local_box": projection_box,
+        "contour_local_box": contour_box,
+    }
+
+
 def _board_slot_occupied(crop: np.ndarray) -> Tuple[bool, Dict[str, float]]:
     if crop is None or crop.size == 0:
         return False, {"sat_ratio": 0.0, "edge_ratio": 0.0, "dark_ratio": 0.0}
@@ -849,25 +1034,33 @@ def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) -> Dict[str, Any]:
     occupied, metrics = _board_slot_occupied(crop)
+    refined = _refine_board_card_box(slot_id, crop, box)
+    tight_box = refined["abs_box"]
 
     slot = {
         "slot_id": slot_id,
-        "x": box["x"],
-        "y": box["y"],
-        "w": box["w"],
-        "h": box["h"],
+        "x": tight_box["x"],
+        "y": tight_box["y"],
+        "w": tight_box["w"],
+        "h": tight_box["h"],
         "occupied": bool(occupied),
         "metrics": metrics,
         "signature": None,
         "match": None,
+        "raw_box": box,
+        "local_box": refined["local_box"],
     }
 
     if not occupied:
         return slot
 
-    rect = detect_main_card(crop)
+    tight_crop = refined.get("tight_crop")
+    if tight_crop is None or tight_crop.size == 0:
+        tight_crop = crop.copy()
+
+    rect = detect_main_card(tight_crop)
     if rect is None:
-        h, w = crop.shape[:2]
+        h, w = tight_crop.shape[:2]
         rect = {
             "x": 0,
             "y": 0,
@@ -877,9 +1070,9 @@ def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) ->
         }
 
     quad = np.array(rect["quad"], dtype=np.float32)
-    warped = warp_quad(crop, quad)
+    warped = warp_quad(tight_crop, quad)
     if warped is None or warped.size == 0:
-        warped = crop.copy()
+        warped = tight_crop.copy()
 
     sig, rois = compute_signature(warped)
     slot["signature"] = sig
@@ -902,10 +1095,10 @@ def analyze_board(img: np.ndarray) -> Dict[str, Any]:
         slots.append(slot)
 
         rects.append({
-            "x": box["x"],
-            "y": box["y"],
-            "w": box["w"],
-            "h": box["h"],
+            "x": slot["x"],
+            "y": slot["y"],
+            "w": slot["w"],
+            "h": slot["h"],
             "slot_id": slot_id,
         })
 
