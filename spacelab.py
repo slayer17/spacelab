@@ -2105,6 +2105,235 @@ def compute_signature(warped: np.ndarray) -> Tuple[Optional[Dict[str, Any]], Lis
     except Exception:
         return None, []
 
+
+# -----------------------------------------------------
+# SYMBOL OVERRIDES - RESTORE REAL DETECTION
+# -----------------------------------------------------
+
+def _prepare_symbol_binary(gray: np.ndarray) -> List[np.ndarray]:
+    variants: List[np.ndarray] = []
+    if gray is None or gray.size == 0:
+        return variants
+
+    if len(gray.shape) == 3:
+        gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+
+    work = cv2.GaussianBlur(gray, (3, 3), 0)
+    masks = [
+        cv2.threshold(work, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1],
+        cv2.adaptiveThreshold(work, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 5),
+        cv2.Canny(work, 50, 140),
+    ]
+
+    kernel3 = np.ones((3, 3), np.uint8)
+    kernel5 = np.ones((5, 5), np.uint8)
+
+    for mask in masks:
+        if mask is None or mask.size == 0:
+            continue
+        bin_img = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel3)
+        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, kernel5)
+        ys, xs = np.where(bin_img > 0)
+        if ys.size == 0 or xs.size == 0:
+            continue
+
+        x1, x2 = int(xs.min()), int(xs.max()) + 1
+        y1, y2 = int(ys.min()), int(ys.max()) + 1
+        bw = x2 - x1
+        bh = y2 - y1
+        if bw < max(6, gray.shape[1] // 8) or bh < max(6, gray.shape[0] // 8):
+            continue
+
+        crop = bin_img[y1:y2, x1:x2]
+        norm = _normalize_symbol_template(crop)
+        if norm is not None:
+            variants.append(norm)
+
+    if not variants:
+        norm = _normalize_symbol_template(gray)
+        if norm is not None:
+            variants.append(norm)
+
+    # dédoublonnage simple
+    unique: List[np.ndarray] = []
+    for arr in variants:
+        if not any(np.array_equal(arr, u) for u in unique):
+            unique.append(arr)
+    return unique
+
+
+def _symbol_iou(a: np.ndarray, b: np.ndarray) -> float:
+    aa = (a > 0)
+    bb = (b > 0)
+    inter = float(np.logical_and(aa, bb).sum())
+    union = float(np.logical_or(aa, bb).sum())
+    if union <= 1e-9:
+        return 0.0
+    return inter / union
+
+
+def _symbol_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    if a is None or b is None or a.size == 0 or b.size == 0:
+        return 0.0
+    if a.shape != b.shape:
+        b = cv2.resize(b, (a.shape[1], a.shape[0]), interpolation=cv2.INTER_AREA)
+    va = a.astype(np.float32).reshape(-1)
+    vb = b.astype(np.float32).reshape(-1)
+    cos = cosine_similarity(va.tolist(), vb.tolist())
+    iou = _symbol_iou(a, b)
+    return 0.60 * cos + 0.40 * iou
+
+
+def _build_symbol_db_prototypes() -> Dict[str, np.ndarray]:
+    grouped: Dict[str, List[np.ndarray]] = {}
+    for item in CARD_DB:
+        vec = item.get('symbol_vector')
+        if not isinstance(vec, list) or len(vec) != 16 * 16:
+            continue
+        name = _normalize_symbol_name(str(item.get('symbol_name') or item.get('symbol') or item.get('target') or 'INCONNU'))
+        arr = np.asarray(vec, dtype=np.float32).reshape(16, 16)
+        grouped.setdefault(name, []).append(arr)
+    out: Dict[str, np.ndarray] = {}
+    for name, arrs in grouped.items():
+        if arrs:
+            mean_arr = np.mean(np.stack(arrs, axis=0), axis=0)
+            out[name] = mean_arr.astype(np.float32)
+    return out
+
+
+SYMBOL_DB_PROTOTYPES = _build_symbol_db_prototypes()
+
+
+def _score_symbol_variants(variants: List[np.ndarray]) -> List[Dict[str, Any]]:
+    scores: Dict[str, float] = {}
+
+    # 1) Templates explicites symbols/*.png
+    for name, templ in SYMBOL_TEMPLATES.items():
+        best = 0.0
+        for var in variants:
+            best = max(best, _symbol_similarity(var, templ))
+        if best > 0.0:
+            scores[_normalize_symbol_name(name)] = max(scores.get(_normalize_symbol_name(name), 0.0), float(best))
+
+    # 2) Fallback prototypes CARD_DB 16x16
+    for name, proto in SYMBOL_DB_PROTOTYPES.items():
+        best = 0.0
+        for var in variants:
+            small = cv2.resize(var, (16, 16), interpolation=cv2.INTER_AREA)
+            best = max(best, cosine_similarity(small.astype(np.float32).reshape(-1).tolist(), proto.reshape(-1).tolist()))
+        if best > 0.0:
+            # poids un peu plus faible que les templates symboles
+            mixed = max(scores.get(name, 0.0), 0.88 * float(best))
+            scores[name] = mixed
+
+    ranked = sorted(
+        ({'name': k, 'score': float(v)} for k, v in scores.items()),
+        key=lambda x: x['score'],
+        reverse=True,
+    )
+    return ranked[:6]
+
+
+def detect_symbol_name(symbol_gray: np.ndarray) -> Dict[str, Any]:
+    mean = safe_float(np.mean(symbol_gray)) if symbol_gray is not None and symbol_gray.size else 0.0
+    std = safe_float(np.std(symbol_gray)) if symbol_gray is not None and symbol_gray.size else 0.0
+
+    variants = _prepare_symbol_binary(symbol_gray)
+    ranked = _score_symbol_variants(variants)
+
+    if ranked:
+        best = ranked[0]
+        runner = ranked[1] if len(ranked) > 1 else {'name': None, 'score': 0.0}
+        best_name = _normalize_symbol_name(str(best.get('name') or 'INCONNU'))
+        best_score = float(best.get('score') or 0.0)
+        runner_up = {'name': runner.get('name'), 'score': float(runner.get('score') or 0.0)}
+    else:
+        best_name = 'INCONNU'
+        best_score = 0.0
+        runner_up = {'name': None, 'score': 0.0}
+
+    gap = float(max(0.0, best_score - float(runner_up.get('score') or 0.0)))
+    if best_score >= 0.68 and gap >= 0.06:
+        threshold_mode = 'accepted'
+    elif best_score >= 0.54:
+        threshold_mode = 'weak'
+    else:
+        threshold_mode = 'unknown'
+
+    mode = 'templates+card_db' if SYMBOL_TEMPLATES and SYMBOL_DB_PROTOTYPES else 'templates' if SYMBOL_TEMPLATES else 'card_db' if SYMBOL_DB_PROTOTYPES else 'none'
+
+    return {
+        'name': best_name,
+        'raw_name': best_name,
+        'score': best_score,
+        'gap': float(max(0.0, 1.0 - best_score)),
+        'mean': mean,
+        'std': std,
+        'mode': mode,
+        'threshold_mode': threshold_mode,
+        'runner_up': runner_up,
+        'top_candidates': ranked,
+        'winner_references': [c['name'] for c in ranked[:3]],
+    }
+
+
+def _find_symbol_box(card_norm: np.ndarray) -> Tuple[Tuple[int, int, int, int], np.ndarray]:
+    h, w = card_norm.shape[:2]
+    sx1, sy1, sx2, sy2 = 0, int(h * 0.10), int(w * 0.36), int(h * 0.40)
+    search = card_norm[sy1:sy2, sx1:sx2]
+    fallback = _clip_box_tuple(0, int(h * 0.12), int(w * 0.30), int(h * 0.24), w, h)
+    if search.size == 0:
+        return fallback, _crop_box(card_norm, fallback)
+
+    gray = cv2.cvtColor(search, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(search, cv2.COLOR_BGR2HSV)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    th_dark = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    sat_mask = cv2.threshold(hsv[:, :, 1], 45, 255, cv2.THRESH_BINARY)[1]
+    edge_mask = cv2.Canny(blur, 40, 120)
+    mask = cv2.bitwise_or(th_dark, edge_mask)
+    mask = cv2.bitwise_or(mask, sat_mask)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_score = -1.0
+    sh, sw = gray.shape[:2]
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        area = float(cv2.contourArea(c))
+        if bw < max(8, int(sw * 0.12)) or bh < max(8, int(sh * 0.12)):
+            continue
+        if bw > int(sw * 0.95) or bh > int(sh * 0.95):
+            continue
+        ratio = bw / float(max(1, bh))
+        if ratio < 0.35 or ratio > 1.90:
+            continue
+        area_ratio = area / float(max(1, sw * sh))
+        cx = (x + bw / 2.0) / max(1.0, sw)
+        cy = (y + bh / 2.0) / max(1.0, sh)
+        # préférer un objet en haut-gauche de la zone symbole
+        pos_score = max(0.0, 1.0 - (cx * 0.55 + cy * 0.35))
+        shape_score = min(1.0, (bh / float(max(1, sh))) * 1.6)
+        score = area_ratio * 4.0 + 0.7 * pos_score + 0.6 * shape_score
+        if score > best_score:
+            best_score = score
+            best = (x, y, bw, bh)
+
+    if best is None:
+        return fallback, _crop_box(card_norm, fallback)
+
+    x, y, bw, bh = best
+    pad_x = max(4, int(bw * 0.22))
+    pad_y = max(4, int(bh * 0.22))
+    box = _clip_box_tuple(sx1 + x - pad_x, sy1 + y - pad_y, bw + pad_x * 2, bh + pad_y * 2, w, h)
+    crop = _crop_box(card_norm, box)
+    if crop.size == 0:
+        return fallback, _crop_box(card_norm, fallback)
+    return box, crop
+
 # -----------------------------------------------------
 # MAIN
 # -----------------------------------------------------
