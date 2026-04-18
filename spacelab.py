@@ -691,6 +691,8 @@ BOARD_SLOT_LAYOUT = [
     ("bottom_right", 0.66, 0.69, 0.79, 0.98),
 ]
 
+BOARD_SLOT_ORDER = {slot_id: idx for idx, (slot_id, *_rest) in enumerate(BOARD_SLOT_LAYOUT)}
+
 
 def _board_crop_box(img: np.ndarray, xr1: float, yr1: float, xr2: float, yr2: float) -> Tuple[np.ndarray, Dict[str, int]]:
     h, w = img.shape[:2]
@@ -1032,6 +1034,167 @@ def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _duplicate_card_ids(items: List[Dict[str, Any]]) -> List[str]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        cid = str(item.get("final_card_id") or "").strip()
+        if not cid:
+            continue
+        counts[cid] = counts.get(cid, 0) + 1
+    return sorted([cid for cid, count in counts.items() if count > 1])
+
+
+def _normalize_match_candidate(cand: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(cand, dict):
+        return None
+    cid = str(cand.get("card_id") or "").strip()
+    if not cid:
+        return None
+    out = dict(cand)
+    out["card_id"] = cid
+    out["score"] = float(cand.get("score", 0.0) or 0.0)
+    return out
+
+
+def _best_unique_assignment(slot_entries: List[Dict[str, Any]]) -> Dict[str, Optional[Dict[str, Any]]]:
+    prepared: List[Dict[str, Any]] = []
+    for entry in slot_entries:
+        slot_id = str(entry.get("slot_id") or "").strip()
+        if not slot_id:
+            continue
+        raw_candidates = entry.get("candidates") or []
+        candidates: List[Dict[str, Any]] = []
+        seen = set()
+        for cand in raw_candidates:
+            norm = _normalize_match_candidate(cand)
+            if norm is None:
+                continue
+            cid = norm["card_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            candidates.append(norm)
+        candidates.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        prepared.append({"slot_id": slot_id, "candidates": candidates})
+
+    prepared.sort(
+        key=lambda x: (
+            len(x["candidates"]),
+            -max([float(c.get("score", 0.0)) for c in x["candidates"]] + [0.0]),
+        )
+    )
+
+    memo: Dict[Tuple[int, Tuple[str, ...]], Tuple[float, Dict[str, Optional[Dict[str, Any]]]]] = {}
+
+    def solve(index: int, taken: Tuple[str, ...]) -> Tuple[float, Dict[str, Optional[Dict[str, Any]]]]:
+        key = (index, taken)
+        if key in memo:
+            return memo[key]
+        if index >= len(prepared):
+            result = (0.0, {})
+            memo[key] = result
+            return result
+
+        slot = prepared[index]
+        slot_id = slot["slot_id"]
+        taken_set = set(taken)
+
+        # pénalité forte si aucun candidat unique n'est assigné à ce slot
+        skip_score, skip_assign = solve(index + 1, taken)
+        best_score = skip_score - 1000.0
+        best_assign = dict(skip_assign)
+        best_assign[slot_id] = None
+
+        for cand in slot["candidates"]:
+            cid = cand["card_id"]
+            if cid in taken_set:
+                continue
+            next_taken = tuple(sorted(taken_set | {cid}))
+            child_score, child_assign = solve(index + 1, next_taken)
+            total = float(cand.get("score", 0.0)) + child_score
+            if total > best_score:
+                best_score = total
+                best_assign = dict(child_assign)
+                best_assign[slot_id] = cand
+
+        result = (best_score, best_assign)
+        memo[key] = result
+        return result
+
+    _, assignment = solve(0, tuple())
+    return assignment
+
+
+def _apply_unique_board_matches(slots: List[Dict[str, Any]]) -> Dict[str, Any]:
+    slot_entries: List[Dict[str, Any]] = []
+    before_items: List[Dict[str, Any]] = []
+
+    for slot in slots:
+        match = slot.get("match") or {}
+        if not slot.get("occupied") or not match:
+            continue
+        slot_entries.append({
+            "slot_id": slot.get("slot_id"),
+            "candidates": (match.get("candidates") or [])[:8],
+        })
+        before_items.append({"final_card_id": match.get("final_card_id")})
+
+    assignment = _best_unique_assignment(slot_entries)
+
+    for slot in slots:
+        match = slot.get("match") or {}
+        if not slot.get("occupied") or not match:
+            continue
+
+        chosen = assignment.get(slot.get("slot_id"))
+        if chosen is None:
+            match["final_card_id"] = None
+            match["final_status"] = "conflict"
+            match["final_score"] = 0.0
+            match["final_gap"] = 0.0
+            continue
+
+        chosen_id = str(chosen.get("card_id") or "")
+        chosen_score = float(chosen.get("score", 0.0) or 0.0)
+        other_scores = [
+            float(c.get("score", 0.0) or 0.0)
+            for c in (match.get("candidates") or [])
+            if str(c.get("card_id") or "") != chosen_id
+        ]
+        second_score = max(other_scores, default=0.0)
+
+        match["final_card_id"] = chosen_id
+        match["final_score"] = chosen_score
+        match["final_gap"] = max(0.0, chosen_score - second_score)
+        match["final_status"] = "accepted" if chosen_score >= 40.0 and match["final_gap"] >= 4.0 else "candidate"
+
+    after_items: List[Dict[str, Any]] = []
+    board_matches: List[Dict[str, Any]] = []
+    for slot in slots:
+        match = slot.get("match") or {}
+        if not slot.get("occupied") or not match:
+            continue
+        after_items.append({"final_card_id": match.get("final_card_id")})
+        board_matches.append({
+            "slot_id": slot.get("slot_id"),
+            "final_card_id": match.get("final_card_id"),
+            "final_status": match.get("final_status"),
+            "final_score": float(match.get("final_score", 0.0) or 0.0),
+            "final_gap": float(match.get("final_gap", 0.0) or 0.0),
+            "signature": slot.get("signature"),
+            "candidates": match.get("candidates", []),
+        })
+
+    board_matches.sort(key=lambda x: BOARD_SLOT_ORDER.get(str(x.get("slot_id") or ""), 999))
+
+    return {
+        "board_matches": board_matches,
+        "duplicate_final_card_ids_before": _duplicate_card_ids(before_items),
+        "duplicate_final_card_ids_after": _duplicate_card_ids(after_items),
+        "unique_assignment_applied": True,
+    }
+
+
 def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) -> Dict[str, Any]:
     occupied, metrics = _board_slot_occupied(crop)
     refined = _refine_board_card_box(slot_id, crop, box)
@@ -1086,7 +1249,6 @@ def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) ->
 
 def analyze_board(img: np.ndarray) -> Dict[str, Any]:
     slots = []
-    board_matches = []
     rects = []
 
     for slot_id, xr1, yr1, xr2, yr2 in BOARD_SLOT_LAYOUT:
@@ -1102,24 +1264,19 @@ def analyze_board(img: np.ndarray) -> Dict[str, Any]:
             "slot_id": slot_id,
         })
 
-        if slot.get("occupied") and slot.get("match"):
-            board_matches.append({
-                "slot_id": slot_id,
-                "final_card_id": (slot["match"] or {}).get("final_card_id"),
-                "final_status": (slot["match"] or {}).get("final_status"),
-                "final_score": (slot["match"] or {}).get("final_score", 0.0),
-                "final_gap": (slot["match"] or {}).get("final_gap", 0.0),
-                "signature": slot.get("signature"),
-                "candidates": (slot["match"] or {}).get("candidates", []),
-            })
+    unique_debug = _apply_unique_board_matches(slots)
 
     return {
         "board_analysis": {
             "slots": slots,
             "slots_count": len(slots),
             "occupied_count": sum(1 for s in slots if s.get("occupied")),
+            "layout_version": "board_v4_unique_final_write",
+            "unique_assignment_applied": unique_debug["unique_assignment_applied"],
+            "duplicate_final_card_ids_before": unique_debug["duplicate_final_card_ids_before"],
+            "duplicate_final_card_ids_after": unique_debug["duplicate_final_card_ids_after"],
         },
-        "board_matches": board_matches,
+        "board_matches": unique_debug["board_matches"],
         "rects": rects,
     }
 
