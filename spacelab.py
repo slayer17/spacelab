@@ -270,18 +270,6 @@ def image_to_vector(gray: np.ndarray, size: Tuple[int, int] = (16, 16)) -> List[
     return [int(v) for v in small.flatten().tolist()]
 
 
-def _coerce_vector_list(vec: Any) -> List[float]:
-    if vec is None:
-        return []
-    try:
-        arr = np.asarray(vec, dtype=np.float32).reshape(-1)
-    except Exception:
-        return []
-    if arr.size == 0:
-        return []
-    return [float(v) for v in arr.tolist()]
-
-
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
@@ -703,12 +691,6 @@ BOARD_SLOT_LAYOUT = [
     ("bottom_right", 0.66, 0.69, 0.79, 0.98),
 ]
 
-BOARD_STATION_LAYOUT = [
-    ("station_left",   0.18, 0.26, 0.31, 0.63),
-    ("station_middle", 0.41, 0.24, 0.56, 0.63),
-    ("station_right",  0.63, 0.26, 0.76, 0.63),
-]
-
 
 def _board_crop_box(img: np.ndarray, xr1: float, yr1: float, xr2: float, yr2: float) -> Tuple[np.ndarray, Dict[str, int]]:
     h, w = img.shape[:2]
@@ -951,8 +933,8 @@ def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     query_points = int((((sig.get("bottom_layout") or {}).get("points")) or 0))
     query_layout = (((sig.get("bottom_layout") or {}).get("layout")) or "").upper()
 
-    query_global_vec = _coerce_vector_list((sig.get("global") or {}).get("vector"))
-    query_bottom_vec = _coerce_vector_list((sig.get("bottom") or {}).get("vector"))
+    query_global_vec = (((sig.get("global") or {}).get("vector")) or [])
+    query_bottom_vec = (((sig.get("bottom") or {}).get("vector")) or [])
 
     candidates = []
 
@@ -985,8 +967,8 @@ def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             or ""
         ).upper()
 
-        ref_global_vec = _coerce_vector_list((ref_scan.get("global") or {}).get("vector"))
-        ref_bottom_vec = _coerce_vector_list((ref_scan.get("bottom") or {}).get("vector"))
+        ref_global_vec = (((ref_scan.get("global") or {}).get("vector")) or [])
+        ref_bottom_vec = (((ref_scan.get("bottom") or {}).get("vector")) or [])
 
         score = 0.0
         details = []
@@ -1050,131 +1032,6 @@ def _match_card_from_signature(sig: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _slot_color_name(slot: Dict[str, Any]) -> str:
-    return str((((slot.get("signature") or {}).get("color") or {}).get("detected")) or "INCONNU").upper()
-
-
-def _station_default_box(box: Dict[str, int]) -> Dict[str, int]:
-    return _box_from_margins(box, left=0.04, top=0.02, right=0.04, bottom=0.02)
-
-
-def _largest_station_box(mask: np.ndarray) -> Optional[Dict[str, int]]:
-    if mask is None or mask.size == 0:
-        return None
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-
-    mh, mw = mask.shape[:2]
-    full_area = float(max(1, mh * mw))
-    best = None
-    best_score = -1.0
-
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        if w < 25 or h < 60:
-            continue
-        rect_area = float(max(1, w * h))
-        area = float(cv2.contourArea(cnt))
-        fill_ratio = area / rect_area
-        area_ratio = rect_area / full_area
-        aspect = w / float(max(1, h))
-        if fill_ratio < 0.08:
-            continue
-        if area_ratio < 0.12 or area_ratio > 0.96:
-            continue
-        if aspect < 0.18 or aspect > 1.20:
-            continue
-        score = rect_area * (0.35 + fill_ratio)
-        if score > best_score:
-            best_score = score
-            best = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
-
-    return best
-
-
-def _detect_station_accent(crop: np.ndarray) -> Dict[str, Any]:
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    h = hsv[:, :, 0]
-    s = hsv[:, :, 1]
-    v = hsv[:, :, 2]
-    mask = (s > 35) & (v > 40)
-    if not np.any(mask):
-        return {"detected": "INCONNU", "debug": {"ORANGE": 0, "PURPLE": 0, "BLEU": 0, "VERT": 0, "ROUGE": 0}}
-
-    hue = h[mask]
-    scores = {
-        "ORANGE": int(np.sum((hue >= 8) & (hue <= 25))),
-        "PURPLE": int(np.sum((hue >= 126) & (hue <= 165))),
-        "BLEU": int(np.sum((hue >= 86) & (hue <= 125))),
-        "VERT": int(np.sum((hue >= 40) & (hue <= 85))),
-        "ROUGE": int(np.sum((hue <= 8) | (hue >= 170))),
-    }
-    detected = max(scores, key=scores.get)
-    if scores[detected] <= 20:
-        detected = "INCONNU"
-    return {"detected": detected, "debug": scores}
-
-
-def _analyze_single_station(station_id: str, crop: np.ndarray, box: Dict[str, int]) -> Dict[str, Any]:
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    mask = np.zeros_like(gray)
-    mask[(gray < 235) | (hsv[:, :, 1] > 20)] = 255
-    k = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
-
-    default_box = _station_default_box(box)
-    default_box = _clip_local_box(default_box, crop.shape)
-
-    xproj = np.mean(mask > 0, axis=0).astype(np.float32)
-    yproj = np.mean(mask > 0, axis=1).astype(np.float32)
-    xb = _projection_bounds(xproj, threshold_ratio=0.28, pad=max(5, int(box["w"] * 0.03)))
-    yb = _projection_bounds(yproj, threshold_ratio=0.28, pad=max(5, int(box["h"] * 0.03)))
-    projection_box = None
-    if xb and yb:
-        projection_box = {"x": int(xb[0]), "y": int(yb[0]), "w": int(xb[1] - xb[0] + 1), "h": int(yb[1] - yb[0] + 1)}
-        projection_box = _clip_local_box(projection_box, crop.shape)
-
-    contour_box = _largest_station_box(mask)
-
-    candidate = None
-    if projection_box and contour_box:
-        candidate = _merge_local_boxes(projection_box, contour_box, alpha=0.55)
-    elif projection_box:
-        candidate = projection_box
-    elif contour_box:
-        candidate = contour_box
-    else:
-        candidate = default_box
-
-    candidate = _clip_local_box(candidate, crop.shape)
-    abs_box = _local_box_to_abs(box, candidate)
-    station_crop = crop[candidate["y"]:candidate["y"] + candidate["h"], candidate["x"]:candidate["x"] + candidate["w"]].copy()
-    accent = _detect_station_accent(station_crop if station_crop.size else crop)
-
-    area_ratio = (candidate["w"] * candidate["h"]) / float(max(1, box["w"] * box["h"]))
-    detected = bool(area_ratio >= 0.18)
-
-    return {
-        "station_id": station_id,
-        "x": abs_box["x"],
-        "y": abs_box["y"],
-        "w": abs_box["w"],
-        "h": abs_box["h"],
-        "detected": detected,
-        "raw_box": box,
-        "local_box": candidate,
-        "accent": accent,
-        "metrics": {
-            "area_ratio": float(area_ratio),
-            "mask_ratio": float(np.count_nonzero(mask > 0)) / float(max(1, mask.size)),
-        },
-    }
-
-
 def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) -> Dict[str, Any]:
     occupied, metrics = _board_slot_occupied(crop)
     refined = _refine_board_card_box(slot_id, crop, box)
@@ -1192,9 +1049,6 @@ def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) ->
         "match": None,
         "raw_box": box,
         "local_box": refined["local_box"],
-        "color_name": "INCONNU",
-        "points": 0,
-        "symbol_name": "INCONNU",
     }
 
     if not occupied:
@@ -1226,20 +1080,14 @@ def _analyze_single_slot(slot_id: str, crop: np.ndarray, box: Dict[str, int]) ->
 
     if sig is not None:
         slot["match"] = _match_card_from_signature(sig)
-        slot["color_name"] = str((((sig.get("color") or {}).get("detected")) or "INCONNU")).upper()
-        slot["points"] = int((((sig.get("bottom_layout") or {}).get("points")) or 0))
-        slot["symbol_name"] = str((((sig.get("symbol") or {}).get("name")) or "INCONNU")).upper()
 
     return slot
 
 
 def analyze_board(img: np.ndarray) -> Dict[str, Any]:
     slots = []
-    stations = []
     board_matches = []
     rects = []
-    colors_by_slot: Dict[str, str] = {}
-    color_counts = {"BLEU": 0, "VERT": 0, "JAUNE": 0, "ROUGE": 0, "INCONNU": 0}
 
     for slot_id, xr1, yr1, xr2, yr2 in BOARD_SLOT_LAYOUT:
         crop, box = _board_crop_box(img, xr1, yr1, xr2, yr2)
@@ -1252,13 +1100,7 @@ def analyze_board(img: np.ndarray) -> Dict[str, Any]:
             "w": slot["w"],
             "h": slot["h"],
             "slot_id": slot_id,
-            "kind": "card",
         })
-
-        if slot.get("occupied"):
-            color_name = _slot_color_name(slot)
-            colors_by_slot[slot_id] = color_name
-            color_counts[color_name if color_name in color_counts else "INCONNU"] += 1
 
         if slot.get("occupied") and slot.get("match"):
             board_matches.append({
@@ -1267,34 +1109,15 @@ def analyze_board(img: np.ndarray) -> Dict[str, Any]:
                 "final_status": (slot["match"] or {}).get("final_status"),
                 "final_score": (slot["match"] or {}).get("final_score", 0.0),
                 "final_gap": (slot["match"] or {}).get("final_gap", 0.0),
-                "color_name": slot.get("color_name"),
                 "signature": slot.get("signature"),
                 "candidates": (slot["match"] or {}).get("candidates", []),
             })
 
-    for station_id, xr1, yr1, xr2, yr2 in BOARD_STATION_LAYOUT:
-        crop, box = _board_crop_box(img, xr1, yr1, xr2, yr2)
-        station = _analyze_single_station(station_id, crop, box)
-        stations.append(station)
-        rects.append({
-            "x": station["x"],
-            "y": station["y"],
-            "w": station["w"],
-            "h": station["h"],
-            "slot_id": station_id,
-            "kind": "station",
-        })
-
     return {
         "board_analysis": {
-            "layout_version": "board_v3_colors_stations",
             "slots": slots,
             "slots_count": len(slots),
             "occupied_count": sum(1 for s in slots if s.get("occupied")),
-            "colors_by_slot": colors_by_slot,
-            "color_counts": color_counts,
-            "stations": stations,
-            "stations_detected": sum(1 for s in stations if s.get("detected")),
         },
         "board_matches": board_matches,
         "rects": rects,
